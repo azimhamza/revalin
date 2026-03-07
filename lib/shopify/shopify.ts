@@ -8,7 +8,22 @@ const rawWooBaseUrl =
   process.env.NEXT_PUBLIC_WOOCOMMERCE_SITE_URL ||
   '';
 
-const WOOCOMMERCE_BASE_URL = rawWooBaseUrl.replace(/\/$/, '');
+function normalizeWooBaseUrl(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return '';
+
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+  try {
+    const parsed = new URL(withProtocol);
+    const pathname = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/$/, '');
+    return `${parsed.origin}${pathname}`;
+  } catch {
+    return '';
+  }
+}
+
+const WOOCOMMERCE_BASE_URL = normalizeWooBaseUrl(rawWooBaseUrl);
 const STORE_API_BASE = `${WOOCOMMERCE_BASE_URL}/wp-json/wc/store/v1`;
 const CHECKOUT_URL = process.env.NEXT_PUBLIC_WOOCOMMERCE_CHECKOUT_URL || `${WOOCOMMERCE_BASE_URL}/checkout`;
 const DEFAULT_CURRENCY = process.env.NEXT_PUBLIC_STORE_CURRENCY || 'USD';
