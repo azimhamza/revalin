@@ -1,9 +1,12 @@
+'use client';
+
 import { Badge } from '../ui/badge';
 import { cn } from '@/lib/utils';
-import { Product } from '@/lib/shopify/types';
+import { Product } from '@/lib/swell/types';
 import { AddToCart, AddToCartButton } from '../cart/add-to-cart';
 import { Suspense } from 'react';
 import Link from 'next/link';
+import { VariantOptionSelector, useSelectedVariant } from './variant-selector';
 
 export function FeaturedProductLabel({
   product,
@@ -14,37 +17,89 @@ export function FeaturedProductLabel({
   principal?: boolean;
   className?: string;
 }) {
+  const selectedVariant = useSelectedVariant(product);
+  const displayPrice = selectedVariant?.price || product.priceRange.minVariantPrice;
+  const hasSelectableOptions = product.options.length > 0 && !(product.options.length === 1 && product.options[0]?.values.length === 1);
+
   if (principal) {
     return (
       <div
         className={cn(
-          'flex flex-col grid-cols-2 gap-y-3 p-4 w-full bg-white md:w-fit md:rounded-md md:grid',
+          'flex flex-col gap-y-3 p-4 w-full bg-white md:rounded-md md:grid md:grid-cols-2 md:gap-x-4',
           className
         )}
       >
         <div className="col-span-2">
           <Badge className="font-black capitalize rounded-full">Best Seller</Badge>
         </div>
-        <Link href={`/product/${product.handle}`} className="col-span-1 self-start text-2xl font-semibold">
-          {product.title}
-        </Link>
-        <div className="col-span-1 mb-10">
-          {product.tags.length > 0 ? (
-            <p className="mb-3 text-sm italic font-medium">{product.tags.join('. ')}</p>
-          ) : null}
-          <p className="text-sm font-medium line-clamp-3">{product.description}</p>
-        </div>
-        <div className="flex col-span-1 gap-3 items-center text-2xl font-semibold md:self-end">
-          ${Number(product.priceRange.minVariantPrice.amount)}
-          {product.compareAtPrice && (
-            <span className="line-through opacity-30">${Number(product.compareAtPrice.amount)}</span>
-          )}
-        </div>
-        <Suspense
-          fallback={<AddToCartButton className="flex gap-20 justify-between pr-2" size="lg" product={product} />}
-        >
-          <AddToCart className="flex gap-20 justify-between pr-2" size="lg" product={product} />
-        </Suspense>
+        {hasSelectableOptions ? (
+          <>
+            <div className="col-span-2 grid grid-cols-[1fr_auto] items-start gap-3">
+              <Link href={`/product/${product.handle}`} className="self-start text-2xl font-semibold leading-tight">
+                {product.title}
+              </Link>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {product.options.map(option => (
+                  <VariantOptionSelector
+                    key={option.id}
+                    option={option}
+                    product={product}
+                    variant="condensed"
+                    hideLabel
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="col-span-2 flex flex-wrap items-center gap-3">
+              <div className="flex gap-3 items-center text-2xl font-semibold whitespace-nowrap">
+                ${Number(displayPrice.amount)}
+                {product.compareAtPrice && (
+                  <span className="line-through opacity-30">${Number(product.compareAtPrice.amount)}</span>
+                )}
+              </div>
+              <Suspense
+                fallback={
+                  <AddToCartButton
+                    className="ml-auto min-w-[280px] flex gap-20 justify-between pr-2"
+                    size="lg"
+                    product={product}
+                  />
+                }
+              >
+                <AddToCart
+                  className="ml-auto min-w-[280px] flex gap-20 justify-between pr-2"
+                  size="lg"
+                  product={product}
+                />
+              </Suspense>
+            </div>
+          </>
+        ) : (
+          <div className="col-span-2 grid grid-cols-[1fr_auto] items-start gap-3">
+            <Link href={`/product/${product.handle}`} className="self-start text-2xl font-semibold leading-tight">
+              {product.title}
+            </Link>
+            <div className="flex gap-3 items-center text-2xl font-semibold text-right whitespace-nowrap">
+              ${Number(displayPrice.amount)}
+              {product.compareAtPrice && (
+                <span className="line-through opacity-30">${Number(product.compareAtPrice.amount)}</span>
+              )}
+            </div>
+          </div>
+        )}
+        {!hasSelectableOptions && (
+          <Suspense
+            fallback={
+              <AddToCartButton
+                className="col-span-2 w-full flex gap-20 justify-between pr-2"
+                size="lg"
+                product={product}
+              />
+            }
+          >
+            <AddToCart className="col-span-2 w-full flex gap-20 justify-between pr-2" size="lg" product={product} />
+          </Suspense>
+        )}
       </div>
     );
   }
@@ -59,7 +114,7 @@ export function FeaturedProductLabel({
           {product.title}
         </Link>
         <div className="flex gap-2 items-center text-base font-semibold">
-          ${Number(product.priceRange.minVariantPrice.amount)}
+          ${Number(displayPrice.amount)}
           {product.compareAtPrice && (
             <span className="text-sm line-through opacity-30">${Number(product.compareAtPrice.amount)}</span>
           )}

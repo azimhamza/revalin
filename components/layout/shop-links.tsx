@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Collection } from '@/lib/shopify/types';
+import { Collection } from '@/lib/swell/types';
 import { cn } from '@/lib/utils';
 
 interface ShopLinksProps {

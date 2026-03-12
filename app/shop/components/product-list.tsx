@@ -1,13 +1,17 @@
-import { getCollectionProducts, getCollections, getProducts } from '@/lib/shopify';
-import type { Product, ProductCollectionSortKey, ProductSortKey } from '@/lib/shopify/types';
+import { getCollectionProducts, getCollections, getProducts } from '@/lib/swell';
+import type { Product, ProductCollectionSortKey, ProductSortKey } from '@/lib/swell/types';
 import { ProductListContent } from './product-list-content';
-import { mapSortKeys } from '@/lib/shopify/utils';
-import { storeCatalog } from '@/lib/shopify/constants';
+import { mapSortKeys } from '@/lib/swell/utils';
+import { storeCatalog } from '@/lib/swell/constants';
 
 interface ProductListProps {
   collection: string;
   searchParams?: { [key: string]: string | string[] | undefined };
 }
+
+// Swell product listing is paginated. Request a large catalog window so client-side
+// filtering operates on the full product set rather than a partial first page.
+const SHOP_FETCH_LIMIT = 1000;
 
 export default async function ProductList({ collection, searchParams }: ProductListProps) {
   const query = typeof searchParams?.q === 'string' ? searchParams.q : undefined;
@@ -21,6 +25,7 @@ export default async function ProductList({ collection, searchParams }: ProductL
   try {
     if (isRootCollection) {
       products = await getProducts({
+        limit: SHOP_FETCH_LIMIT,
         sortKey: sortKey as ProductSortKey,
         query,
         reverse,
@@ -28,6 +33,7 @@ export default async function ProductList({ collection, searchParams }: ProductL
     } else {
       products = await getCollectionProducts({
         collection,
+        limit: SHOP_FETCH_LIMIT,
         query,
         sortKey: sortKey as ProductCollectionSortKey,
         reverse,

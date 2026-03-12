@@ -1,5 +1,5 @@
 import { VariantOptionSelector, VariantOptionSelectorComponent } from '@/components/products/variant-selector';
-import { Product } from '@/lib/shopify/types';
+import { Product } from '@/lib/swell/types';
 
 export function VariantSelectorSlots({ product, fallback = false }: { product: Product; fallback?: boolean }) {
   const { options } = product;
@@ -11,20 +11,28 @@ export function VariantSelectorSlots({ product, fallback = false }: { product: P
   }
 
   if (fallback) {
-    return options.map(option => (
-      <VariantOptionSelectorComponent
-        key={option.id}
-        option={option}
-        product={product}
-        variant="card"
-        selectedValue=""
-        isTargetingProduct
-        selectedOptions={{}}
-      />
-    ));
+    return (
+      <div className="flex flex-col gap-4">
+        {options.map(option => (
+          <VariantOptionSelectorComponent
+            key={option.id}
+            option={option}
+            product={product}
+            variant="card"
+            selectedValue=""
+            isTargetingProduct
+            selectedOptions={{}}
+          />
+        ))}
+      </div>
+    );
   }
 
-  return options.map(option => (
-    <VariantOptionSelector key={option.id} option={option} product={product} variant="card" />
-  ));
+  return (
+    <div className="flex flex-col gap-4">
+      {options.map(option => (
+        <VariantOptionSelector key={option.id} option={option} product={product} variant="card" />
+      ))}
+    </div>
+  );
 }

@@ -1,4 +1,4 @@
-import { Collection, Product } from '@/lib/shopify/types';
+import { Collection, Product } from '@/lib/swell/types';
 import { cn } from '@/lib/utils';
 import { ShopBreadcrumb } from './shop-breadcrumb';
 import { ResultsCount } from './results-count';

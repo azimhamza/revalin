@@ -6,11 +6,12 @@ import { NuqsAdapter } from 'nuqs/adapters/next/app';
 import { CartProvider } from '@/components/cart/cart-context';
 import { DebugGrid } from '@/components/debug-grid';
 import { isDevelopment } from '@/lib/constants';
-import { getCollections } from '@/lib/shopify';
+import { getCollections } from '@/lib/swell';
 import { Header } from '../components/layout/header';
 import dynamic from 'next/dynamic';
 import { V0Provider } from '../lib/context';
 import { cn } from '../lib/utils';
+import { ResearchDisclaimerPopup } from './research/components/research-disclaimer-popup';
 
 const V0Setup = dynamic(() => import('@/components/v0-setup'));
 
@@ -27,9 +28,18 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'ACME Store',
-  description: 'ACME Store, your one-stop shop for all your needs.',
-    generator: 'v0.app'
+  title: 'Revalin',
+  description:
+    'Revalin is a research peptide distributor for qualified buyers, offering lab-use peptide products for in-vitro and pre-clinical research.',
+  keywords: [
+    'research peptides',
+    'peptide purchase',
+    'buy peptides for research',
+    'research company distributor',
+    'laboratory peptide supplier',
+    'in-vitro research products',
+  ],
+  generator: 'v0.app',
 };
 
 export default async function RootLayout({
@@ -49,6 +59,7 @@ export default async function RootLayout({
           <CartProvider>
             <NuqsAdapter>
               <main data-vaul-drawer-wrapper="true">
+                <ResearchDisclaimerPopup />
                 <Header collections={collections} />
                 {children}
               </main>

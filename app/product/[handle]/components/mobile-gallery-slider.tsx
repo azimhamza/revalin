@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import Image from 'next/image';
 import useEmblaCarousel from 'embla-carousel-react';
-import { Product } from '@/lib/shopify/types';
+import { Product } from '@/lib/swell/types';
 import { Badge } from '@/components/ui/badge';
 import { useProductImages, useSelectedVariant } from '@/components/products/variant-selector';
+import { getImageBlurDataURL } from '@/lib/swell/utils';
+import { BlurUpImage } from '@/components/ui/blur-up-image';
 
 interface MobileGallerySliderProps {
   product: Product;
@@ -53,7 +54,7 @@ export function MobileGallerySlider({ product }: MobileGallerySliderProps) {
               key={`${image.url}-${image.selectedOptions?.map(o => `${o.name},${o.value}`).join('-')}`}
               className="flex-shrink-0 w-full h-full relative"
             >
-              <Image
+              <BlurUpImage
                 style={{
                   aspectRatio: `${image.width} / ${image.height}`,
                 }}
@@ -63,7 +64,9 @@ export function MobileGallerySlider({ product }: MobileGallerySliderProps) {
                 height={image.height}
                 className="w-full h-full object-cover"
                 quality={100}
-                priority={index === 0}
+                loading={index === 0 ? 'eager' : 'lazy'}
+                placeholder="blur"
+                blurDataURL={getImageBlurDataURL(image.thumbhash)}
               />
             </div>
           ))}

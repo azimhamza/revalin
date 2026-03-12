@@ -17,6 +17,14 @@ const nextConfig = {
     remotePatterns: [
       {
         protocol: 'https',
+        hostname: '**.swell.store',
+      },
+      {
+        protocol: 'https',
+        hostname: 'cdn.swell.store',
+      },
+      {
+        protocol: 'https',
         hostname: 'zylq-002.dx.commercecloud.salesforce.com',
       },
       {

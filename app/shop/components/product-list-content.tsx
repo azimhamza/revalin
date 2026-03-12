@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo } from 'react';
-import { Product, Collection } from '@/lib/shopify/types';
+import { Product, Collection } from '@/lib/swell/types';
 import { ProductCard } from './product-card';
 import ResultsControls from './results-controls';
 import { useProducts } from '../providers/products-provider';
@@ -14,58 +14,54 @@ interface ProductListContentProps {
   collections: Collection[];
 }
 
-// Client-side color filtering function
-function filterProductsByColors(products: Product[], colors: string[]): Product[] {
-  if (!colors || colors.length === 0) {
+const SIZE_OPTION_KEYS = ['size', 'strength', 'dose', 'volume', 'amount'];
+
+function normalizeSize(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, '');
+}
+
+// Client-side size filtering function
+function filterProductsBySizes(products: Product[], sizes: string[]): Product[] {
+  if (!sizes || sizes.length === 0) {
     return products;
   }
 
   const filteredProducts = products.filter(product => {
-    // Check if product has any variants with the selected colors
-    // Note: variants is now a simple array after adaptShopifyProduct transformation
-    const hasMatchingColor = product.variants?.some((variant: any) => {
+    const normalizedSizes = sizes.map(normalizeSize);
+
+    // Check variant selected options first.
+    const hasMatchingSize = product.variants?.some((variant: any) => {
       if (!variant.selectedOptions) return false;
 
-      // Look for color option in variant
       return variant.selectedOptions.some((option: any) => {
-        const isColorOption =
-          option.name.toLowerCase().includes('color') || option.name.toLowerCase().includes('colour');
+        const isSizeOption = SIZE_OPTION_KEYS.some(key => option.name.toLowerCase().includes(key));
+        if (!isSizeOption) return false;
 
-        if (!isColorOption) return false;
-
-        // Check if this variant's color matches any of the selected colors
-        const variantColor = option.value.toLowerCase();
-        return colors.some(
-          selectedColor =>
-            selectedColor.toLowerCase() === variantColor ||
-            variantColor.includes(selectedColor.toLowerCase()) ||
-            selectedColor.toLowerCase().includes(variantColor)
-        );
+        const variantSize = normalizeSize(option.value || '');
+        return normalizedSizes.some(size => variantSize === size || variantSize.includes(size) || size.includes(variantSize));
       });
     });
 
-    // Also check product-level options as fallback
-    if (!hasMatchingColor && product.options) {
-      const colorOption = product.options.find(
-        (opt: any) => opt.name.toLowerCase().includes('color') || opt.name.toLowerCase().includes('colour')
+    // Check product-level options.
+    if (!hasMatchingSize && product.options) {
+      const sizeOption = product.options.find((opt: any) =>
+        SIZE_OPTION_KEYS.some(key => opt.name.toLowerCase().includes(key))
       );
 
-      if (colorOption && colorOption.values) {
-        return colorOption.values.some((value: any) => {
-          // Handle both string values and object values with .name property
-          const colorValue = typeof value === 'string' ? value : value.name || value.id;
-          const optionColor = colorValue.toLowerCase();
-          return colors.some(
-            selectedColor =>
-              selectedColor.toLowerCase() === optionColor ||
-              optionColor.includes(selectedColor.toLowerCase()) ||
-              selectedColor.toLowerCase().includes(optionColor)
-          );
+      if (sizeOption && sizeOption.values) {
+        const optionHasMatch = sizeOption.values.some((value: any) => {
+          const sizeValue = typeof value === 'string' ? value : value.name || value.id;
+          const optionSize = normalizeSize(sizeValue || '');
+          return normalizedSizes.some(size => optionSize === size || optionSize.includes(size) || size.includes(optionSize));
         });
+
+        if (optionHasMatch) return true;
       }
     }
 
-    return hasMatchingColor;
+    // Fallback: match size text in title/description.
+    const text = normalizeSize(`${product.title} ${product.description}`);
+    return normalizedSizes.some(size => text.includes(size));
   });
 
   return filteredProducts;
@@ -74,16 +70,16 @@ function filterProductsByColors(products: Product[], colors: string[]): Product[
 export function ProductListContent({ products, collections }: ProductListContentProps) {
   const { setProducts, setOriginalProducts } = useProducts();
 
-  // Get current color filters from URL
-  const [colorFilters] = useQueryState('fcolor', parseAsArrayOf(parseAsString).withDefault([]));
+  // Get current size filters from URL
+  const [sizeFilters] = useQueryState('fsize', parseAsArrayOf(parseAsString).withDefault([]));
 
-  // Apply client-side filtering whenever products or color filters change
+  // Apply client-side filtering whenever products or size filters change
   const filteredProducts = useMemo(() => {
-    if (!colorFilters || colorFilters.length === 0) {
+    if (!sizeFilters || sizeFilters.length === 0) {
       return products;
     }
-    return filterProductsByColors(products, colorFilters);
-  }, [products, colorFilters]);
+    return filterProductsBySizes(products, sizeFilters);
+  }, [products, sizeFilters]);
 
   // Set both original and filtered products in the provider whenever they change
   useEffect(() => {

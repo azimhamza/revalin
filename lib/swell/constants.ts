@@ -1,6 +1,6 @@
 // Store catalog constants
 export const storeCatalog = {
-  ids: 'all-products,smooth',
+  ids: 'all-products',
   rootCategoryId: 'all-products',
 };
 

@@ -1,14 +1,14 @@
 'use client';
 
 import { cva, type VariantProps } from 'class-variance-authority';
-import { CartProduct, Product, ProductOption, ProductVariant, SelectedOptions } from '@/lib/shopify/types';
+import { CartProduct, Product, ProductOption, ProductVariant, SelectedOptions } from '@/lib/swell/types';
 import { startTransition, useMemo } from 'react';
 import { useQueryState, parseAsString } from 'nuqs';
 import { useParams, useSearchParams } from 'next/navigation';
 import { ColorSwatch } from '@/components/ui/color-picker';
 import { Button } from '@/components/ui/button';
 import { getColorHex } from '@/lib/utils';
-import { getShopifyProductId } from '@/lib/shopify/utils';
+import { getSwellProductId } from '@/lib/swell/utils';
 
 type Combination = {
   id: string;
@@ -34,6 +34,7 @@ interface VariantOptionSelectorComponentProps extends VariantProps<typeof varian
   selectedValue: string;
   selectedOptions: Record<string, string>;
   isTargetingProduct: boolean;
+  hideLabel?: boolean;
   onSelect?: (valueName: string) => void;
 }
 
@@ -44,6 +45,7 @@ export function VariantOptionSelectorComponent({
   selectedValue,
   selectedOptions,
   isTargetingProduct,
+  hideLabel = false,
   onSelect,
 }: VariantOptionSelectorComponentProps) {
   const { variants, options } = product;
@@ -67,13 +69,13 @@ export function VariantOptionSelectorComponent({
 
   return (
     <dl className={variantOptionSelectorVariants({ variant })}>
-      <dt className="text-base font-semibold leading-8">{option.name}</dt>
+      {!hideLabel && <dt className="text-base font-semibold leading-8">{option.name}</dt>}
       <dd className="flex flex-wrap gap-2">
         {option.values.map(value => {
           const currentState = selectedOptions;
           const optionParams = {
             ...currentState,
-            [optionNameLowerCase]: value.id,
+            [optionNameLowerCase]: value.name,
           };
 
           const filtered = Object.entries(optionParams).filter(([key, value]) =>
@@ -130,9 +132,10 @@ export function VariantOptionSelectorComponent({
 interface VariantOptionSelectorProps extends VariantProps<typeof variantOptionSelectorVariants> {
   option: ProductOption;
   product: Product;
+  hideLabel?: boolean;
 }
 
-export function VariantOptionSelector({ option, variant, product }: VariantOptionSelectorProps) {
+export function VariantOptionSelector({ option, variant, product, hideLabel = false }: VariantOptionSelectorProps) {
   const pathname = useParams<{ handle?: string }>();
   const optionNameLowerCase = option.name.toLowerCase();
 
@@ -142,13 +145,13 @@ export function VariantOptionSelector({ option, variant, product }: VariantOptio
   const selectedOptions = useSelectedOptions(product);
 
   const isProductPage = pathname.handle === product.handle;
-  const isTargetingProduct = isProductPage || activeProductId === getShopifyProductId(product.id);
+  const isTargetingProduct = isProductPage || activeProductId === getSwellProductId(product.id);
 
   const handleSelect = (valueName: string) => {
     startTransition(() => {
       setSelectedValue(valueName);
       if (!isProductPage) {
-        setActiveProductId(getShopifyProductId(product.id));
+        setActiveProductId(getSwellProductId(product.id));
       }
     });
   };
@@ -161,6 +164,7 @@ export function VariantOptionSelector({ option, variant, product }: VariantOptio
       selectedValue={selectedValue}
       selectedOptions={selectedOptions}
       isTargetingProduct={isTargetingProduct}
+      hideLabel={hideLabel}
       onSelect={handleSelect}
     />
   );
@@ -185,15 +189,20 @@ export const useSelectedOptions = (product: Product): Record<string, string> => 
 
 export const useSelectedVariant = (product: Product) => {
   const selectedOptions = useSelectedOptions(product);
+  const pathname = useParams<{ handle?: string }>();
+  const searchParams = useSearchParams();
+  const isTargetingProduct =
+    pathname.handle === product.handle || searchParams.get('pid') === getSwellProductId(product.id);
 
   const selectedVariant = useMemo(() => {
+    if (!isTargetingProduct) return undefined;
     const { variants } = product;
     return Array.isArray(variants)
       ? variants.find((variant: ProductVariant) =>
           variant.selectedOptions.every(option => option.value === selectedOptions[option.name.toLowerCase()])
         )
       : undefined;
-  }, [product, selectedOptions]);
+  }, [isTargetingProduct, product, selectedOptions]);
 
   return selectedVariant;
 };
@@ -214,7 +223,7 @@ export const useProductImages = (product: Product | CartProduct, selectedOptions
   }, [selectedOptions]);
 
   // Try to match images by alt text with selected variant values
-  // This enables Shopify products to show different images when variants are selected
+  // This enables products to show different images when variants are selected
   // by matching the image alt text with variant names (e.g., "Red Shirt" shows when Red is selected)
   const variantImagesByAlt = useMemo(() => {
     if (!optionsObject || Object.keys(optionsObject).length === 0) return [];
@@ -237,7 +246,9 @@ export const useProductImages = (product: Product | CartProduct, selectedOptions
 
     return images.filter(image => {
       return Object.entries(optionsObject || {}).every(([key, value]) =>
-        image.selectedOptions?.some(option => option.name === key && option.value === value)
+        image.selectedOptions?.some(
+          option => option.name.toLowerCase() === key && option.value.toLowerCase() === value
+        )
       );
     });
   }, [optionsObject, images]);
@@ -250,7 +261,7 @@ export const useProductImages = (product: Product | CartProduct, selectedOptions
     return variantImages;
   }
 
-  // Then try images matched by alt text (for Shopify products with 2+ variants)
+  // Then try images matched by alt text (for products with 2+ variants)
   if (variantImagesByAlt.length > 0) {
     return variantImagesByAlt;
   }

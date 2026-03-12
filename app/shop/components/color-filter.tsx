@@ -1,37 +1,51 @@
 'use client';
 
-import { ColorPicker } from '@/components/ui/color-picker';
-import { ColorSwatchSkeleton } from '@/components/ui/color-swatch-skeleton';
-import { Product } from '@/lib/shopify/types';
+import { Product } from '@/lib/swell/types';
 import { cn } from '@/lib/utils';
-import { useAvailableColors } from '../hooks/use-available-colors';
-import { useColorFilterCount } from '../hooks/use-filter-count';
+import { Button } from '@/components/ui/button';
+import { useAvailableSizes } from '../hooks/use-available-colors';
+import { useSizeFilterCount } from '../hooks/use-filter-count';
 
-interface ColorFilterProps {
+interface SizeFilterProps {
   products?: Product[];
   className?: string;
 }
 
-export function ColorFilter({ products = [], className }: ColorFilterProps) {
-  const { availableColors, selectedColors, toggleColor } = useAvailableColors(products);
-  const colorCount = useColorFilterCount();
+export function SizeFilter({ products = [], className }: SizeFilterProps) {
+  const { availableSizes, selectedSizes, toggleSize } = useAvailableSizes(products);
+  const sizeCount = useSizeFilterCount();
 
   const isLoading = products.length === 0;
+  const atLeastOneSize = availableSizes.length > 0;
 
-  const atLeastOneColor = availableColors.length > 0;
+  if (!atLeastOneSize && !isLoading) return null;
 
   return (
-    (atLeastOneColor || isLoading) && (
-      <div className={cn('px-3 py-4 rounded-md bg-muted', className)}>
-        <h3 className="mb-4 font-semibold">
-          Color {colorCount > 0 && <span className="text-foreground/50">({colorCount})</span>}
-        </h3>
-        {isLoading ? (
-          <ColorSwatchSkeleton count={4} />
-        ) : (
-          <ColorPicker colors={availableColors} selectedColors={selectedColors} onColorChange={toggleColor} />
-        )}
-      </div>
-    )
+    <div className={cn('px-3 py-4 rounded-md bg-muted', className)}>
+      <h3 className="mb-4 font-semibold">
+        Size {sizeCount > 0 && <span className="text-foreground/50">({sizeCount})</span>}
+      </h3>
+      {isLoading ? (
+        <div className="flex flex-wrap gap-2">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div key={index} className="h-8 w-16 rounded-md bg-foreground/10 animate-pulse" />
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {availableSizes.map(size => {
+            const isSelected = selectedSizes.includes(size);
+            return (
+              <Button key={size} size="sm" variant={isSelected ? 'default' : 'outline'} onClick={() => toggleSize(size)}>
+                {size}
+              </Button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
+
+// Backward-compatible export for existing imports during transition.
+export const ColorFilter = SizeFilter;

@@ -8,7 +8,7 @@ import Link from 'next/link';
 import { navItems } from './index';
 import { SidebarLinks } from '../sidebar/product-sidebar-links';
 import { ShopLinks } from '../shop-links';
-import { Collection } from '@/lib/shopify/types';
+import { Collection } from '@/lib/swell/types';
 import { useBodyScrollLock } from '@/lib/hooks/use-body-scroll-lock';
 
 interface MobileMenuProps {

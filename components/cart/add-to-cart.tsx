@@ -1,7 +1,7 @@
 'use client';
 
 import { PlusCircleIcon } from 'lucide-react';
-import { Product, ProductVariant } from '@/lib/shopify/types';
+import { Product, ProductVariant } from '@/lib/swell/types';
 import { useMemo, useTransition } from 'react';
 import { useCart } from './cart-context';
 import { Button, ButtonProps } from '../ui/button';
@@ -10,7 +10,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader } from '../ui/loader';
-import { getShopifyProductId } from '@/lib/shopify/utils';
+import { getSwellProductId } from '@/lib/swell/utils';
 
 interface AddToCartProps extends ButtonProps {
   product: Product;
@@ -145,7 +145,7 @@ export function AddToCart({
   const defaultVariantId = variants.length === 1 ? variants[0]?.id : undefined;
   const selectedVariantId = selectedVariant?.id || defaultVariantId;
   const isTargetingProduct =
-    pathname.handle === product.handle || searchParams.get('pid') === getShopifyProductId(product.id);
+    pathname.handle === product.handle || searchParams.get('pid') === getSwellProductId(product.id);
 
   const resolvedVariant = useMemo(() => {
     if (hasNoVariants) return getBaseProductVariant(product);

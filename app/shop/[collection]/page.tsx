@@ -1,5 +1,5 @@
 import { Metadata } from 'next';
-import { getCollection, getCollections } from '@/lib/shopify';
+import { getCollection, getCollections } from '@/lib/swell';
 import { notFound } from 'next/navigation';
 import ProductList from '../components/product-list';
 
@@ -27,8 +27,19 @@ export async function generateMetadata(props: { params: Promise<{ collection: st
   if (!collection) return notFound();
 
   return {
-    title: `ACME Store | ${collection.seo?.title || collection.title}`,
-    description: collection.seo?.description || collection.description || `${collection.title} products`,
+    title: `Revalin | ${collection.seo?.title || collection.title}`,
+    description:
+      collection.seo?.description ||
+      collection.description ||
+      `${collection.title} research peptide products available for qualified purchase through Revalin.`,
+    keywords: [
+      `${collection.title} peptides`,
+      `${collection.title} peptide purchase`,
+      'research peptides',
+      'peptide distributor',
+      'research product supplier',
+      'laboratory peptides',
+    ],
   };
 }
 

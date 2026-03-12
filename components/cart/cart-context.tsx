@@ -1,6 +1,6 @@
 'use client';
 
-import { Cart, CartItem, Product, ProductVariant } from '@/lib/shopify/types';
+import { Cart, CartItem, Product, ProductVariant } from '@/lib/swell/types';
 import React, {
   createContext,
   useCallback,

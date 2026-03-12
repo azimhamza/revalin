@@ -4,17 +4,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Button } from '@/components/ui/button';
 import { useBodyScrollLock } from '@/lib/hooks/use-body-scroll-lock';
+import { LogoSvg } from '@/components/layout/header/logo-svg';
 
-const STORAGE_KEY = 'revalin_research_disclaimer_v1';
-const ACK_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
-type StoredAck = {
-  acceptedAt: number;
-  expiresAt: number;
-};
+const STORAGE_KEY = 'revalin_research_disclaimer_ack_session';
 
 export function ResearchDisclaimerPopup() {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
   const snowflakes = useMemo(
     () =>
       Array.from({ length: 20 }).map((_, index) => ({
@@ -32,33 +27,17 @@ export function ResearchDisclaimerPopup() {
 
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (!raw) {
-        setIsOpen(true);
-        return;
-      }
-
-      const parsed = JSON.parse(raw) as StoredAck;
-      if (!parsed.expiresAt || parsed.expiresAt < Date.now()) {
-        setIsOpen(true);
-        return;
-      }
-
-      setIsOpen(false);
+      const hasAcknowledgedThisSession = window.sessionStorage.getItem(STORAGE_KEY) === 'true';
+      setIsOpen(!hasAcknowledgedThisSession);
     } catch {
+      // Storage unavailable: fail open so users still see the disclaimer.
       setIsOpen(true);
     }
   }, []);
 
   const handleAccept = () => {
-    const now = Date.now();
-    const payload: StoredAck = {
-      acceptedAt: now,
-      expiresAt: now + ACK_TTL_MS,
-    };
-
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      window.sessionStorage.setItem(STORAGE_KEY, 'true');
     } catch {
       // If storage is unavailable, keep a session-only acknowledgement.
     }
@@ -67,7 +46,14 @@ export function ResearchDisclaimerPopup() {
   };
 
   const handleExit = () => {
-    window.location.href = '/';
+    // Attempt to close the current tab/window.
+    window.open('', '_self');
+    window.close();
+
+    // Fallback for browsers that block closing non-script-opened tabs.
+    setTimeout(() => {
+      window.location.replace('about:blank');
+    }, 80);
   };
 
   return (
@@ -79,7 +65,7 @@ export function ResearchDisclaimerPopup() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-[80] bg-foreground/50 backdrop-blur-sm p-4"
+            className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm p-4"
           >
             <div className="h-full w-full grid place-items-center">
               <motion.section
@@ -87,7 +73,7 @@ export function ResearchDisclaimerPopup() {
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.98, y: 8 }}
                 transition={{ duration: 0.24, ease: 'easeOut' }}
-                className="relative w-full max-w-lg overflow-hidden rounded-md border border-border bg-card p-6 md:p-7 shadow-2xl"
+                className="relative w-full max-w-lg overflow-hidden rounded-md border border-white/25 bg-[#0B2E2F] p-6 text-white md:p-7 shadow-2xl"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="research-disclaimer-title"
@@ -110,28 +96,47 @@ export function ResearchDisclaimerPopup() {
                   ))}
                 </div>
 
-                <div className="relative">
-                  <p className="text-xs font-semibold tracking-[0.15em] text-foreground/60 uppercase mb-2">
-                    Research Knowledge Access
+                <div className="relative text-center">
+                  <div className="mb-4 flex flex-col items-center">
+                    <LogoSvg className="w-44 h-auto md:w-52 text-white" />
+                    <p className="mt-2 text-[11px] tracking-[0.14em] uppercase text-white/80">
+                      Intelligence Beyond Baseline
+                    </p>
+                  </div>
+                  <p className="mb-1 text-sm font-medium text-white/80">
+                    Revalin Access Notice
                   </p>
-                  <h2 id="research-disclaimer-title" className="text-2xl font-semibold mb-3">
-                    Research Purposes Only
+                  <h2 id="research-disclaimer-title" className="mb-3 text-2xl font-semibold leading-tight text-white">
+                    Research Use Compliance
                   </h2>
-                  <p id="research-disclaimer-description" className="text-sm text-muted-foreground">
-                    This section is provided strictly for educational and laboratory research context. By continuing,
-                    you confirm you are at least 18 years old and understand this content is not for human consumption
-                    or medical use.
+                  <p id="research-disclaimer-description" className="text-sm text-white/85">
+                    Revalin is a chemical supplier for legitimate research institutions and professionals. Revalin is
+                    not a compounding pharmacy or chemical compounding facility as defined under Section 503A of the
+                    Federal Food, Drug, and Cosmetic Act, and is not an outsourcing facility as defined under Section
+                    503B of the Federal Food, Drug, and Cosmetic Act.
                   </p>
 
-                  <div className="mt-5 rounded border border-border/70 bg-background/50 p-3 text-xs text-foreground/75">
-                    I confirm I am 18+ and accessing this material for lawful research purposes only.
+                  <p className="mt-3 text-sm text-white/85">
+                    All products are provided exclusively for in-vitro and pre-clinical research. They are not for
+                    human or veterinary use, consumption, or therapeutic application. By continuing, you confirm your
+                    organization has appropriate facilities, trained personnel, and safety controls for lawful handling
+                    and accepts responsibility for compliant use.
+                  </p>
+
+                  <div className="mt-5 rounded border border-white/25 bg-white/10 p-3 text-xs text-white/90">
+                    I confirm I am 18+, represent a qualified purchaser, and will use these materials solely for
+                    lawful research purposes.
                   </div>
 
-                  <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-                    <Button variant="outline" onClick={handleExit} className="sm:min-w-28">
+                  <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-center gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={handleExit}
+                      className="sm:min-w-28 border-white/40 text-white hover:bg-white/10 hover:text-white"
+                    >
                       Leave
                     </Button>
-                    <Button onClick={handleAccept} className="sm:min-w-44">
+                    <Button onClick={handleAccept} className="sm:min-w-44 bg-white text-[#0B2E2F] hover:bg-white/90">
                       I Understand
                     </Button>
                   </div>

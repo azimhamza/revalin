@@ -3,11 +3,11 @@
 import React, { Suspense } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Collection } from '@/lib/shopify/types';
+import { Collection } from '@/lib/swell/types';
 import Link from 'next/link';
 import { SidebarLinks } from '@/components/layout/sidebar/product-sidebar-links';
 import { CategoryFilter } from './category-filter';
-import { ColorFilter } from './color-filter';
+import { SizeFilter } from './color-filter';
 import { useProducts } from '../providers/products-provider';
 import { useFilterCount } from '../hooks/use-filter-count';
 
@@ -36,7 +36,7 @@ export function DesktopFilters({ collections, className }: { collections: Collec
         </div>
         <Suspense fallback={null}>
           <CategoryFilter collections={collections} />
-          <ColorFilter products={originalProducts} />
+          <SizeFilter products={originalProducts} />
         </Suspense>
       </div>
 

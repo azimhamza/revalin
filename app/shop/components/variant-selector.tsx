@@ -1,5 +1,5 @@
 import { VariantOptionSelector } from '@/components/products/variant-selector';
-import { Product } from '@/lib/shopify/types';
+import { Product } from '@/lib/swell/types';
 
 export const VariantSelector = ({ product }: { product: Product }) => {
   const { options } = product;
@@ -13,7 +13,7 @@ export const VariantSelector = ({ product }: { product: Product }) => {
   return (
     <>
       {options.map(option => (
-        <VariantOptionSelector key={option.id} option={option} product={product} variant="condensed" />
+        <VariantOptionSelector key={option.id} option={option} product={product} variant="condensed" hideLabel />
       ))}
     </>
   );

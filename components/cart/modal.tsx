@@ -9,11 +9,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '../ui/button';
 import { Loader } from '../ui/loader';
 import { CartItemCard } from './cart-item';
-import { formatPrice } from '@/lib/shopify/utils';
+import { formatPrice } from '@/lib/swell/utils';
 import { useBodyScrollLock } from '@/lib/hooks/use-body-scroll-lock';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
-import { Cart } from '../../lib/shopify/types';
+import { Cart } from '../../lib/swell/types';
 
 const CartContainer = ({ children, className }: { children: React.ReactNode; className?: string }) => {
   return <div className={cn('px-3 md:px-4', className)}>{children}</div>;

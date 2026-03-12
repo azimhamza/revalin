@@ -1,15 +1,16 @@
 'use client';
 
 import { useProductImages, useSelectedVariant } from '@/components/products/variant-selector';
-import { Product } from '@/lib/shopify/types';
-import Image from 'next/image';
+import { BlurUpImage } from '@/components/ui/blur-up-image';
+import { Product } from '@/lib/swell/types';
+import { getImageBlurDataURL } from '@/lib/swell/utils';
 
 export const DesktopGallery = ({ product }: { product: Product }) => {
   const selectedVariant = useSelectedVariant(product);
   const images = useProductImages(product, selectedVariant?.selectedOptions);
 
   return images.map(image => (
-    <Image
+    <BlurUpImage
       style={{
         aspectRatio: `${image.width} / ${image.height}`,
       }}
@@ -20,6 +21,8 @@ export const DesktopGallery = ({ product }: { product: Product }) => {
       height={image.height}
       className="w-full object-cover"
       quality={100}
+      placeholder="blur"
+      blurDataURL={getImageBlurDataURL(image.thumbhash)}
     />
   ));
 };

@@ -1,7 +1,8 @@
 import { cn } from '@/lib/utils';
-import Image from 'next/image';
+import { BlurUpImage } from '@/components/ui/blur-up-image';
 import { FeaturedProductLabel } from './featured-product-label';
-import { Product } from '@/lib/shopify/types';
+import { Product } from '@/lib/swell/types';
+import { getImageBlurDataURL } from '@/lib/swell/utils';
 import Link from 'next/link';
 
 interface LatestProductCardProps {
@@ -21,7 +22,7 @@ export function LatestProductCard({
     return (
       <div className={cn('min-h-fold flex flex-col relative', className)}>
         <Link href={`/product/${product.handle}`} className="size-full flex-1 flex flex-col" prefetch>
-          <Image
+          <BlurUpImage
             priority
             src={product.featuredImage.url}
             alt={product.featuredImage.altText}
@@ -29,6 +30,8 @@ export function LatestProductCard({
             height={100}
             quality={100}
             className="object-cover size-full flex-1"
+            placeholder="blur"
+            blurDataURL={getImageBlurDataURL(product.featuredImage.thumbhash)}
           />
         </Link>
         <div className="absolute bottom-0 left-0 grid w-full grid-cols-4 gap-6 pointer-events-none max-md:contents p-sides">
@@ -45,12 +48,14 @@ export function LatestProductCard({
   return (
     <div className={cn('relative', className)}>
       <Link href={`/product/${product.handle}`} className="block w-full aspect-square" prefetch>
-        <Image
+        <BlurUpImage
           src={product.featuredImage.url}
           alt={product.featuredImage.altText}
           width={1000}
           height={100}
           className="object-cover size-full"
+          placeholder="blur"
+          blurDataURL={getImageBlurDataURL(product.featuredImage.thumbhash)}
         />
       </Link>
 

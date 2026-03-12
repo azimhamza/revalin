@@ -1,7 +1,7 @@
 import { LogoSvg } from './header/logo-svg';
 import { ShopLinks } from './shop-links';
 import { SidebarLinks } from './sidebar/product-sidebar-links';
-import { getCollections } from '@/lib/shopify';
+import { getCollections } from '@/lib/swell';
 
 export async function Footer() {
   const collections = await getCollections();

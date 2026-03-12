@@ -2,7 +2,7 @@
 
 import { Minus, Plus } from 'lucide-react';
 import clsx from 'clsx';
-import { CartItem } from '@/lib/shopify/types';
+import { CartItem } from '@/lib/swell/types';
 import { useCart } from './cart-context';
 
 function SubmitButton({ type }: { type: 'plus' | 'minus' }) {

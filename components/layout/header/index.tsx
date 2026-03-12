@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { LogoSvg } from './logo-svg';
 import CartModal from '@/components/cart/modal';
 import { NavItem } from '@/lib/types';
-import { Collection } from '@/lib/shopify/types';
+import { Collection } from '@/lib/swell/types';
 
 export const navItems: NavItem[] = [
   {

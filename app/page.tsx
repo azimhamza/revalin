@@ -2,9 +2,33 @@ import { HomeSidebar } from '@/components/layout/sidebar/home-sidebar';
 import { PageLayout } from '@/components/layout/page-layout';
 import { LatestProductCard } from '@/components/products/latest-product-card';
 import { Badge } from '@/components/ui/badge';
-import { getCollectionProducts, getCollections, getProducts } from '@/lib/shopify';
-import { getLabelPosition } from '../lib/utils';
-import { Product } from '../lib/shopify/types';
+import { getCollectionProducts, getCollections, getProduct, getProducts } from '@/lib/swell';
+import { Product } from '../lib/swell/types';
+
+const FEATURED_PRODUCT_HANDLE = 'retatrutide-glp1-triple-agonist';
+const FEATURED_PRODUCT_KEYWORDS = ['retatrutide', 'glp-3rt'];
+const FEATURED_PRODUCTS_LIMIT = 5;
+
+function isFeaturedProduct(product: Product): boolean {
+  const handle = (product.handle || '').toLowerCase();
+  const title = (product.title || '').toLowerCase();
+
+  if (handle === FEATURED_PRODUCT_HANDLE) return true;
+
+  return FEATURED_PRODUCT_KEYWORDS.some(keyword => handle.includes(keyword) || title.includes(keyword));
+}
+
+function uniqueProducts(products: Product[]): Product[] {
+  return products.filter(
+    (product, index, self) => self.findIndex(candidate => candidate.id === product.id) === index
+  );
+}
+
+function prioritizeFeaturedProduct(products: Product[], featuredProduct?: Product | null): Product[] {
+  const featured = featuredProduct || products.find(isFeaturedProduct);
+  if (!featured) return products;
+  return [featured, ...products.filter(product => product.id !== featured.id)];
+}
 
 export default async function Home() {
   const collections = await getCollections();
@@ -12,12 +36,34 @@ export default async function Home() {
   let featuredProducts: Product[] = [];
 
   try {
+    let featuredMatch: Product | null = null;
+
     if (collections.length > 0) {
       featuredProducts = await getCollectionProducts({ collection: collections[0].handle });
-    } else {
-      const allProducts = await getProducts({});
-      featuredProducts = allProducts.slice(0, 8);
+      featuredMatch = featuredProducts.find(isFeaturedProduct) || null;
     }
+
+    // Pull from global catalog when collection results do not include Retatrutide.
+    if (!featuredMatch || featuredProducts.length === 0) {
+      const allProducts = await getProducts({ limit: 100 });
+      const retatrutideMatches = await getProducts({ limit: 20, query: 'retatrutide' });
+
+      featuredMatch =
+        featuredMatch || retatrutideMatches.find(isFeaturedProduct) || allProducts.find(isFeaturedProduct) || null;
+
+      featuredProducts = uniqueProducts([...featuredProducts, ...allProducts, ...retatrutideMatches]).slice(
+        0,
+        FEATURED_PRODUCTS_LIMIT * 2
+      );
+    } else {
+      featuredProducts = uniqueProducts(featuredProducts).slice(0, FEATURED_PRODUCTS_LIMIT * 2);
+    }
+
+    if (!featuredMatch) {
+      featuredMatch = await getProduct(FEATURED_PRODUCT_HANDLE);
+    }
+
+    featuredProducts = prioritizeFeaturedProduct(featuredProducts, featuredMatch).slice(0, FEATURED_PRODUCTS_LIMIT);
   } catch (error) {
     console.error('Error fetching featured products:', error);
     featuredProducts = [];
@@ -41,12 +87,11 @@ export default async function Home() {
             <>
               <LatestProductCard className="col-span-2" product={lastProduct} principal />
 
-              {restProducts.map((product: any, index: number) => (
+              {restProducts.map((product: any) => (
                 <LatestProductCard
                   className="col-span-1"
                   key={product.id}
                   product={product}
-                  labelPosition={getLabelPosition(index)}
                 />
               ))}
             </>

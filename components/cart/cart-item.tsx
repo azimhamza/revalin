@@ -1,13 +1,13 @@
 'use client';
 
-import { CartItem } from '@/lib/shopify/types';
+import { CartItem } from '@/lib/swell/types';
 import { DEFAULT_OPTION } from '@/lib/constants';
 import { createUrl, getColorHex } from '@/lib/utils';
 import Image from 'next/image';
 import Link from 'next/link';
 import { DeleteItemButton } from './delete-item-button';
 import { EditItemQuantityButton } from './edit-item-quantity-button';
-import { formatPrice } from '@/lib/shopify/utils';
+import { formatPrice, getImageBlurDataURL } from '@/lib/swell/utils';
 import { ColorSwatch } from '@/components/ui/color-picker';
 import { useProductImages } from '../products/variant-selector';
 
@@ -40,6 +40,9 @@ export function CartItemCard({ item, onCloseCart }: CartItemProps) {
   const imgs = useProductImages(item.merchandise.product, item.merchandise.selectedOptions);
 
   const [renderImage] = imgs;
+  const image = renderImage || item.merchandise.product.featuredImage;
+  const imageUrl = image?.url || '/placeholder.jpg';
+  const imageAlt = image?.altText || item.merchandise.product.title;
 
   return (
     <div className="bg-popover rounded-lg p-2">
@@ -49,9 +52,10 @@ export function CartItemCard({ item, onCloseCart }: CartItemProps) {
             className="size-full object-cover"
             width={240}
             height={240}
-            blurDataURL={renderImage.url}
-            alt={renderImage.altText || item.merchandise.product.title}
-            src={renderImage.url}
+            src={imageUrl}
+            alt={imageAlt}
+            placeholder="blur"
+            blurDataURL={getImageBlurDataURL(image?.thumbhash)}
           />
 
           {/* Color pill overlay */}

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
-import { getCollection, getProduct, getProducts } from '@/lib/shopify';
+import { getCollection, getProduct, getProducts } from '@/lib/swell';
 import { HIDDEN_PRODUCT_TAG } from '@/lib/constants';
 import {
   Breadcrumb,
@@ -14,9 +14,9 @@ import {
 import Link from 'next/link';
 import { SidebarLinks } from '@/components/layout/sidebar/product-sidebar-links';
 import { AddToCart, AddToCartButton } from '@/components/cart/add-to-cart';
-import { storeCatalog } from '@/lib/shopify/constants';
+import { storeCatalog } from '@/lib/swell/constants';
 import Prose from '@/components/prose';
-import { formatPrice } from '@/lib/shopify/utils';
+import { formatPrice } from '@/lib/swell/utils';
 import { Suspense } from 'react';
 import { cn } from '@/lib/utils';
 import { PageLayout } from '@/components/layout/page-layout';
@@ -104,7 +104,6 @@ export default async function ProductPage(props: { params: Promise<{ handle: str
   ) ?? [undefined];
 
   const hasVariants = product.variants.length > 1;
-  const hasEvenOptions = product.options.length % 2 === 0;
 
   return (
     <PageLayout className="bg-muted">
@@ -154,12 +153,11 @@ export default async function ProductPage(props: { params: Promise<{ handle: str
             </Breadcrumb>
 
             <div className="flex flex-col col-span-full gap-4 md:mb-10 max-md:order-2">
-              <div className="flex flex-col grid-cols-2 px-3 py-2 rounded-md bg-popover md:grid md:gap-x-4 md:gap-y-10 place-items-baseline">
-                <h1 className="text-lg font-semibold lg:text-xl 2xl:text-2xl text-balance max-md:mb-4">
+              <div className="flex flex-col gap-4 px-3 py-2 rounded-md bg-popover">
+                <h1 className="text-lg font-semibold lg:text-xl 2xl:text-2xl text-balance">
                   {product.title}
                 </h1>
-                <p className="text-sm font-medium">{product.description}</p>
-                <p className="flex gap-3 items-center text-lg font-semibold lg:text-xl 2xl:text-2xl max-md:mt-8">
+                <p className="flex gap-3 items-center text-lg font-semibold lg:text-xl 2xl:text-2xl">
                   {formatPrice(
                     product.priceRange.minVariantPrice.amount,
                     product.priceRange.minVariantPrice.currencyCode
@@ -171,7 +169,7 @@ export default async function ProductPage(props: { params: Promise<{ handle: str
                   )}
                 </p>
               </div>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
                 <Suspense fallback={<VariantSelectorSlots product={product} fallback />}>
                   <VariantSelectorSlots product={product} />
                 </Suspense>
@@ -179,8 +177,8 @@ export default async function ProductPage(props: { params: Promise<{ handle: str
                 <Suspense
                   fallback={
                     <AddToCartButton
-                      className={cn('w-full', {
-                        'col-span-full': !hasVariants || hasEvenOptions,
+                      className={cn('w-full md:w-auto md:min-w-[280px] md:col-start-2 md:self-start', {
+                        'md:col-span-full md:col-start-1 md:w-full': !hasVariants,
                       })}
                       product={product}
                       size="lg"
@@ -190,8 +188,8 @@ export default async function ProductPage(props: { params: Promise<{ handle: str
                   <AddToCart
                     product={product}
                     size="lg"
-                    className={cn('w-full', {
-                      'col-span-full': !hasVariants || hasEvenOptions,
+                    className={cn('w-full md:w-auto md:min-w-[280px] md:col-start-2 md:self-start', {
+                      'md:col-span-full md:col-start-1 md:w-full': !hasVariants,
                     })}
                   />
                 </Suspense>

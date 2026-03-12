@@ -6,6 +6,21 @@ interface EnvCheckResult {
   label: string;
 }
 
+function hasSwellStoreConfig(): boolean {
+  return Boolean(
+    process.env.SWELL_STORE_ID ||
+      process.env.NEXT_PUBLIC_SWELL_STORE_ID ||
+      process.env.SWELL_STORE_URL ||
+      process.env.NEXT_PUBLIC_SWELL_STORE_URL ||
+      process.env.SWELL_API_URL ||
+      process.env.NEXT_PUBLIC_SWELL_API_URL
+  );
+}
+
+function hasSwellPublicKey(): boolean {
+  return Boolean(process.env.SWELL_PUBLIC_KEY || process.env.NEXT_PUBLIC_SWELL_PUBLIC_KEY);
+}
+
 export async function checkEnvs(): Promise<{
   envs: EnvCheckResult[];
   allValid: boolean;
@@ -17,13 +32,18 @@ export async function checkEnvs(): Promise<{
     };
   }
 
-  const requiredEnvs = [{ name: 'NEXT_PUBLIC_WOOCOMMERCE_STORE_URL', label: 'WooCommerce Store URL' }];
-
-  const envs: EnvCheckResult[] = requiredEnvs.map(env => ({
-    name: env.name,
-    label: env.label,
-    isValid: Boolean(process.env[env.name]),
-  }));
+  const envs: EnvCheckResult[] = [
+    {
+      name: 'SWELL_STORE_ID|NEXT_PUBLIC_SWELL_STORE_URL',
+      label: 'Swell Store ID, Store URL, or API URL',
+      isValid: hasSwellStoreConfig(),
+    },
+    {
+      name: 'SWELL_PUBLIC_KEY',
+      label: 'Swell Public Key',
+      isValid: hasSwellPublicKey(),
+    },
+  ];
 
   const allValid = envs.every(env => env.isValid);
 

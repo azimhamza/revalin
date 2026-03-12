@@ -1,6 +1,6 @@
 'use client';
 
-import { CartItem } from '@/lib/shopify/types';
+import { CartItem } from '@/lib/swell/types';
 import { Button } from '../ui/button';
 import { useCart } from './cart-context';
 

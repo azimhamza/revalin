@@ -1,29 +1,34 @@
-# WooCommerce Headless Storefront
+# Swell Headless Storefront
 
 *Automatically synced with your [v0.app](https://v0.app) deployments*
 
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/shared-8867s-projects/v0-shopify-ecommerce-template)
+[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com)
 [![Built with v0](https://img.shields.io/badge/Built%20with-v0.app-black?style=for-the-badge)](https://v0.app/chat/projects/PRfRz1Lck6u)
 
 ## Overview
 
-This storefront now uses a headless WooCommerce connection (Store API) for products and categories.
-The legacy Shopify integration layer has been replaced at the data adapter level while preserving existing UI contracts.
+This storefront uses Swell's Frontend API for products and categories.
+The adapter keeps your existing UI contracts intact while replacing the legacy WordPress/WooCommerce backend dependency.
 
-### Required environment variable
+## Required environment variables
 
-- `NEXT_PUBLIC_WOOCOMMERCE_STORE_URL` (example: `https://yourdomain.com`)
+- `SWELL_STORE_ID` (or `NEXT_PUBLIC_SWELL_STORE_URL`)
+- `SWELL_PUBLIC_KEY`
 
-### Optional environment variables
+## Optional environment variables
 
-- `NEXT_PUBLIC_WOOCOMMERCE_CHECKOUT_URL` (defaults to `<store-url>/checkout`)
+- `SWELL_SECRET_KEY` (recommended for full Backend API access, including expanded stock/category data)
+- `NEXT_PUBLIC_SWELL_STORE_URL` (if you prefer URL over store ID)
+- `SWELL_API_URL` (advanced: set explicit API base if your store uses a non-standard API host)
+- `NEXT_PUBLIC_SWELL_PUBLIC_KEY`
+- `NEXT_PUBLIC_SWELL_CHECKOUT_URL`
 - `NEXT_PUBLIC_STORE_CURRENCY` (defaults to `USD`)
 
 ## Deployment
 
 Your project is live at:
 
-**[https://vercel.com/shared-8867s-projects/v0-shopify-ecommerce-template](https://vercel.com/shared-8867s-projects/v0-shopify-ecommerce-template)**
+Configured in your Vercel project settings.
 
 ## Build your app
 
@@ -37,4 +42,5 @@ Continue building your app on:
 2. Deploy your chats from the v0 interface
 3. Changes are automatically pushed to this repository
 4. Vercel deploys the latest version from this repository
+
 # revalin

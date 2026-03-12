@@ -1,6 +1,11 @@
 import { thumbHashToDataURL } from 'thumbhash';
 import { ProductCollectionSortKey, ProductSortKey } from './types';
 
+const DEFAULT_BLUR_SVG = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop stop-color='#d9d6ce' offset='0'/><stop stop-color='#c8c4ba' offset='1'/></linearGradient></defs><rect width='24' height='24' fill='url(#g)'/></svg>`;
+export const DEFAULT_BLUR_DATA_URL = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(DEFAULT_BLUR_SVG)}`;
+
+export const getImageBlurDataURL = (thumbhash?: string) => thumbhash || DEFAULT_BLUR_DATA_URL;
+
 // Format price utility
 export const formatPrice = (price: string, currencyCode: string): string => {
   return new Intl.NumberFormat(undefined, {
@@ -65,6 +70,6 @@ export function mapSortKeys(
   }
 }
 
-export const getShopifyProductId = (gid: string) => {
+export const getSwellProductId = (gid: string) => {
   return gid.split('/').pop() || '';
 };

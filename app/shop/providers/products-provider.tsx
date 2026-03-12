@@ -1,6 +1,6 @@
 'use client';
 
-import { Product } from '@/lib/shopify/types';
+import { Product } from '@/lib/swell/types';
 import { createContext, useContext, useState, ReactNode } from 'react';
 
 interface ProductsContextType {

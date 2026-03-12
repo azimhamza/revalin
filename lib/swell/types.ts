@@ -1,25 +1,33 @@
-export interface ShopifyProduct {
+export interface SwellProduct {
   id: string;
   title: string;
   description: string;
   descriptionHtml: string;
   handle: string;
-  productType: string; // For category-like filtering (available in tokenless)
+  productType: string;
+  availableForSale?: boolean;
+  stockStatus?: string;
+  stockLevel?: number;
   category?: {
     id: string;
     name: string;
-  }; // Shopify's Standard Product Taxonomy category
+    handle?: string;
+  };
   options: Array<{
     id: string;
     name: string;
     values: string[];
-  }>; // Direct product options (Color, Size, etc.)
+  }>;
   images: {
     edges: Array<{
       node: {
         url: string;
         altText: string;
         thumbhash?: string;
+        selectedOptions?: Array<{
+          name: string;
+          value: string;
+        }>;
       };
     }>;
   };
@@ -54,7 +62,117 @@ export interface ShopifyProduct {
   };
 }
 
-export interface ShopifyCollection {
+export interface SwellApiFile {
+  url?: string;
+}
+
+export interface SwellApiImage {
+  url?: string;
+  file?: SwellApiFile;
+  alt?: string;
+  caption?: string;
+  name?: string;
+}
+
+export interface SwellApiCategory {
+  id?: string;
+  name?: string;
+  slug?: string;
+  description?: string;
+  active?: boolean;
+  parent_id?: string;
+}
+
+export interface SwellApiOptionValue {
+  id?: string;
+  name?: string;
+  value?: string;
+  label?: string;
+}
+
+export interface SwellApiOption {
+  id?: string;
+  name?: string;
+  variant?: boolean;
+  values?: SwellApiOptionValue[];
+}
+
+export interface SwellApiVariant {
+  id?: string;
+  parent_id?: string;
+  name?: string;
+  sku?: string;
+  price?: number | string;
+  sale?: boolean;
+  sale_price?: number | string;
+  orig_price?: number | string;
+  currency?: string;
+  active?: boolean;
+  stock_status?: string;
+  stock_purchasable?: boolean;
+  option_value_ids?: string[];
+  images?: SwellApiImage[];
+  option_values?: Array<
+    SwellApiOptionValue & {
+      option?: { name?: string };
+      option_id?: string;
+    }
+  >;
+  options?: Record<string, string>;
+}
+
+export interface SwellApiStock {
+  id?: string;
+  parent_id?: string;
+  variant_id?: string;
+  quantity?: number;
+  level?: number;
+  reason?: 'received' | 'returned' | 'canceled' | 'sold' | 'missing' | 'damaged' | string;
+  reason_message?: string;
+  location?: string;
+  order_id?: string;
+  date_created?: string;
+  date_updated?: string;
+}
+
+export interface SwellApiProduct {
+  id?: string;
+  name?: string;
+  slug?: string;
+  description?: string;
+  content?: string;
+  price?: number | string;
+  sale?: boolean;
+  sale_price?: number | string;
+  orig_price?: number | string;
+  currency?: string;
+  type?: string;
+  tags?: string[];
+  active?: boolean;
+  stock_status?: string;
+  stock_level?: number;
+  stock_tracking?: boolean;
+  stock_purchasable?: boolean;
+  images?: SwellApiImage[];
+  image?: SwellApiImage;
+  category?: string | SwellApiCategory;
+  category_id?: string;
+  categories?: Array<SwellApiCategory | string> | SwellApiListResponse<SwellApiCategory | string>;
+  options?: SwellApiOption[];
+  variants?: SwellApiVariant[] | SwellApiListResponse<SwellApiVariant>;
+  stock?: SwellApiStock[] | SwellApiListResponse<SwellApiStock>;
+  date_created?: string;
+  date_updated?: string;
+}
+
+export interface SwellApiListResponse<T> {
+  count?: number;
+  page?: number;
+  pages?: Record<string, { start: number; end: number }>;
+  results?: T[];
+}
+
+export interface SwellCollection {
   id: string;
   title: string;
   handle: string;
@@ -65,7 +183,7 @@ export interface ShopifyCollection {
   };
 }
 
-export interface ShopifyCartLine {
+export interface SwellCartLine {
   id: string;
   quantity: number;
   merchandise: {
@@ -95,10 +213,10 @@ export interface ShopifyCartLine {
   };
 }
 
-export interface ShopifyCart {
+export interface SwellCart {
   id: string;
   lines: {
-    edges: Array<{ node: ShopifyCartLine }>;
+    edges: Array<{ node: SwellCartLine }>;
   };
   cost: {
     totalAmount: {
@@ -117,7 +235,7 @@ export interface ShopifyCart {
   checkoutUrl: string;
 }
 
-// Clean types for the new Shopify-only structure
+// Clean types for the Swell-backed storefront structure
 export type Collection = {
   handle: string;
   title: string;

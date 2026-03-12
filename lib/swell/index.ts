@@ -1,19 +1,19 @@
 import { unstable_cacheLife as cacheLife, unstable_cacheTag as cacheTag } from 'next/cache';
 import { TAGS } from '@/lib/constants';
 import {
-  getCollections as getShopifyCollections,
-  getProducts as getShopifyProducts,
-  getCollectionProducts as getShopifyCollectionProducts,
-  getProduct as getShopifyProduct,
+  getCollections as getSwellCollections,
+  getProducts as getSwellProducts,
+  getCollectionProducts as getSwellCollectionProducts,
+  getProduct as getSwellProduct,
   createCart,
   addCartLines,
   updateCartLines,
   removeCartLines,
-} from './shopify';
+} from './swell';
 import { thumbhashToDataURL } from './utils';
 import type {
-  ShopifyProduct,
-  ShopifyCollection,
+  SwellProduct,
+  SwellCollection,
   Product,
   Collection,
   Cart,
@@ -42,19 +42,27 @@ function getFirstSentence(text: string): string {
   return cleaned;
 }
 
+function normalizeHandle(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 // Helper functions for consistent data transformation
 
-function transformShopifyMoney(shopifyMoney: { amount: string; currencyCode: string } | undefined): Money {
+function transformSwellMoney(money: { amount: string; currencyCode: string } | undefined): Money {
   return {
-    amount: shopifyMoney?.amount || '0',
-    currencyCode: shopifyMoney?.currencyCode || 'USD',
+    amount: money?.amount || '0',
+    currencyCode: money?.currencyCode || 'USD',
   };
 }
 
-function transformShopifyOptions(
-  shopifyOptions: Array<{ id?: string; name: string; values: string[] }>
+function transformSwellOptions(
+  options: Array<{ id?: string; name: string; values: string[] }>
 ): ProductOption[] {
-  return shopifyOptions.map(option => ({
+  return options.map(option => ({
     id: option.id || option.name.toLowerCase().replace(/\s+/g, '-'),
     name: option.name,
     values: option.values.map(value => ({
@@ -64,77 +72,77 @@ function transformShopifyOptions(
   }));
 }
 
-function transformShopifyVariants(shopifyVariants: { edges: Array<{ node: any }> } | undefined): ProductVariant[] {
-  const edges = shopifyVariants?.edges;
+function transformSwellVariants(variants: { edges: Array<{ node: any }> } | undefined): ProductVariant[] {
+  const edges = variants?.edges;
   if (!Array.isArray(edges)) return [];
 
   return edges.map(edge => ({
     id: edge.node.id,
     title: edge.node.title || '',
     availableForSale: edge.node.availableForSale !== false,
-    price: transformShopifyMoney(edge.node.price),
+    price: transformSwellMoney(edge.node.price),
     selectedOptions: edge.node.selectedOptions || [],
   }));
 }
 
 // Main adapter functions
-function adaptShopifyCollection(shopifyCollection: ShopifyCollection): Collection {
+function adaptSwellCollection(swellCollection: SwellCollection): Collection {
   return {
-    ...shopifyCollection,
+    ...swellCollection,
     seo: {
-      title: shopifyCollection.title,
-      description: shopifyCollection.description || '',
+      title: swellCollection.title,
+      description: swellCollection.description || '',
     },
     parentCategoryTree: [],
     updatedAt: new Date().toISOString(),
-    path: `/shop/${shopifyCollection.handle}`,
+    path: `/shop/${swellCollection.handle}`,
   };
 }
 
-function adaptShopifyProduct(shopifyProduct: ShopifyProduct): Product {
-  const firstImage = shopifyProduct.images?.edges?.[0]?.node;
-  const description = getFirstSentence(shopifyProduct.description || '');
+function adaptSwellProduct(swellProduct: SwellProduct): Product {
+  const firstImage = swellProduct.images?.edges?.[0]?.node;
+  const description = getFirstSentence(swellProduct.description || '');
 
   return {
-    ...shopifyProduct,
+    ...swellProduct,
     description,
-    categoryId: shopifyProduct.productType || shopifyProduct.category?.name,
+    categoryId: swellProduct.category?.id,
     tags: [],
-    availableForSale: true,
-    currencyCode: shopifyProduct.priceRange?.minVariantPrice?.currencyCode || 'USD',
+    availableForSale: swellProduct.availableForSale !== false,
+    currencyCode: swellProduct.priceRange?.minVariantPrice?.currencyCode || 'USD',
     featuredImage: firstImage
       ? {
           ...firstImage,
-          altText: firstImage.altText || shopifyProduct.title || '',
+          altText: firstImage.altText || swellProduct.title || '',
           height: 600,
           width: 600,
           thumbhash: firstImage.thumbhash ? thumbhashToDataURL(firstImage.thumbhash) : undefined,
         }
       : { url: '', altText: '', height: 0, width: 0 },
     seo: {
-      title: shopifyProduct.title || '',
+      title: swellProduct.title || '',
       description,
     },
     priceRange: {
-      minVariantPrice: transformShopifyMoney(shopifyProduct.priceRange?.minVariantPrice),
-      maxVariantPrice: transformShopifyMoney(shopifyProduct.priceRange?.minVariantPrice),
+      minVariantPrice: transformSwellMoney(swellProduct.priceRange?.minVariantPrice),
+      maxVariantPrice: transformSwellMoney(swellProduct.priceRange?.minVariantPrice),
     },
     compareAtPrice:
-      shopifyProduct.compareAtPriceRange?.minVariantPrice &&
-      parseFloat(shopifyProduct.compareAtPriceRange.minVariantPrice.amount) >
-        parseFloat(shopifyProduct.priceRange?.minVariantPrice?.amount || '0')
-        ? transformShopifyMoney(shopifyProduct.compareAtPriceRange.minVariantPrice)
+      swellProduct.compareAtPriceRange?.minVariantPrice &&
+      parseFloat(swellProduct.compareAtPriceRange.minVariantPrice.amount) >
+        parseFloat(swellProduct.priceRange?.minVariantPrice?.amount || '0')
+        ? transformSwellMoney(swellProduct.compareAtPriceRange.minVariantPrice)
         : undefined,
     images:
-      shopifyProduct.images?.edges?.map(edge => ({
+      swellProduct.images?.edges?.map(edge => ({
         ...edge.node,
-        altText: edge.node.altText || shopifyProduct.title || '',
+        altText: edge.node.altText || swellProduct.title || '',
         height: 600,
         width: 600,
         thumbhash: edge.node.thumbhash ? thumbhashToDataURL(edge.node.thumbhash) : undefined,
       })) || [],
-    options: transformShopifyOptions(shopifyProduct.options || []),
-    variants: transformShopifyVariants(shopifyProduct.variants),
+    options: transformSwellOptions(swellProduct.options || []),
+    variants: transformSwellVariants(swellProduct.variants),
   };
 }
 
@@ -147,8 +155,8 @@ export async function getCollections(): Promise<Collection[]> {
   cacheLife('minutes');
 
   try {
-    const shopifyCollections = await getShopifyCollections();
-    return shopifyCollections.map(adaptShopifyCollection);
+    const swellCollections = await getSwellCollections();
+    return swellCollections.map(adaptSwellCollection);
   } catch (error) {
     console.error('Error fetching collections:', error);
     return [];
@@ -161,9 +169,14 @@ export async function getCollection(handle: string): Promise<Collection | null> 
   cacheLife('minutes');
 
   try {
-    const collections = await getShopifyCollections();
-    const collection = collections.find(collection => collection.handle === handle);
-    return collection ? adaptShopifyCollection(collection) : null;
+    const collections = await getSwellCollections();
+    const normalizedQuery = normalizeHandle(handle);
+    const collection = collections.find(
+      collection =>
+        normalizeHandle(collection.handle) === normalizedQuery ||
+        normalizeHandle(collection.id) === normalizedQuery
+    );
+    return collection ? adaptSwellCollection(collection) : null;
   } catch (error) {
     console.error('Error fetching collection:', error);
     return null;
@@ -176,8 +189,8 @@ export async function getProduct(handle: string): Promise<Product | null> {
   cacheLife('minutes');
 
   try {
-    const shopifyProduct = await getShopifyProduct(handle);
-    return shopifyProduct ? adaptShopifyProduct(shopifyProduct) : null;
+    const swellProduct = await getSwellProduct(handle);
+    return swellProduct ? adaptSwellProduct(swellProduct) : null;
   } catch (error) {
     console.error('Error fetching product:', error);
     return null;
@@ -195,8 +208,8 @@ export async function getProducts(params: {
   cacheLife('minutes');
 
   try {
-    const shopifyProducts = await getShopifyProducts(params);
-    return shopifyProducts.map(adaptShopifyProduct);
+    const swellProducts = await getSwellProducts(params);
+    return swellProducts.map(adaptSwellProduct);
   } catch (error) {
     console.error('Error fetching products:', error);
     return [];
@@ -215,8 +228,8 @@ export async function getCollectionProducts(params: {
   cacheLife('minutes');
 
   try {
-    const shopifyProducts = await getShopifyCollectionProducts(params);
-    return shopifyProducts.map(adaptShopifyProduct);
+    const swellProducts = await getSwellCollectionProducts(params);
+    return swellProducts.map(adaptSwellProduct);
   } catch (error) {
     console.error('Error fetching collection products:', error);
     return [];
@@ -233,5 +246,5 @@ export async function getCart(): Promise<Cart | null> {
   }
 }
 
-// Re-export cart mutation functions (these are properly typed in shopify.ts)
+// Re-export cart mutation functions (typed in swell.ts)
 export { createCart, addCartLines, updateCartLines, removeCartLines };
