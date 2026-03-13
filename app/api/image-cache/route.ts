@@ -4,7 +4,10 @@ import path from 'node:path';
 
 export const runtime = 'nodejs';
 
-const CACHE_DIR = path.join(process.cwd(), '.next', 'cache', 'image-cache');
+const CACHE_DIR = process.env.IMAGE_CACHE_DIR
+  || (process.env.VERCEL
+    ? path.join('/tmp', 'revalin-image-cache')
+    : path.join(process.cwd(), '.next', 'cache', 'image-cache'));
 const BROWSER_MAX_AGE_SECONDS = 60 * 10;
 const STALE_WHILE_REVALIDATE_SECONDS = 60 * 60 * 24;
 const ORIGIN_REVALIDATE_MS = 1000 * 60 * 60 * 6;
@@ -116,14 +119,25 @@ async function readCachedEntry(cacheKey: string): Promise<CachedEntry | null> {
   }
 }
 
-async function persistCacheEntry(cacheKey: string, entry: CachedEntry): Promise<void> {
+async function persistCacheEntry(cacheKey: string, entry: CachedEntry): Promise<boolean> {
   const { metadataPath, imagePath } = getCachePaths(cacheKey);
 
-  await mkdir(CACHE_DIR, { recursive: true });
-  await Promise.all([
-    writeFile(imagePath, entry.body),
-    writeFile(metadataPath, JSON.stringify(entry.metadata)),
-  ]);
+  try {
+    await mkdir(CACHE_DIR, { recursive: true });
+    await Promise.all([
+      writeFile(imagePath, entry.body),
+      writeFile(metadataPath, JSON.stringify(entry.metadata)),
+    ]);
+    return true;
+  } catch (error) {
+    // Cache persistence is best-effort; upstream image fetch should still succeed.
+    console.warn('image-cache: failed to persist cache entry', {
+      cacheDir: CACHE_DIR,
+      cacheKey,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
 }
 
 async function fetchAndRefreshImage(
