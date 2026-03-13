@@ -2,63 +2,51 @@ import { PageLayout } from '@/components/layout/page-layout';
 import { COAProvider, Batch } from './providers/coa-provider';
 import { COADesktopFilters } from './components/coa-filters';
 import { COAMobileFilters } from './components/coa-mobile-filters';
+import { getProducts } from '@/lib/swell/swell';
+import { COA_BATCHES, PRODUCT_MATCH_TERMS } from '@/lib/coa-data';
 
-// Mock data - replace with actual database query
-const batches: Batch[] = [
-  {
-    id: '1',
-    product: 'BPC-157',
-    size: '5mg',
-    number: 'BPC-2024-Q1-127',
-    date: 'Jan 15, 2024',
-    purity: '99.4',
-    identity: 'Confirmed',
-    endotoxin: '<0.5 EU/mg',
-    sterility: 'Pass',
-    pdfUrl: '#',
-  },
-  {
-    id: '2',
-    product: 'BPC-157',
-    size: '10mg',
-    number: 'BPC-2024-Q1-142',
-    date: 'Feb 3, 2024',
-    purity: '99.6',
-    identity: 'Confirmed',
-    endotoxin: '<0.3 EU/mg',
-    sterility: 'Pass',
-    pdfUrl: '#',
-  },
-  {
-    id: '3',
-    product: 'TB-500',
-    size: '5mg',
-    number: 'TB5-2024-Q1-089',
-    date: 'Jan 28, 2024',
-    purity: '99.2',
-    identity: 'Confirmed',
-    endotoxin: '<0.4 EU/mg',
-    sterility: 'Pass',
-    pdfUrl: '#',
-  },
-  {
-    id: '4',
-    product: 'GHK-Cu',
-    size: '50mg',
-    number: 'GHK-2024-Q1-156',
-    date: 'Feb 12, 2024',
-    purity: '99.8',
-    identity: 'Confirmed',
-    endotoxin: '<0.2 EU/mg',
-    sterility: 'Pass',
-    pdfUrl: '#',
-  },
-];
+function matchProductImage(
+  productName: string,
+  storeProducts: { title: string; handle: string; imageUrl: string }[]
+): string | undefined {
+  const terms = PRODUCT_MATCH_TERMS[productName];
+  if (!terms) return undefined;
 
-export default function COALayout({ children }: { children: React.ReactNode }) {
+  for (const term of terms) {
+    const normalized = term.toLowerCase();
+    const match = storeProducts.find(
+      (p) =>
+        p.handle.toLowerCase().includes(normalized) ||
+        p.title.toLowerCase().includes(normalized)
+    );
+    if (match) return match.imageUrl;
+  }
+
+  return undefined;
+}
+
+export default async function COALayout({ children }: { children: React.ReactNode }) {
+  let storeProducts: { title: string; handle: string; imageUrl: string }[] = [];
+
+  try {
+    const products = await getProducts({ limit: 100 });
+    storeProducts = products.map((p) => ({
+      title: p.title,
+      handle: p.handle,
+      imageUrl: p.images.edges[0]?.node.url || '',
+    }));
+  } catch {
+    // Swell unavailable — cards will render without product images
+  }
+
+  const hydratedBatches: Batch[] = COA_BATCHES.map((batch) => ({
+    ...batch,
+    imageUrl: matchProductImage(batch.product, storeProducts),
+  }));
+
   return (
     <PageLayout>
-      <COAProvider batches={batches}>
+      <COAProvider batches={hydratedBatches}>
         <div className="flex flex-col md:grid grid-cols-12 md:gap-sides">
           <COADesktopFilters className="col-span-3 max-md:hidden" />
           <COAMobileFilters />

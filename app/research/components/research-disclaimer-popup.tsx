@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Button } from '@/components/ui/button';
 import { useBodyScrollLock } from '@/lib/hooks/use-body-scroll-lock';
 import { LogoSvg } from '@/components/layout/header/logo-svg';
+import Link from 'next/link';
 
 const STORAGE_KEY = 'revalin_research_disclaimer_ack_session';
 
@@ -127,6 +128,17 @@ export function ResearchDisclaimerPopup() {
                     I confirm I am 18+, represent a qualified purchaser, and will use these materials solely for
                     lawful research purposes.
                   </div>
+                  <p className="mt-3 text-xs text-white/80">
+                    By continuing, you agree to our{' '}
+                    <Link className="underline underline-offset-4" href="/terms-of-service">
+                      Terms of Service
+                    </Link>{' '}
+                    and{' '}
+                    <Link className="underline underline-offset-4" href="/privacy-policy">
+                      Privacy Policy
+                    </Link>
+                    .
+                  </p>
 
                   <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-center gap-2">
                     <Button

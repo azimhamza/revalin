@@ -12,6 +12,7 @@ interface ColorSwatchProps {
   onColorChange: (color: Color | [Color, Color]) => void;
   size?: 'sm' | 'md' | 'lg';
   atLeastOneColorSelected: boolean;
+  className?: string;
 }
 
 export const sizeClasses = {
@@ -26,6 +27,7 @@ export function ColorSwatch({
   onColorChange,
   size = 'md',
   atLeastOneColorSelected,
+  className,
 }: ColorSwatchProps) {
   const isDualColor = Array.isArray(color);
   const displayName = isDualColor ? `${color[0].name} & ${color[1].name}` : color.name;
@@ -39,7 +41,8 @@ export function ColorSwatch({
           ? 'ring-2 opacity-100 ring-primary/80'
           : atLeastOneColorSelected
             ? 'opacity-40 hover:ring-primary/30 hover:opacity-70'
-            : 'opacity-100'
+            : 'opacity-100',
+        className
       )}
       title={displayName}
       onClick={() => onColorChange(color)}

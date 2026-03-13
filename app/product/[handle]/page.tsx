@@ -12,17 +12,28 @@ import {
   BreadcrumbPage,
 } from '@/components/ui/breadcrumb';
 import Link from 'next/link';
-import { SidebarLinks } from '@/components/layout/sidebar/product-sidebar-links';
 import { AddToCart, AddToCartButton } from '@/components/cart/add-to-cart';
 import { storeCatalog } from '@/lib/swell/constants';
 import Prose from '@/components/prose';
 import { formatPrice } from '@/lib/swell/utils';
 import { Suspense } from 'react';
-import { cn } from '@/lib/utils';
 import { PageLayout } from '@/components/layout/page-layout';
 import { VariantSelectorSlots } from './components/variant-selector-slots';
 import { MobileGallerySlider } from './components/mobile-gallery-slider';
 import { DesktopGallery } from './components/desktop-gallery';
+import { TestResultsTrigger } from '@/components/products/test-results-panel';
+import { getBatchesForProduct } from '@/lib/coa-data';
+
+function getShareableImageUrl(url?: string): string {
+  if (!url || !url.startsWith('/api/image-cache?')) return url || '';
+
+  try {
+    const parsed = new URL(url, 'https://revalin.local');
+    return parsed.searchParams.get('src') || url;
+  } catch {
+    return url;
+  }
+}
 
 // Generate static params for all products at build time
 export async function generateStaticParams() {
@@ -48,6 +59,7 @@ export async function generateMetadata(props: { params: Promise<{ handle: string
   if (!product) return notFound();
 
   const { url, width, height, altText: alt } = product.featuredImage || {};
+  const shareableImageUrl = getShareableImageUrl(url);
   const indexable = !product.tags.includes(HIDDEN_PRODUCT_TAG);
 
   return {
@@ -61,11 +73,11 @@ export async function generateMetadata(props: { params: Promise<{ handle: string
         follow: indexable,
       },
     },
-    openGraph: url
+    openGraph: shareableImageUrl
       ? {
           images: [
             {
-              url,
+              url: shareableImageUrl,
               width,
               height,
               alt,
@@ -83,13 +95,14 @@ export default async function ProductPage(props: { params: Promise<{ handle: str
   if (!product) return notFound();
 
   const collection = product.categoryId ? await getCollection(product.categoryId) : null;
+  const productBatches = getBatchesForProduct(product.handle, product.title);
 
   const productJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Product',
     name: product.title,
     description: product.description,
-    image: product.featuredImage.url,
+    image: getShareableImageUrl(product.featuredImage.url),
     offers: {
       '@type': 'AggregateOffer',
       availability: product.availableForSale ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
@@ -102,8 +115,6 @@ export default async function ProductPage(props: { params: Promise<{ handle: str
   const [rootParentCategory] = collection?.parentCategoryTree.filter(
     (c: any) => c.id !== storeCatalog.rootCategoryId
   ) ?? [undefined];
-
-  const hasVariants = product.variants.length > 1;
 
   return (
     <PageLayout className="bg-muted">
@@ -153,56 +164,62 @@ export default async function ProductPage(props: { params: Promise<{ handle: str
             </Breadcrumb>
 
             <div className="flex flex-col col-span-full gap-4 md:mb-10 max-md:order-2">
-              <div className="flex flex-col gap-4 px-3 py-2 rounded-md bg-popover">
-                <h1 className="text-lg font-semibold lg:text-xl 2xl:text-2xl text-balance">
+              <div className="flex flex-col gap-4 px-5 py-5 rounded-2xl bg-popover md:gap-4 md:px-3 md:py-2 md:rounded-md">
+                <h1 className="text-2xl leading-[1.1] font-bold md:text-lg lg:text-xl 2xl:text-2xl text-balance">
                   {product.title}
                 </h1>
-                <p className="flex gap-3 items-center text-lg font-semibold lg:text-xl 2xl:text-2xl">
+                <p className="flex min-w-0 gap-3 items-center text-2xl leading-none font-bold md:text-lg lg:text-xl 2xl:text-2xl">
                   {formatPrice(
                     product.priceRange.minVariantPrice.amount,
                     product.priceRange.minVariantPrice.currencyCode
                   )}
                   {product.compareAtPrice && (
-                    <span className="line-through opacity-30">
+                    <span className="text-xl line-through opacity-30 md:text-base">
                       {formatPrice(product.compareAtPrice.amount, product.compareAtPrice.currencyCode)}
                     </span>
                   )}
                 </p>
               </div>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+              <div className="grid grid-cols-1 gap-4 md:items-start">
                 <Suspense fallback={<VariantSelectorSlots product={product} fallback />}>
                   <VariantSelectorSlots product={product} />
                 </Suspense>
 
                 <Suspense
-                  fallback={
-                    <AddToCartButton
-                      className={cn('w-full md:w-auto md:min-w-[280px] md:col-start-2 md:self-start', {
-                        'md:col-span-full md:col-start-1 md:w-full': !hasVariants,
-                      })}
-                      product={product}
-                      size="lg"
-                    />
-                  }
+                  fallback={<AddToCartButton className="hidden md:block md:w-full md:self-start" product={product} size="lg" />}
                 >
-                  <AddToCart
-                    product={product}
-                    size="lg"
-                    className={cn('w-full md:w-auto md:min-w-[280px] md:col-start-2 md:self-start', {
-                      'md:col-span-full md:col-start-1 md:w-full': !hasVariants,
-                    })}
-                  />
+                  <AddToCart product={product} size="lg" className="hidden md:block md:w-full md:self-start" />
                 </Suspense>
               </div>
+              <Suspense
+                fallback={
+                  <AddToCartButton
+                    className="md:hidden w-full h-16 text-lg font-semibold"
+                    product={product}
+                    size="lg"
+                    style={{ backgroundColor: '#0B2E2F', color: '#F4F1EA' }}
+                  />
+                }
+              >
+                <AddToCart
+                  className="md:hidden w-full h-16 text-lg font-semibold"
+                  product={product}
+                  size="lg"
+                  style={{ backgroundColor: '#0B2E2F', color: '#F4F1EA' }}
+                />
+              </Suspense>
+
+              {productBatches.length > 0 && (
+                <TestResultsTrigger batches={productBatches} />
+              )}
             </div>
           </div>
 
           <Prose
-            className="col-span-full mb-auto opacity-70 max-md:order-3 max-md:my-6"
+            className="col-span-full mb-auto opacity-70 max-md:order-3 max-md:my-6 max-md:px-2"
             html={product.descriptionHtml}
           />
 
-          <SidebarLinks className="flex-col-reverse max-md:hidden py-sides w-full max-w-[408px] pr-sides max-md:pr-0 max-md:py-0" />
         </div>
 
         {/* Desktop Gallery */}

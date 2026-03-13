@@ -1,7 +1,7 @@
 import { LogoSvg } from './header/logo-svg';
 import { ShopLinks } from './shop-links';
-import { SidebarLinks } from './sidebar/product-sidebar-links';
 import { getCollections } from '@/lib/swell';
+import Link from 'next/link';
 
 export async function Footer() {
   const collections = await getCollections();
@@ -24,10 +24,27 @@ export async function Footer() {
           </div>
           <span className="mt-3 italic font-semibold md:hidden">Research-grade peptides. &gt;99% purity. Third-party tested.</span>
           <p className="mt-4 text-sm leading-tight opacity-70 md:hidden">{disclaimer}</p>
+          <div className="mt-4 md:hidden flex gap-4 text-sm">
+            <Link className="underline underline-offset-4" href="/terms-of-service">
+              Terms of Service
+            </Link>
+            <Link className="underline underline-offset-4" href="/privacy-policy">
+              Privacy Policy
+            </Link>
+          </div>
         </div>
         <div className="flex justify-between max-md:contents opacity-70">
-          <SidebarLinks className="max-w-[450px] w-full max-md:flex-col" size="base" invert />
-          <p className="text-base">{new Date().getFullYear()}© — All rights reserved</p>
+          <div className="max-md:mt-4 md:text-right">
+            <div className="hidden md:flex justify-end gap-4 text-sm mb-1">
+              <Link className="underline underline-offset-4" href="/terms-of-service">
+                Terms of Service
+              </Link>
+              <Link className="underline underline-offset-4" href="/privacy-policy">
+                Privacy Policy
+              </Link>
+            </div>
+            <p className="text-base">{new Date().getFullYear()}© — All rights reserved</p>
+          </div>
         </div>
       </div>
     </footer>

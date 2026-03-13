@@ -2,17 +2,28 @@
 
 import { createContext, useContext, useState, useMemo, ReactNode } from 'react';
 
+export interface BatchResult {
+  compound: string;
+  amount: string;
+}
+
 export interface Batch {
   id: string;
+  taskNumber: string;
+  sample: string;
   product: string;
-  size: string;
-  number: string;
-  date: string;
-  purity: string;
-  identity: string;
-  endotoxin: string;
-  sterility: string;
-  pdfUrl: string;
+  manufacturer: string;
+  batch?: string;
+  testingOrdered: string;
+  sampleReceived: string;
+  analysisDate: string;
+  testRequested: string;
+  results: BatchResult[];
+  purity?: string;
+  comments?: string;
+  verificationKey: string;
+  verifyUrl: string;
+  imageUrl?: string;
 }
 
 interface COAContextType {

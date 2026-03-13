@@ -4,12 +4,21 @@ import { cn } from '@/lib/utils';
 import Image, { ImageProps } from 'next/image';
 import { useEffect, useState } from 'react';
 
+const loadedImageSrcs = new Set<string>();
+
+function getImageSrcKey(src: ImageProps['src']): string {
+  if (typeof src === 'string') return src;
+  if ('src' in src && typeof src.src === 'string') return src.src;
+  if ('default' in src && src.default && typeof src.default.src === 'string') return src.default.src;
+  return '';
+}
+
 export function BlurUpImage({ className, src, onLoad, ...props }: ImageProps) {
-  const [isLoaded, setIsLoaded] = useState(false);
-  const srcKey = typeof src === 'string' ? src : src.src;
+  const srcKey = getImageSrcKey(src);
+  const [isLoaded, setIsLoaded] = useState(() => loadedImageSrcs.has(srcKey));
 
   useEffect(() => {
-    setIsLoaded(false);
+    setIsLoaded(loadedImageSrcs.has(srcKey));
   }, [srcKey]);
 
   return (
@@ -17,12 +26,15 @@ export function BlurUpImage({ className, src, onLoad, ...props }: ImageProps) {
       {...props}
       src={src}
       onLoad={event => {
+        if (srcKey) {
+          loadedImageSrcs.add(srcKey);
+        }
         setIsLoaded(true);
         onLoad?.(event);
       }}
       className={cn(
-        'transition duration-500 ease-out',
-        isLoaded ? 'blur-0 scale-100 opacity-100' : 'blur-lg scale-[1.02] opacity-70',
+        'transition duration-300 ease-out will-change-transform',
+        isLoaded ? 'blur-0 scale-100 opacity-100' : 'blur-sm scale-[1.01] opacity-80',
         className
       )}
     />

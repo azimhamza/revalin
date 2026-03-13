@@ -1,6 +1,7 @@
 import { HomeSidebar } from '@/components/layout/sidebar/home-sidebar';
 import { PageLayout } from '@/components/layout/page-layout';
 import { LatestProductCard } from '@/components/products/latest-product-card';
+import { MobileShopAllTile } from '@/components/home/mobile-shop-all-tile';
 import { Badge } from '@/components/ui/badge';
 import { getCollectionProducts, getCollections, getProduct, getProducts } from '@/lib/swell';
 import { Product } from '../lib/swell/types';
@@ -86,6 +87,10 @@ export default async function Home() {
           {featuredProducts.length > 0 && (
             <>
               <LatestProductCard className="col-span-2" product={lastProduct} principal />
+
+              <div className="relative z-20 md:hidden">
+                <MobileShopAllTile />
+              </div>
 
               {restProducts.map((product: any) => (
                 <LatestProductCard

@@ -64,14 +64,20 @@ export interface SwellProduct {
 
 export interface SwellApiFile {
   url?: string;
+  id?: string;
+  date_created?: string;
+  date_updated?: string;
 }
 
 export interface SwellApiImage {
+  id?: string;
   url?: string;
   file?: SwellApiFile;
   alt?: string;
   caption?: string;
   name?: string;
+  date_created?: string;
+  date_updated?: string;
 }
 
 export interface SwellApiCategory {

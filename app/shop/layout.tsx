@@ -3,6 +3,7 @@ import { Suspense } from 'react';
 import { getCollections } from '@/lib/swell';
 import { PageLayout } from '@/components/layout/page-layout';
 import { MobileFilters } from './components/mobile-filters';
+import { MobileQuickSearch } from './components/mobile-quick-search';
 import { ProductsProvider } from './providers/products-provider';
 
 // Enable ISR with 1 minute revalidation for the layout
@@ -25,6 +26,7 @@ export default async function ShopLayout({ children }: { children: React.ReactNo
             <Suspense fallback={null}>{children}</Suspense>
           </div>
         </div>
+        <MobileQuickSearch />
       </ProductsProvider>
     </PageLayout>
   );

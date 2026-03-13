@@ -5,9 +5,10 @@ import { Product, ProductVariant } from '@/lib/swell/types';
 import { useMemo, useTransition } from 'react';
 import { useCart } from './cart-context';
 import { Button, ButtonProps } from '../ui/button';
+import { cn } from '@/lib/utils';
 import { useSelectedVariant } from '@/components/products/variant-selector';
 import { useParams, useSearchParams } from 'next/navigation';
-import { ReactNode } from 'react';
+import { CSSProperties, ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader } from '../ui/loader';
 import { getSwellProductId } from '@/lib/swell/utils';
@@ -16,6 +17,8 @@ interface AddToCartProps extends ButtonProps {
   product: Product;
   iconOnly?: boolean;
   icon?: ReactNode;
+  contentClassName?: string;
+  unselectedStyle?: CSSProperties;
 }
 
 interface AddToCartButtonProps extends ButtonProps {
@@ -24,6 +27,8 @@ interface AddToCartButtonProps extends ButtonProps {
   iconOnly?: boolean;
   icon?: ReactNode;
   className?: string;
+  contentClassName?: string;
+  unselectedStyle?: CSSProperties;
 }
 
 const getBaseProductVariant = (product: Product): ProductVariant => {
@@ -40,8 +45,11 @@ export function AddToCartButton({
   product,
   selectedVariant,
   className,
+  contentClassName,
   iconOnly = false,
   icon = <PlusCircleIcon />,
+  unselectedStyle,
+  style,
   ...buttonProps
 }: AddToCartButtonProps) {
   const { addItem } = useCart();
@@ -62,6 +70,8 @@ export function AddToCartButton({
   };
 
   const isDisabled = !product.availableForSale || !resolvedVariant || isLoading;
+  const isSelectOneState = product.availableForSale && !resolvedVariant;
+  const buttonStyle = isSelectOneState && unselectedStyle ? unselectedStyle : style;
 
   const getLoaderSize = () => {
     const buttonSize = buttonProps.size;
@@ -88,8 +98,12 @@ export function AddToCartButton({
         type="submit"
         aria-label={!resolvedVariant ? 'Select one' : 'Add to cart'}
         disabled={isDisabled}
-        className={iconOnly ? undefined : 'flex relative justify-between items-center w-full'}
-        style={{ backgroundColor: '#0B2E2F', color: '#F4F1EA' }}
+        className={cn(
+          iconOnly ? undefined : 'flex relative justify-between items-center w-full',
+          isSelectOneState && 'max-md:pl-3 max-md:pr-2',
+          className
+        )}
+        style={buttonStyle || { backgroundColor: '#0B2E2F', color: '#F4F1EA' }}
         {...buttonProps}
       >
         <AnimatePresence initial={false} mode="wait">
@@ -116,9 +130,9 @@ export function AddToCartButton({
               {isLoading ? (
                 <Loader size={getLoaderSize()} />
               ) : (
-                <div className="flex justify-between items-center w-full">
-                  <span>{getButtonText()}</span>
-                  <PlusCircleIcon />
+                <div className={cn('flex justify-between items-center w-full gap-2', contentClassName)}>
+                  <span className="min-w-0 truncate">{getButtonText()}</span>
+                  <span className="shrink-0">{icon}</span>
                 </div>
               )}
             </motion.div>
@@ -132,8 +146,10 @@ export function AddToCartButton({
 export function AddToCart({
   product,
   className,
+  contentClassName,
   iconOnly = false,
   icon = <PlusCircleIcon />,
+  unselectedStyle,
   ...buttonProps
 }: AddToCartProps) {
   const { variants } = product;
@@ -158,8 +174,10 @@ export function AddToCart({
       product={product}
       selectedVariant={resolvedVariant}
       className={className}
+      contentClassName={contentClassName}
       iconOnly={iconOnly}
       icon={icon}
+      unselectedStyle={unselectedStyle}
       {...buttonProps}
     />
   );

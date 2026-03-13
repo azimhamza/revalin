@@ -19,10 +19,6 @@ export const navItems: NavItem[] = [
     href: '/shop',
   },
   {
-    label: 'research',
-    href: '/research',
-  },
-  {
     label: 'coa',
     href: '/coa',
   },

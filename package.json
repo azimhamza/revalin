@@ -62,6 +62,7 @@
     "nuqs": "latest",
     "path": "latest",
     "prettier": "latest",
+    "qrcode.react": "^4.2.0",
     "react": "^19",
     "react-day-picker": "9.8.0",
     "react-dom": "^19",

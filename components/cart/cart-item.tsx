@@ -3,13 +3,13 @@
 import { CartItem } from '@/lib/swell/types';
 import { DEFAULT_OPTION } from '@/lib/constants';
 import { createUrl, getColorHex } from '@/lib/utils';
-import Image from 'next/image';
 import Link from 'next/link';
 import { DeleteItemButton } from './delete-item-button';
 import { EditItemQuantityButton } from './edit-item-quantity-button';
 import { formatPrice, getImageBlurDataURL } from '@/lib/swell/utils';
 import { ColorSwatch } from '@/components/ui/color-picker';
 import { useProductImages } from '../products/variant-selector';
+import { BlurUpImage } from '@/components/ui/blur-up-image';
 
 type MerchandiseSearchParams = {
   [key: string]: string;
@@ -48,7 +48,7 @@ export function CartItemCard({ item, onCloseCart }: CartItemProps) {
     <div className="bg-popover rounded-lg p-2">
       <div className="flex flex-row gap-6">
         <div className="relative size-[120px] overflow-hidden rounded-sm shrink-0">
-          <Image
+          <BlurUpImage
             className="size-full object-cover"
             width={240}
             height={240}

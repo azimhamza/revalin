@@ -21,6 +21,7 @@ const variantOptionSelectorVariants = cva('flex items-start gap-4', {
     variant: {
       card: 'rounded-md bg-popover py-2 px-3 justify-between',
       condensed: 'justify-start',
+      shop: 'justify-start gap-2',
     },
   },
   defaultVariants: {
@@ -70,7 +71,7 @@ export function VariantOptionSelectorComponent({
   return (
     <dl className={variantOptionSelectorVariants({ variant })}>
       {!hideLabel && <dt className="text-base font-semibold leading-8">{option.name}</dt>}
-      <dd className="flex flex-wrap gap-2">
+      <dd className="flex flex-wrap items-center gap-2">
         {option.values.map(value => {
           const currentState = selectedOptions;
           const optionParams = {
@@ -104,8 +105,15 @@ export function VariantOptionSelectorComponent({
                 }
                 isSelected={isActive}
                 onColorChange={() => onSelect?.(value.name)}
-                size={variant === 'condensed' ? 'sm' : 'md'}
+                size={variant === 'shop' ? 'lg' : variant === 'condensed' ? 'sm' : 'md'}
                 atLeastOneColorSelected={!!selectedValue}
+                className={
+                  variant === 'shop'
+                    ? isActive
+                      ? 'ring-2 ring-[#2d6a4f] opacity-100'
+                      : 'ring-1 ring-[#0B2E2F]/10 opacity-100 hover:ring-[#2d6a4f]/40'
+                    : undefined
+                }
               />
             );
           }
@@ -114,11 +122,19 @@ export function VariantOptionSelectorComponent({
             <Button
               onClick={() => onSelect?.(value.name)}
               key={value.id}
-              variant={isActive ? 'default' : 'outline'}
-              size="sm"
+              variant={variant === 'shop' ? undefined : isActive ? 'default' : 'outline'}
+              size={variant === 'shop' ? 'default' : 'sm'}
               disabled={!isAvailableForSale}
               title={`${option.name} ${value.name}${!isAvailableForSale ? ' (Out of Stock)' : ''}`}
-              className="min-w-[40px]"
+              className={
+                variant === 'shop'
+                  ? `h-11 rounded-full border px-4 text-sm font-medium shadow-none ${
+                      isActive
+                        ? 'border-[#2d6a4f] bg-[#2d6a4f] text-[#f4f1ea] hover:bg-[#2d6a4f]'
+                        : 'border-[#0B2E2F]/10 bg-white text-[#0B2E2F] hover:bg-[#ece9e2]'
+                    }`
+                  : 'min-w-[40px]'
+              }
             >
               {value.name}
             </Button>
