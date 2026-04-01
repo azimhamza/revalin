@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { PageLayout } from '@/components/layout/page-layout';
 import { LegalSidebar } from '@/components/layout/sidebar/legal-sidebar';
+import { RESEARCH_USE_TERMS_LAST_UPDATED_LABEL } from '@/lib/compliance';
 
 export const metadata: Metadata = {
   title: 'Terms of Service | Revalin',
@@ -40,7 +41,7 @@ export default function TermsOfServicePage() {
 
         <section className="col-span-9 p-sides pb-14 md:pr-sides md:pt-top-spacing">
           <h1 className="text-3xl md:text-5xl font-semibold tracking-tight">Terms of Service</h1>
-          <p className="mt-3 text-sm text-muted-foreground">Last updated: March 13, 2026</p>
+          <p className="mt-3 text-sm text-muted-foreground">Last updated: {RESEARCH_USE_TERMS_LAST_UPDATED_LABEL}</p>
 
           <div className="mt-6 md:hidden rounded border border-foreground/15 bg-muted/30 p-4">
             <p className="text-xs uppercase tracking-[0.08em] text-muted-foreground">Key Points</p>

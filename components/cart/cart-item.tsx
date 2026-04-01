@@ -43,15 +43,23 @@ export function CartItemCard({ item, onCloseCart }: CartItemProps) {
   const image = renderImage || item.merchandise.product.featuredImage;
   const imageUrl = image?.url || '/placeholder.jpg';
   const imageAlt = image?.altText || item.merchandise.product.title;
+  const currencyCode = item.cost.totalAmount.currencyCode;
+  const effectiveLineTotal = Number(item.cost.totalAmount.amount || 0);
+  const baseUnitPrice = Math.max(
+    Number(item.merchandise.product.compareAtPrice?.amount || 0),
+    Number(item.merchandise.product.priceRange.minVariantPrice.amount || 0)
+  );
+  const baseLineTotal = baseUnitPrice * item.quantity;
+  const lineSavings = Math.max(0, baseLineTotal - effectiveLineTotal);
 
   return (
-    <div className="bg-popover rounded-lg p-2">
-      <div className="flex flex-row gap-6">
-        <div className="relative size-[120px] overflow-hidden rounded-sm shrink-0">
+    <div className="bg-popover rounded-lg p-1.5">
+      <div className="flex flex-row gap-2.5">
+        <div className="relative size-[68px] overflow-hidden rounded-sm shrink-0">
           <BlurUpImage
             className="size-full object-cover"
-            width={240}
-            height={240}
+            width={136}
+            height={136}
             src={imageUrl}
             alt={imageAlt}
             placeholder="blur"
@@ -79,17 +87,29 @@ export function CartItemCard({ item, onCloseCart }: CartItemProps) {
             </div>
           )}
         </div>
-        <div className="flex flex-col gap-2 2xl:gap-3 flex-1">
-          <Link href={merchandiseUrl} onClick={onCloseCart} className="z-30 flex flex-col justify-center" prefetch>
-            <span className="2xl:text-lg font-semibold">{item.merchandise.product.title}</span>
+        <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+          <Link href={merchandiseUrl} onClick={onCloseCart} className="z-30 flex flex-col justify-center min-w-0" prefetch>
+            <span className="text-xs leading-tight font-semibold">{item.merchandise.product.title}</span>
           </Link>
-          <p className="2xl:text-lg font-semibold">
-            {formatPrice(item.cost.totalAmount.amount, item.cost.totalAmount.currencyCode)}
-          </p>
-          <div className="flex justify-between items-end mt-auto">
-            <div className="flex h-8 flex-row items-center rounded-md border border-neutral-200">
+          <div className="flex flex-col gap-0.5">
+            <p className="flex items-baseline gap-1.5 text-xs font-semibold leading-tight">
+              <span>{formatPrice(item.cost.totalAmount.amount, currencyCode)}</span>
+              {lineSavings > 0 ? (
+                <span className="text-[11px] font-medium line-through text-foreground/40">
+                  {formatPrice(baseLineTotal.toFixed(2), currencyCode)}
+                </span>
+              ) : null}
+            </p>
+            {lineSavings > 0 ? (
+              <p className="text-[11px] font-medium leading-tight text-[#0B2E2F]/65">
+                You save {formatPrice(lineSavings.toFixed(2), currencyCode)}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex justify-between items-center mt-auto">
+            <div className="flex h-6 flex-row items-center rounded-md border border-neutral-200">
               <EditItemQuantityButton item={item} type="minus" />
-              <span className="w-8 text-center text-sm">{item.quantity}</span>
+              <span className="w-6 text-center text-[11px]">{item.quantity}</span>
               <EditItemQuantityButton item={item} type="plus" />
             </div>
             <DeleteItemButton item={item} />

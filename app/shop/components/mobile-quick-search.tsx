@@ -7,7 +7,7 @@ import { useProducts } from '../providers/products-provider';
 import { cn } from '@/lib/utils';
 
 const KEY_PRODUCT_TERMS = [
-  'retatrutide',
+  'glp-3',
   'cagrilintide',
   'aod',
   'bpc',

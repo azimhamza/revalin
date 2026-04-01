@@ -6,11 +6,16 @@ import { Button } from '@/components/ui/button';
 import { useBodyScrollLock } from '@/lib/hooks/use-body-scroll-lock';
 import { LogoSvg } from '@/components/layout/header/logo-svg';
 import Link from 'next/link';
+import { RESEARCH_USE_SHORT_ACKNOWLEDGMENT } from '@/lib/compliance';
 
-const STORAGE_KEY = 'revalin_research_disclaimer_ack_session';
+const STORAGE_KEY = 'revalin_research_verified';
+
+const BUSINESS_TYPES = ['Research Lab', 'University', 'Medical Facility', 'Business'] as const;
 
 export function ResearchDisclaimerPopup() {
   const [isOpen, setIsOpen] = useState(true);
+  const [companyName, setCompanyName] = useState('');
+  const [businessType, setBusinessType] = useState('');
   const snowflakes = useMemo(
     () =>
       Array.from({ length: 20 }).map((_, index) => ({
@@ -28,8 +33,8 @@ export function ResearchDisclaimerPopup() {
 
   useEffect(() => {
     try {
-      const hasAcknowledgedThisSession = window.sessionStorage.getItem(STORAGE_KEY) === 'true';
-      setIsOpen(!hasAcknowledgedThisSession);
+      const hasAcknowledged = window.localStorage.getItem(STORAGE_KEY) === 'true';
+      setIsOpen(!hasAcknowledged);
     } catch {
       // Storage unavailable: fail open so users still see the disclaimer.
       setIsOpen(true);
@@ -38,9 +43,15 @@ export function ResearchDisclaimerPopup() {
 
   const handleAccept = () => {
     try {
-      window.sessionStorage.setItem(STORAGE_KEY, 'true');
+      window.localStorage.setItem(STORAGE_KEY, 'true');
+      if (companyName || businessType) {
+        window.localStorage.setItem(
+          `${STORAGE_KEY}_info`,
+          JSON.stringify({ company: companyName, type: businessType })
+        );
+      }
     } catch {
-      // If storage is unavailable, keep a session-only acknowledgement.
+      // If storage is unavailable, keep an in-memory acknowledgement.
     }
 
     setIsOpen(false);
@@ -124,9 +135,28 @@ export function ResearchDisclaimerPopup() {
                     and accepts responsibility for compliant use.
                   </p>
 
-                  <div className="mt-5 rounded border border-white/25 bg-white/10 p-3 text-xs text-white/90">
-                    I confirm I am 18+, represent a qualified purchaser, and will use these materials solely for
-                    lawful research purposes.
+                  <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:gap-3">
+                    <input
+                      type="text"
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
+                      placeholder="Company / Institution (optional)"
+                      className="h-9 w-full rounded border border-white/25 bg-white/10 px-3 text-sm text-white placeholder:text-white/50 outline-none focus:border-white/50 sm:w-1/2"
+                    />
+                    <select
+                      value={businessType}
+                      onChange={(e) => setBusinessType(e.target.value)}
+                      className="h-9 w-full rounded border border-white/25 bg-white/10 px-3 text-sm text-white outline-none focus:border-white/50 sm:w-1/2"
+                    >
+                      <option value="" className="bg-[#0B2E2F]">Business Type (optional)</option>
+                      {BUSINESS_TYPES.map((type) => (
+                        <option key={type} value={type} className="bg-[#0B2E2F]">{type}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="mt-3 rounded border border-white/25 bg-white/10 p-3 text-xs text-white/90">
+                    {RESEARCH_USE_SHORT_ACKNOWLEDGMENT}
                   </div>
                   <p className="mt-3 text-xs text-white/80">
                     By continuing, you agree to our{' '}

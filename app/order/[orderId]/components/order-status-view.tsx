@@ -1,0 +1,320 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { CheckCircle2, Clock, ExternalLink, Package, Truck } from 'lucide-react';
+import type { CheckoutOrderPublic } from '@/lib/checkout/types';
+import { cn } from '@/lib/utils';
+
+type Props = {
+  initialOrder: CheckoutOrderPublic;
+  accessKey: string;
+};
+
+function formatCurrency(amount: string | number, currencyCode: string) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currencyCode,
+    minimumFractionDigits: 2,
+  }).format(Number(amount));
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date);
+}
+
+type OrderStatus = 'processing' | 'shipped' | 'delivered';
+
+function deriveStatus(order: CheckoutOrderPublic): OrderStatus {
+  const paymentStatus = order.payment.status;
+  const hasTracking = Boolean(order.shipengine?.trackingCode);
+
+  if (paymentStatus === 'finished' || paymentStatus === 'paid') {
+    if (hasTracking) return 'shipped';
+    return 'processing';
+  }
+
+  return 'processing';
+}
+
+const STEPS: { key: OrderStatus; label: string; icon: typeof Package }[] = [
+  { key: 'processing', label: 'Processing', icon: Package },
+  { key: 'shipped', label: 'Shipped', icon: Truck },
+  { key: 'delivered', label: 'Delivered', icon: CheckCircle2 },
+];
+
+function StatusTimeline({ currentStatus }: { currentStatus: OrderStatus }) {
+  const currentIdx = STEPS.findIndex(s => s.key === currentStatus);
+
+  return (
+    <div className="flex items-center gap-0">
+      {STEPS.map((step, idx) => {
+        const isComplete = idx <= currentIdx;
+        const isCurrent = idx === currentIdx;
+        const Icon = step.icon;
+
+        return (
+          <div key={step.key} className="flex items-center">
+            <div className="flex flex-col items-center gap-1.5">
+              <div
+                className={cn(
+                  'flex size-10 items-center justify-center rounded-full transition-colors',
+                  isComplete
+                    ? 'bg-[#0B2E2F] text-[#F4F1EA]'
+                    : 'bg-[#0B2E2F]/10 text-[#0B2E2F]/40'
+                )}
+              >
+                <Icon className="size-5" />
+              </div>
+              <span
+                className={cn(
+                  'text-xs font-medium',
+                  isCurrent ? 'text-[#0B2E2F]' : isComplete ? 'text-[#0B2E2F]/70' : 'text-[#0B2E2F]/40'
+                )}
+              >
+                {step.label}
+              </span>
+            </div>
+            {idx < STEPS.length - 1 ? (
+              <div
+                className={cn(
+                  'mx-2 h-0.5 w-12 sm:w-20 rounded-full',
+                  idx < currentIdx ? 'bg-[#0B2E2F]' : 'bg-[#0B2E2F]/15'
+                )}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function OrderStatusView({ initialOrder, accessKey }: Props) {
+  const [order, setOrder] = useState<CheckoutOrderPublic>(initialOrder);
+  const status = deriveStatus(order);
+  const isPaid = order.payment.status === 'finished' || order.payment.status === 'paid';
+
+  // Live polling every 15 seconds
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const response = await fetch(
+          `/api/checkout/order/${encodeURIComponent(order.orderId)}?key=${encodeURIComponent(accessKey)}`,
+          { cache: 'no-store' }
+        );
+        if (!response.ok) return;
+        const payload = await response.json();
+        setOrder(payload.order);
+      } catch {
+        // Silent fail
+      }
+    }, 15_000);
+
+    return () => clearInterval(interval);
+  }, [order.orderId, accessKey]);
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/50">
+          Order Status
+        </p>
+        <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-[#0B2E2F] sm:text-3xl">
+          {order.swell.orderNumber || order.orderId}
+        </h1>
+        <p className="mt-1 text-sm text-[#0B2E2F]/60">
+          {isPaid ? 'Thank you for your order.' : 'Awaiting payment confirmation.'}
+        </p>
+      </div>
+
+      {/* Status timeline */}
+      <div className="rounded-2xl border border-[#0B2E2F]/10 bg-white p-5">
+        <div className="flex justify-center">
+          <StatusTimeline currentStatus={status} />
+        </div>
+
+        {!isPaid ? (
+          <div className="mt-4 flex items-center gap-2 rounded-xl bg-amber-50 px-3.5 py-2.5 text-sm text-amber-900">
+            <Clock className="size-4 shrink-0" />
+            <p>Payment is still being processed. This page will update automatically.</p>
+          </div>
+        ) : null}
+      </div>
+
+      {/* Tracking */}
+      {order.shipengine?.trackingCode ? (
+        <div className="rounded-2xl border border-[#0B2E2F]/10 bg-white p-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/50">
+            Tracking
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className="text-xs text-[#0B2E2F]/50">Carrier</p>
+              <p className="mt-0.5 text-sm font-semibold text-[#0B2E2F]">
+                {order.shipengine.carrier || 'N/A'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-[#0B2E2F]/50">Tracking number</p>
+              <p className="mt-0.5 text-sm font-semibold text-[#0B2E2F]">
+                {order.shipengine.trackingCode}
+              </p>
+            </div>
+          </div>
+          {order.shipengine.publicTrackingUrl ? (
+            <a
+              href={order.shipengine.publicTrackingUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#0B2E2F] px-4 py-2.5 text-sm font-semibold text-[#F4F1EA] transition-colors hover:bg-[#0B2E2F]/90"
+            >
+              Track Package
+              <ExternalLink className="size-4" />
+            </a>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Line items */}
+      <div className="rounded-2xl border border-[#0B2E2F]/10 bg-white p-5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/50">
+          Items
+        </p>
+        <div className="mt-3 space-y-3">
+          {order.lines.map(line => (
+            <div key={line.id} className="flex gap-3">
+              <div className="size-16 shrink-0 overflow-hidden rounded-xl bg-[#F4F1EA]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={line.imageUrl}
+                  alt={line.productTitle}
+                  className="size-full object-cover"
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-[#0B2E2F]">{line.productTitle}</p>
+                    <p className="mt-0.5 text-xs text-[#0B2E2F]/55">{line.variantTitle}</p>
+                  </div>
+                  <p className="text-sm font-semibold text-[#0B2E2F]">
+                    {formatCurrency(line.lineTotal.amount, order.currencyCode)}
+                  </p>
+                </div>
+                <p className="mt-1 text-xs text-[#0B2E2F]/50">
+                  Qty {line.quantity} &middot;{' '}
+                  {formatCurrency(line.unitPrice.amount, order.currencyCode)} each
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Totals */}
+        <div className="mt-4 border-t border-[#0B2E2F]/10 pt-4 space-y-2">
+          <div className="flex justify-between text-sm">
+            <span className="text-[#0B2E2F]/60">Subtotal</span>
+            <span className="font-medium text-[#0B2E2F]">
+              {formatCurrency(order.totals.subtotalAmount.amount, order.currencyCode)}
+            </span>
+          </div>
+          {order.totals.discountAmount && Number(order.totals.discountAmount.amount) > 0 ? (
+            <div className="flex justify-between text-sm">
+              <span className="text-[#0B2E2F]/60">
+                Discount{order.totals.discountCode ? ` (${order.totals.discountCode})` : ''}
+              </span>
+              <span className="font-medium text-[#0B2E2F]">
+                -{formatCurrency(order.totals.discountAmount.amount, order.currencyCode)}
+              </span>
+            </div>
+          ) : null}
+          {order.totals.shippingAmount ? (
+            <div className="flex justify-between text-sm">
+              <span className="text-[#0B2E2F]/60">Shipping</span>
+              <span className="font-medium text-[#0B2E2F]">
+                {Number(order.totals.shippingAmount.amount) <= 0.009
+                  ? 'Free'
+                  : formatCurrency(order.totals.shippingAmount.amount, order.currencyCode)}
+              </span>
+            </div>
+          ) : null}
+          {order.totals.taxAmount ? (
+            <div className="flex justify-between text-sm">
+              <span className="text-[#0B2E2F]/60">Tax</span>
+              <span className="font-medium text-[#0B2E2F]">
+                {formatCurrency(order.totals.taxAmount.amount, order.currencyCode)}
+              </span>
+            </div>
+          ) : null}
+          <div className="flex justify-between border-t border-[#0B2E2F]/10 pt-2 text-base">
+            <span className="font-semibold text-[#0B2E2F]">Total</span>
+            <span className="font-semibold text-[#0B2E2F]">
+              {formatCurrency(order.totals.totalAmount.amount, order.currencyCode)}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Shipping address */}
+      <div className="rounded-2xl border border-[#0B2E2F]/10 bg-white p-5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/50">
+          Shipping Address
+        </p>
+        <div className="mt-3 space-y-1 text-sm text-[#0B2E2F]">
+          <p className="font-semibold">
+            {order.shippingAddress.firstName} {order.shippingAddress.lastName}
+          </p>
+          <p>{order.shippingAddress.address1}</p>
+          {order.shippingAddress.address2 ? <p>{order.shippingAddress.address2}</p> : null}
+          <p>
+            {order.shippingAddress.city}, {order.shippingAddress.province}{' '}
+            {order.shippingAddress.postalCode}
+          </p>
+          <p>{order.shippingAddress.country}</p>
+        </div>
+      </div>
+
+      {/* Order info */}
+      <div className="rounded-2xl border border-[#0B2E2F]/10 bg-white p-5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/50">
+          Order Details
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div>
+            <p className="text-xs text-[#0B2E2F]/50">Order number</p>
+            <p className="mt-0.5 text-sm font-semibold text-[#0B2E2F]">
+              {order.swell.orderNumber || order.orderId}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-[#0B2E2F]/50">Reference</p>
+            <p className="mt-0.5 text-sm font-semibold text-[#0B2E2F]">{order.orderId}</p>
+          </div>
+          <div>
+            <p className="text-xs text-[#0B2E2F]/50">Date</p>
+            <p className="mt-0.5 text-sm font-semibold text-[#0B2E2F]">
+              {formatDate(order.createdAt) || 'N/A'}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-[#0B2E2F]/50">Payment status</p>
+            <p className="mt-0.5 text-sm font-semibold text-[#0B2E2F] capitalize">
+              {order.payment.status.replace(/_/g, ' ')}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <p className="text-center text-xs text-[#0B2E2F]/40">
+        All products are intended for research use only.
+      </p>
+    </div>
+  );
+}

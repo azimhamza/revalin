@@ -15,7 +15,7 @@ function getImageSrcKey(src: ImageProps['src']): string {
 
 export function BlurUpImage({ className, src, onLoad, ...props }: ImageProps) {
   const srcKey = getImageSrcKey(src);
-  const [isLoaded, setIsLoaded] = useState(() => loadedImageSrcs.has(srcKey));
+  const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
     setIsLoaded(loadedImageSrcs.has(srcKey));

@@ -1,5 +1,5 @@
 import { thumbHashToDataURL } from 'thumbhash';
-import { ProductCollectionSortKey, ProductSortKey } from './types';
+import type { Money, Product, ProductCollectionSortKey, ProductSortKey, ProductVariant } from './types';
 
 const DEFAULT_BLUR_SVG = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop stop-color='#d9d6ce' offset='0'/><stop stop-color='#c8c4ba' offset='1'/></linearGradient></defs><rect width='24' height='24' fill='url(#g)'/></svg>`;
 export const DEFAULT_BLUR_DATA_URL = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(DEFAULT_BLUR_SVG)}`;
@@ -73,3 +73,51 @@ export function mapSortKeys(
 export const getSwellProductId = (gid: string) => {
   return gid.split('/').pop() || '';
 };
+
+export function getDisplayPrice(product: Product, selectedVariant?: ProductVariant | null): Money {
+  return selectedVariant?.price || product.priceRange.minVariantPrice;
+}
+
+export function getDisplayCompareAtPrice(
+  product: Product,
+  selectedVariant?: ProductVariant | null,
+  currentPrice?: Money
+): Money | null {
+  const resolvedPrice = currentPrice || getDisplayPrice(product, selectedVariant);
+  const candidate = selectedVariant ? selectedVariant.compareAtPrice ?? null : product.compareAtPrice;
+
+  if (!candidate) return null;
+
+  return Number(candidate.amount || 0) > Number(resolvedPrice.amount || 0) ? candidate : null;
+}
+
+export function getDiscountPercentage(compareAtPrice: Money | null | undefined, currentPrice: Money): number | null {
+  if (!compareAtPrice) return null;
+
+  const compareAmount = Number(compareAtPrice.amount || 0);
+  const currentAmount = Number(currentPrice.amount || 0);
+
+  if (!Number.isFinite(compareAmount) || !Number.isFinite(currentAmount) || compareAmount <= currentAmount) {
+    return null;
+  }
+
+  return Math.round(((compareAmount - currentAmount) / compareAmount) * 100);
+}
+
+/**
+ * Resolve the effective per-unit price given a quantity and optional bulk pricing tiers.
+ * Returns the base price when no tier matches.
+ */
+export function resolveUnitPrice(
+  basePrice: string,
+  quantity: number,
+  tiers?: { minQuantity: number; maxQuantity?: number; price: { amount: string } }[]
+): string {
+  if (!tiers?.length || quantity <= 0) return basePrice;
+
+  const matchingTier = tiers
+    .filter(t => quantity >= t.minQuantity && (!t.maxQuantity || quantity <= t.maxQuantity))
+    .sort((a, b) => b.minQuantity - a.minQuantity)[0];
+
+  return matchingTier?.price.amount ?? basePrice;
+}

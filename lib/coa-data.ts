@@ -23,7 +23,7 @@ export interface BatchData {
 
 // Search terms used to match each COA product to a Swell store product handle
 export const PRODUCT_MATCH_TERMS: Record<string, string[]> = {
-  Retatrutide: ['retatrutide'],
+  'GLP-3 (Triple Agonist)': ['glp-3', 'glp-3rt', 'triple-agonist'],
   Tesamorelin: ['tesamorelin'],
   'BPC-157': ['bpc-157', 'bpc157', 'bpc 157'],
   'Glow Blend': ['glow'],
@@ -41,13 +41,13 @@ export const COA_BATCHES: BatchData[] = [
     id: '1',
     taskNumber: '105085',
     sample: 'Sample 3',
-    product: 'Retatrutide',
+    product: 'GLP-3 (Triple Agonist)',
     manufacturer: 'Unknown',
     testingOrdered: '04 Feb 2026',
     sampleReceived: '09 Feb 2026',
     analysisDate: '12 Feb 2026',
-    testRequested: 'Common GLP-1 peptide blind test (Semaglutide, Tirzepatide and Retatrutide)',
-    results: [{ compound: 'Retatrutide', amount: '10.82 mg' }],
+    testRequested: 'Common GLP-1 peptide blind test',
+    results: [{ compound: 'GLP-3RT', amount: '10.82 mg' }],
     purity: '99.032',
     verificationKey: 'DUV2KAX1PZAF',
     verifyUrl: 'https://www.janoshik.com/tests/105085_DUV2KAX1PZAF',

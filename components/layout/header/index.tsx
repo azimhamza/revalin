@@ -6,23 +6,26 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { LogoSvg } from './logo-svg';
 import CartModal from '@/components/cart/modal';
-import { NavItem } from '@/lib/types';
+import { UserMenuNav, UserMenuMobile } from './user-menu';
+import { SITE_PRIMARY_ROUTES } from '@/lib/app-routes';
 import { Collection } from '@/lib/swell/types';
+import { BadgeCheck, Droplets, Truck, Package } from 'lucide-react';
 
-export const navItems: NavItem[] = [
-  {
-    label: 'home',
-    href: '/',
-  },
-  {
-    label: 'shop',
-    href: '/shop',
-  },
-  {
-    label: 'coa',
-    href: '/coa',
-  },
+const BANNER_ITEMS = [
+  { icon: BadgeCheck, text: 'Independently Verified' },
+  { icon: Droplets, text: '>99% Purity' },
+  { icon: Truck, text: 'Same-Day Dispatch' },
+  { icon: Package, text: 'Free Shipping $250+' },
+  { text: 'Research Use Only' },
+  { text: 'User Discretion Advised' },
 ];
+
+export const navItems = SITE_PRIMARY_ROUTES;
+
+function isActivePath(pathname: string, href: string) {
+  if (href === '/') return pathname === href;
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
 
 interface HeaderProps {
   collections: Collection[];
@@ -33,11 +36,25 @@ export function Header({ collections }: HeaderProps) {
 
   return (
     <>
-      {/* Disclaimer Banner */}
-      <div className="fixed top-0 left-0 z-50 w-full backdrop-blur-sm border-b border-foreground/10" style={{ backgroundColor: '#0B2E2F' }}>
-        <p className="text-[8px] md:text-[10px] tracking-[0.05em] md:tracking-[0.2em] text-center py-1.5 text-background/90 font-medium uppercase whitespace-nowrap overflow-hidden px-0.5">
-          Research Use Only · User Discretion Advised
-        </p>
+      {/* Scrolling Banner */}
+      <div className="fixed top-0 left-0 z-50 w-full backdrop-blur-sm border-b border-foreground/10 overflow-hidden" style={{ backgroundColor: '#0B2E2F' }}>
+        <div className="banner-scroll flex w-max items-center gap-6 py-1.5 md:gap-8">
+          {[...BANNER_ITEMS, ...BANNER_ITEMS].map((item, i) => (
+            <span key={i} className="flex shrink-0 items-center gap-1.5 text-[8px] md:text-[10px] tracking-[0.05em] md:tracking-[0.14em] text-background/90 font-medium uppercase">
+              {item.icon && <item.icon className="size-3 md:size-3.5 opacity-80" strokeWidth={1.5} />}
+              {item.text}
+            </span>
+          ))}
+        </div>
+        <style jsx>{`
+          .banner-scroll {
+            animation: banner-marquee 20s linear infinite;
+          }
+          @keyframes banner-marquee {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+          }
+        `}</style>
       </div>
 
       {/* Main Header */}
@@ -56,7 +73,9 @@ export function Header({ collections }: HeaderProps) {
                   href={item.href}
                   className={cn(
                     'font-semibold text-base transition-colors duration-200 uppercase',
-                    pathname === item.href ? 'text-foreground' : 'text-foreground/50'
+                    isActivePath(pathname, item.href)
+                      ? 'text-foreground'
+                      : 'text-foreground/50'
                   )}
                   prefetch
                 >
@@ -64,7 +83,11 @@ export function Header({ collections }: HeaderProps) {
                 </Link>
               </li>
             ))}
+            <li>
+              <UserMenuNav />
+            </li>
           </ul>
+          <UserMenuMobile />
           <CartModal />
         </nav>
       </header>

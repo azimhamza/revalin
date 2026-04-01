@@ -19,6 +19,7 @@ export function HomeSidebar({ collections }: HomeSidebarProps) {
           <p>Pure chemistry, zero hype.</p>
           <p>Transparency with teeth — results over rhetoric.</p>
         </div>
+        <p className="mt-5 text-sm text-muted-foreground tracking-wide">From Waterloo, Canada.</p>
       </div>
       <ShopLinks collections={collections} />
     </aside>

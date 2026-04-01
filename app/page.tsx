@@ -1,13 +1,16 @@
 import { HomeSidebar } from '@/components/layout/sidebar/home-sidebar';
 import { PageLayout } from '@/components/layout/page-layout';
+import { ValidationSection } from '@/components/home/validation-section';
 import { LatestProductCard } from '@/components/products/latest-product-card';
 import { MobileShopAllTile } from '@/components/home/mobile-shop-all-tile';
 import { Badge } from '@/components/ui/badge';
 import { getCollectionProducts, getCollections, getProduct, getProducts } from '@/lib/swell';
+import { resolveRequestCurrencyCode } from '@/lib/swell/currency';
 import { Product } from '../lib/swell/types';
+import { hasAnyVariantInStock } from '@/lib/inventory';
 
-const FEATURED_PRODUCT_HANDLE = 'retatrutide-glp1-triple-agonist';
-const FEATURED_PRODUCT_KEYWORDS = ['retatrutide', 'glp-3rt'];
+const FEATURED_PRODUCT_HANDLE = 'glp-3-triple-agonist';
+const FEATURED_PRODUCT_KEYWORDS = ['glp-3', 'glp-3rt', 'triple-agonist'];
 const FEATURED_PRODUCTS_LIMIT = 5;
 
 function isFeaturedProduct(product: Product): boolean {
@@ -32,48 +35,65 @@ function prioritizeFeaturedProduct(products: Product[], featuredProduct?: Produc
 }
 
 export default async function Home() {
+  const currencyCode = await resolveRequestCurrencyCode();
   const collections = await getCollections();
 
   let featuredProducts: Product[] = [];
 
   try {
-    let featuredMatch: Product | null = null;
+    // Fetch the full catalog so we can pick the best products to feature
+    const allProducts = await getProducts({ limit: 100, currencyCode });
+    const featuredSearchMatches = await getProducts({ limit: 20, query: 'glp-3', currencyCode });
 
-    if (collections.length > 0) {
-      featuredProducts = await getCollectionProducts({ collection: collections[0].handle });
-      featuredMatch = featuredProducts.find(isFeaturedProduct) || null;
-    }
-
-    // Pull from global catalog when collection results do not include Retatrutide.
-    if (!featuredMatch || featuredProducts.length === 0) {
-      const allProducts = await getProducts({ limit: 100 });
-      const retatrutideMatches = await getProducts({ limit: 20, query: 'retatrutide' });
-
-      featuredMatch =
-        featuredMatch || retatrutideMatches.find(isFeaturedProduct) || allProducts.find(isFeaturedProduct) || null;
-
-      featuredProducts = uniqueProducts([...featuredProducts, ...allProducts, ...retatrutideMatches]).slice(
-        0,
-        FEATURED_PRODUCTS_LIMIT * 2
-      );
-    } else {
-      featuredProducts = uniqueProducts(featuredProducts).slice(0, FEATURED_PRODUCTS_LIMIT * 2);
-    }
+    let featuredMatch: Product | null =
+      featuredSearchMatches.find(isFeaturedProduct) || allProducts.find(isFeaturedProduct) || null;
 
     if (!featuredMatch) {
-      featuredMatch = await getProduct(FEATURED_PRODUCT_HANDLE);
+      featuredMatch = await getProduct(FEATURED_PRODUCT_HANDLE, currencyCode);
     }
 
-    featuredProducts = prioritizeFeaturedProduct(featuredProducts, featuredMatch).slice(0, FEATURED_PRODUCTS_LIMIT);
+    featuredProducts = uniqueProducts([...allProducts, ...featuredSearchMatches]).slice(
+      0,
+      FEATURED_PRODUCTS_LIMIT * 2
+    );
+
+    featuredProducts = prioritizeFeaturedProduct(featuredProducts, featuredMatch);
   } catch (error) {
     console.error('Error fetching featured products:', error);
     featuredProducts = [];
   }
 
-  const [lastProduct, ...restProducts] = featuredProducts;
+  // Hero stays as the featured product; sort the rest: in-stock first, then most purchased
+  const [lastProduct, ...remaining] = featuredProducts;
+
+  remaining.sort((a, b) => {
+    const aHasStock = hasAnyVariantInStock(a) ? 0 : 1;
+    const bHasStock = hasAnyVariantInStock(b) ? 0 : 1;
+    if (aHasStock !== bHasStock) return aHasStock - bHasStock;
+    return (b.purchaseCount ?? 0) - (a.purchaseCount ?? 0);
+  });
+  const restProducts = remaining.slice(0, FEATURED_PRODUCTS_LIMIT - 1);
+
+  const organizationJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: 'Revalin',
+    url: 'https://revalin.com',
+    description:
+      'Research peptide supplier offering independently tested, lab-grade compounds for in-vitro and pre-clinical research.',
+    contactPoint: {
+      '@type': 'ContactPoint',
+      email: 'support@revalin.ca',
+      contactType: 'customer service',
+    },
+  };
 
   return (
     <PageLayout>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationJsonLd) }}
+      />
       <div className="contents md:grid md:grid-cols-12 md:gap-sides">
         <HomeSidebar collections={collections} />
         <div className="flex relative flex-col grid-cols-2 col-span-8 w-full md:grid">
@@ -103,6 +123,7 @@ export default async function Home() {
           )}
         </div>
       </div>
+      <ValidationSection />
     </PageLayout>
   );
 }

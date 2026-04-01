@@ -1,5 +1,6 @@
 import { unstable_cacheLife as cacheLife, unstable_cacheTag as cacheTag } from 'next/cache';
 import { TAGS } from '@/lib/constants';
+import { FALLBACK_COLLECTIONS } from './constants';
 import {
   getCollections as getSwellCollections,
   getProducts as getSwellProducts,
@@ -11,6 +12,7 @@ import {
   removeCartLines,
 } from './swell';
 import { thumbhashToDataURL } from './utils';
+import { DEFAULT_STORE_CURRENCY, normalizeCurrencyCode } from './currency';
 import type {
   SwellProduct,
   SwellCollection,
@@ -55,7 +57,7 @@ function normalizeHandle(value: string): string {
 function transformSwellMoney(money: { amount: string; currencyCode: string } | undefined): Money {
   return {
     amount: money?.amount || '0',
-    currencyCode: money?.currencyCode || 'USD',
+    currencyCode: normalizeCurrencyCode(money?.currencyCode, DEFAULT_STORE_CURRENCY),
   };
 }
 
@@ -76,13 +78,23 @@ function transformSwellVariants(variants: { edges: Array<{ node: any }> } | unde
   const edges = variants?.edges;
   if (!Array.isArray(edges)) return [];
 
-  return edges.map(edge => ({
-    id: edge.node.id,
-    title: edge.node.title || '',
-    availableForSale: edge.node.availableForSale !== false,
-    price: transformSwellMoney(edge.node.price),
-    selectedOptions: edge.node.selectedOptions || [],
-  }));
+  return edges.map(edge => {
+    const price = transformSwellMoney(edge.node.price);
+    const compareAtPrice = edge.node.compareAtPrice ? transformSwellMoney(edge.node.compareAtPrice) : undefined;
+
+    return {
+      id: edge.node.id,
+      title: edge.node.title || '',
+      availableForSale: edge.node.availableForSale !== false,
+      stockStatus: edge.node.stockStatus,
+      stockLevel: edge.node.stockLevel,
+      price,
+      compareAtPrice:
+        compareAtPrice && Number(compareAtPrice.amount) > Number(price.amount) ? compareAtPrice : undefined,
+      selectedOptions: edge.node.selectedOptions || [],
+      bulkPriceTiers: Array.isArray(edge.node.bulkPriceTiers) ? edge.node.bulkPriceTiers : undefined,
+    };
+  });
 }
 
 // Main adapter functions
@@ -99,6 +111,10 @@ function adaptSwellCollection(swellCollection: SwellCollection): Collection {
   };
 }
 
+function getFallbackCollections(): Collection[] {
+  return FALLBACK_COLLECTIONS.map(collection => adaptSwellCollection(collection));
+}
+
 function adaptSwellProduct(swellProduct: SwellProduct): Product {
   const firstImage = swellProduct.images?.edges?.[0]?.node;
   const description = getFirstSentence(swellProduct.description || '');
@@ -109,7 +125,9 @@ function adaptSwellProduct(swellProduct: SwellProduct): Product {
     categoryId: swellProduct.category?.id,
     tags: [],
     availableForSale: swellProduct.availableForSale !== false,
-    currencyCode: swellProduct.priceRange?.minVariantPrice?.currencyCode || 'USD',
+    stockStatus: swellProduct.stockStatus,
+    stockLevel: swellProduct.stockLevel,
+    currencyCode: normalizeCurrencyCode(swellProduct.priceRange?.minVariantPrice?.currencyCode, DEFAULT_STORE_CURRENCY),
     featuredImage: firstImage
       ? {
           ...firstImage,
@@ -143,6 +161,7 @@ function adaptSwellProduct(swellProduct: SwellProduct): Product {
       })) || [],
     options: transformSwellOptions(swellProduct.options || []),
     variants: transformSwellVariants(swellProduct.variants),
+    bulkPriceTiers: swellProduct.bulkPriceTiers,
   };
 }
 
@@ -156,10 +175,14 @@ export async function getCollections(): Promise<Collection[]> {
 
   try {
     const swellCollections = await getSwellCollections();
+    if (swellCollections.length === 0) {
+      console.warn('Swell returned no collections. Falling back to static category navigation.');
+      return getFallbackCollections();
+    }
     return swellCollections.map(adaptSwellCollection);
   } catch (error) {
     console.error('Error fetching collections:', error);
-    return [];
+    return getFallbackCollections();
   }
 }
 
@@ -171,8 +194,9 @@ export async function getCollection(handle: string): Promise<Collection | null> 
   try {
     const collections = await getSwellCollections();
     const normalizedQuery = normalizeHandle(handle);
-    const collection = collections.find(
-      collection =>
+    const sourceCollections: readonly SwellCollection[] = collections.length > 0 ? collections : FALLBACK_COLLECTIONS;
+    const collection = sourceCollections.find(
+      (collection: SwellCollection) =>
         normalizeHandle(collection.handle) === normalizedQuery ||
         normalizeHandle(collection.id) === normalizedQuery
     );
@@ -183,13 +207,17 @@ export async function getCollection(handle: string): Promise<Collection | null> 
   }
 }
 
-export async function getProduct(handle: string): Promise<Product | null> {
+export async function getProduct(handle: string, currencyCode?: string): Promise<Product | null> {
   'use cache';
   cacheTag(TAGS.products);
   cacheLife('minutes');
 
+  return getLiveProduct(handle, currencyCode);
+}
+
+export async function getLiveProduct(handle: string, currencyCode?: string): Promise<Product | null> {
   try {
-    const swellProduct = await getSwellProduct(handle);
+    const swellProduct = await getSwellProduct(handle, currencyCode);
     return swellProduct ? adaptSwellProduct(swellProduct) : null;
   } catch (error) {
     console.error('Error fetching product:', error);
@@ -202,6 +230,7 @@ export async function getProducts(params: {
   sortKey?: ProductSortKey;
   reverse?: boolean;
   query?: string;
+  currencyCode?: string;
 }): Promise<Product[]> {
   'use cache';
   cacheTag(TAGS.products);
@@ -222,6 +251,7 @@ export async function getCollectionProducts(params: {
   sortKey?: ProductCollectionSortKey;
   reverse?: boolean;
   query?: string;
+  currencyCode?: string;
 }): Promise<Product[]> {
   'use cache';
   cacheTag(TAGS.collectionProducts);
@@ -232,6 +262,37 @@ export async function getCollectionProducts(params: {
     return swellProducts.map(adaptSwellProduct);
   } catch (error) {
     console.error('Error fetching collection products:', error);
+    return [];
+  }
+}
+
+export async function getRelatedProducts(product: Product, limit = 4, currencyCode?: string): Promise<Product[]> {
+  'use cache';
+  cacheTag(TAGS.products);
+  cacheLife('minutes');
+
+  try {
+    let candidates: Product[] = [];
+
+    if (product.categoryId) {
+      const categoryProducts = await getCollectionProducts({
+        collection: product.categoryId,
+        limit: limit + 1,
+        currencyCode,
+      });
+      candidates = categoryProducts.filter(p => p.id !== product.id);
+    }
+
+    if (candidates.length < limit) {
+      const allProducts = await getProducts({ limit: limit + 1 + candidates.length, currencyCode });
+      const existingIds = new Set([product.id, ...candidates.map(p => p.id)]);
+      const extras = allProducts.filter(p => !existingIds.has(p.id));
+      candidates = [...candidates, ...extras];
+    }
+
+    return candidates.slice(0, limit);
+  } catch (error) {
+    console.error('Error fetching related products:', error);
     return [];
   }
 }

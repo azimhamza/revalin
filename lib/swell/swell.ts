@@ -1,4 +1,5 @@
 import {
+  BulkPriceTier,
   ProductCollectionSortKey,
   ProductSortKey,
   SwellApiCategory,
@@ -12,6 +13,8 @@ import {
 } from './types';
 
 import { DEFAULT_PAGE_SIZE, DEFAULT_SORT_KEY } from './constants';
+import { DEFAULT_STORE_CURRENCY, normalizeCurrencyCode } from './currency';
+import { resolveUnitPrice } from './utils';
 
 const rawSwellStoreUrl =
   process.env.NEXT_PUBLIC_SWELL_STORE_URL ||
@@ -69,10 +72,10 @@ const SWELL_API_BASES = dedupe([
 ]);
 const CHECKOUT_URL =
   process.env.NEXT_PUBLIC_SWELL_CHECKOUT_URL || process.env.SWELL_CHECKOUT_URL || SWELL_BASE_URL || '/checkout';
-const DEFAULT_CURRENCY = process.env.NEXT_PUBLIC_STORE_CURRENCY || 'USD';
+const DEFAULT_CURRENCY = DEFAULT_STORE_CURRENCY;
 const PRODUCT_EXPAND_FIELDS = HAS_SECRET_KEY ? 'variants,categories,category,stock' : 'category';
 const CATEGORY_KEYWORD_FALLBACKS: Record<string, string[]> = {
-  'metabolic-peptides': ['metabolic', 'retatrutide', 'cagrilintide', 'aod', 'mots', 'tesamorelin', 'nad'],
+  'metabolic-peptides': ['metabolic', 'glp-3', 'cagrilintide', 'aod', 'mots', 'tesamorelin', 'nad'],
   'somatotropic-peptides': ['somatotropic', 'growth hormone', 'ghrh', 'ghrp', 'ipamorelin', 'cjc', 'sermorelin', 'igf'],
   'regenerative-peptides': ['regenerative', 'tissue repair', 'bpc', 'tb-500', 'tb500', 'ghk', 'epithalon', 'wolverine', 'glow', 'klow'],
   'endocrine-peptides': ['endocrine', 'kisspeptin', 'hormone'],
@@ -87,6 +90,7 @@ type CartLineState = {
   id: string;
   variantId: string;
   quantity: number;
+  bulkPriceTiers?: import('./types').BulkPriceTier[];
   merchandise: {
     id: string;
     title: string;
@@ -94,10 +98,18 @@ type CartLineState = {
       amount: string;
       currencyCode: string;
     };
+    availableQuantity?: number | null;
     selectedOptions: Array<{ name: string; value: string }>;
     product: {
       title: string;
       handle: string;
+      availableForSale?: boolean;
+      stockStatus?: string;
+      stockLevel?: number;
+      compareAtPrice?: {
+        amount: string;
+        currencyCode: string;
+      };
       images: {
         edges: Array<{
           node: {
@@ -117,6 +129,14 @@ type CartState = {
 };
 
 const cartStore = new Map<string, CartState>();
+const PRODUCT_LOOKUP_TTL_MS = 30_000;
+const productByVariantCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    value: Promise<AppProduct | null>;
+  }
+>();
 
 function assertSwellConfig() {
   if (!SWELL_BASE_URL && SWELL_API_BASES.length === 0) {
@@ -219,10 +239,14 @@ function buildAuthHeaders(apiUrl: string): HeadersInit[] {
 async function swellFetch<T>(
   path: string,
   params?: { [key: string]: QueryValue },
-  options: { allowExpandFallback?: boolean } = {}
+  options: { allowExpandFallback?: boolean; currencyCode?: string } = {}
 ): Promise<T> {
-  const { allowExpandFallback = true } = options;
-  const requestUrls = buildApiUrls(path, params);
+  const { allowExpandFallback = true, currencyCode } = options;
+  const normalizedCurrency = normalizeCurrencyCode(currencyCode, DEFAULT_CURRENCY);
+  const requestParams = params && Object.prototype.hasOwnProperty.call(params, 'currency')
+    ? params
+    : { ...(params || {}), currency: normalizedCurrency };
+  const requestUrls = buildApiUrls(path, requestParams);
   const errors: string[] = [];
 
   for (const requestUrl of requestUrls) {
@@ -241,7 +265,7 @@ async function swellFetch<T>(
 
       const body = (await response.text()).trim();
 
-      if (allowExpandFallback && params?.expand && (response.status === 400 || response.status === 403)) {
+      if (allowExpandFallback && requestParams?.expand && (response.status === 400 || response.status === 403)) {
         let parsedErrorCode = '';
         try {
           const parsed = JSON.parse(body);
@@ -251,9 +275,12 @@ async function swellFetch<T>(
         }
 
         if (parsedErrorCode === 'permission_error') {
-          const { expand, ...fallbackParams } = params;
+          const { expand, ...fallbackParams } = requestParams;
           try {
-            return await swellFetch<T>(path, fallbackParams, { allowExpandFallback: false });
+            return await swellFetch<T>(path, fallbackParams, {
+              allowExpandFallback: false,
+              currencyCode: normalizedCurrency,
+            });
           } catch (fallbackError) {
             errors.push(
               `expand fallback failed for ${path}: ${(fallbackError as Error)?.message || 'unknown error'}`
@@ -281,6 +308,208 @@ function toAmountString(value: number | string | undefined): string {
   if (!Number.isFinite(parsed)) return '0';
 
   return parsed.toFixed(2);
+}
+
+function buildCompareAtPrice(
+  currentAmount: number | string | undefined,
+  compareAmount: number | string | undefined,
+  currencyCode: string
+) {
+  const current = Number(currentAmount ?? 0);
+  const compare = Number(compareAmount ?? 0);
+
+  if (!Number.isFinite(current) || !Number.isFinite(compare) || compare <= current) {
+    return undefined;
+  }
+
+  return {
+    amount: toAmountString(compare),
+    currencyCode,
+  };
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toPositiveInteger(value: unknown): number | null {
+  const parsed = toFiniteNumber(value);
+  if (parsed === null || parsed <= 0) return null;
+  return Math.floor(parsed);
+}
+
+function extractPriceAmount(value: unknown): number | null {
+  const queue: unknown[] = [value];
+  const seen = new Set<object>();
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const directNumber = toFiniteNumber(current);
+    if (directNumber !== null) return directNumber;
+
+    if (!current) continue;
+
+    if (Array.isArray(current)) {
+      current.forEach(item => queue.push(item));
+      continue;
+    }
+
+    const record = toRecord(current);
+    if (!record || seen.has(record)) continue;
+    seen.add(record);
+
+    const directCandidate =
+      record.amount ??
+      record.price ??
+      record.value ??
+      record.sale_price ??
+      record.unit_price ??
+      record.discounted_price ??
+      record.original_price;
+
+    const candidateNumber = toFiniteNumber(directCandidate);
+    if (candidateNumber !== null) return candidateNumber;
+
+    Object.values(record).forEach(nested => queue.push(nested));
+  }
+
+  return null;
+}
+
+function parseBulkPriceTier(rule: unknown, fallbackCurrencyCode: string): BulkPriceTier | null {
+  const record = toRecord(rule);
+  if (!record) return null;
+
+  const minQuantity =
+    toPositiveInteger(record.quantity_min) ??
+    toPositiveInteger(record.quantityMin) ??
+    toPositiveInteger(record.min_quantity) ??
+    toPositiveInteger(record.minQuantity) ??
+    toPositiveInteger(record.qty_min) ??
+    toPositiveInteger(record.min_qty) ??
+    toPositiveInteger(record.minimum_quantity) ??
+    toPositiveInteger(record.minimumQuantity) ??
+    toPositiveInteger(record.quantity) ??
+    toPositiveInteger(record.qty) ??
+    toPositiveInteger(record.from) ??
+    toPositiveInteger(record.min);
+
+  if (!minQuantity || minQuantity < 2) return null;
+
+  const maxQuantityCandidate =
+    toPositiveInteger(record.quantity_max) ??
+    toPositiveInteger(record.quantityMax) ??
+    toPositiveInteger(record.max_quantity) ??
+    toPositiveInteger(record.maxQuantity) ??
+    toPositiveInteger(record.qty_max) ??
+    toPositiveInteger(record.max_qty) ??
+    toPositiveInteger(record.maximum_quantity) ??
+    toPositiveInteger(record.maximumQuantity) ??
+    toPositiveInteger(record.to) ??
+    toPositiveInteger(record.max);
+
+  const maxQuantity = maxQuantityCandidate && maxQuantityCandidate >= minQuantity ? maxQuantityCandidate : undefined;
+
+  const amount =
+    extractPriceAmount(record.price) ??
+    extractPriceAmount(record.amount) ??
+    extractPriceAmount(record.value) ??
+    extractPriceAmount(record.sale_price) ??
+    extractPriceAmount(record.salePrice) ??
+    extractPriceAmount(record.unit_price) ??
+    extractPriceAmount(record.unitPrice);
+
+  if (amount === null) return null;
+
+  const currencyCandidate =
+    (typeof record.currencyCode === 'string' && record.currencyCode) ||
+    (typeof record.currency_code === 'string' && record.currency_code) ||
+    (typeof record.currency === 'string' && record.currency) ||
+    fallbackCurrencyCode;
+
+  return {
+    minQuantity,
+    maxQuantity,
+    price: {
+      amount: toAmountString(amount),
+      currencyCode: String(currencyCandidate || fallbackCurrencyCode || DEFAULT_CURRENCY).toUpperCase(),
+    },
+  };
+}
+
+function extractBulkPriceTiers(
+  source: unknown,
+  fallbackCurrencyCode: string,
+  options: { ignoreKeys?: string[] } = {}
+): BulkPriceTier[] {
+  if (!source) return [];
+
+  const queue: unknown[] = [source];
+  const seen = new Set<object>();
+  const candidates: unknown[] = [];
+  const ignoredKeys = new Set((options.ignoreKeys || []).map(key => key.toLowerCase()));
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+
+    if (Array.isArray(current)) {
+      current.forEach(item => queue.push(item));
+      continue;
+    }
+
+    const record = toRecord(current);
+    if (!record || seen.has(record)) continue;
+    seen.add(record);
+
+    const rules =
+      record.price_rules ??
+      record.priceRules ??
+      record.pricing_rules ??
+      record.pricingRules ??
+      record.price_breaks ??
+      record.priceBreaks ??
+      record.quantity_pricing ??
+      record.quantityPricing ??
+      record.tiers ??
+      record.prices;
+
+    if (Array.isArray(rules)) {
+      candidates.push(...rules);
+    } else if (rules) {
+      queue.push(rules);
+    }
+
+    Object.entries(record).forEach(([key, value]) => {
+      if (ignoredKeys.has(key.toLowerCase())) return;
+      if (value && typeof value === 'object') {
+        queue.push(value);
+      }
+    });
+  }
+
+  const parsed = candidates
+    .map(candidate => parseBulkPriceTier(candidate, fallbackCurrencyCode))
+    .filter((tier): tier is BulkPriceTier => Boolean(tier));
+
+  const deduped = new Map<string, BulkPriceTier>();
+  parsed.forEach(tier => {
+    const key = `${tier.minQuantity}|${tier.maxQuantity ?? ''}|${tier.price.amount}|${tier.price.currencyCode}`;
+    if (!deduped.has(key)) {
+      deduped.set(key, tier);
+    }
+  });
+
+  return Array.from(deduped.values()).sort(
+    (left, right) => left.minQuantity - right.minQuantity || Number(left.price.amount) - Number(right.price.amount)
+  );
 }
 
 function getImageUrl(image?: SwellApiImage): string {
@@ -505,9 +734,10 @@ function extractIdsFromVariantId(variantId: string): { productId: string; varian
   };
 }
 
-function mapSwellProduct(product: SwellApiProduct): AppProduct {
+function mapSwellProduct(product: SwellApiProduct, fallbackCurrencyCode = DEFAULT_CURRENCY): AppProduct {
   const productId = String(product.id || product.slug || product.name || Math.random().toString(36).slice(2));
-  const currencyCode = String(product.currency || DEFAULT_CURRENCY).toUpperCase();
+  const currencyCode = normalizeCurrencyCode(product.currency || fallbackCurrencyCode, DEFAULT_CURRENCY);
+  const productBulkPriceTiers = extractBulkPriceTiers(product, currencyCode, { ignoreKeys: ['variants'] });
 
   const basePrice = product.sale ? product.sale_price ?? product.price : product.price;
   const comparePrice = product.orig_price ?? product.price;
@@ -561,16 +791,29 @@ function mapSwellProduct(product: SwellApiProduct): AppProduct {
   const apiVariants = unwrapResults(product.variants).filter(variant => (variant.active ?? true) !== false);
   const normalizedVariants = apiVariants.map(variant => {
     const selectedOptions = getVariantSelectedOptions(variant);
+    const variantCurrencyCode = normalizeCurrencyCode(variant.currency || currencyCode, currencyCode);
+    const variantBulkPriceTiers = extractBulkPriceTiers(variant, variantCurrencyCode);
+    const variantCurrentPrice = variant.sale ? variant.sale_price ?? variant.price : variant.price ?? basePrice;
+    const variantCompareAtPrice = buildCompareAtPrice(
+      variantCurrentPrice,
+      variant.orig_price ?? variant.price,
+      variantCurrencyCode
+    );
+
     return {
       id: buildVariantId(productId, String(variant.id || variant.sku || variant.name || 'default')),
       title: variant.name || variant.sku || 'Default',
       price: {
-        amount: toAmountString(variant.sale ? variant.sale_price ?? variant.price : variant.price ?? basePrice),
-        currencyCode: (variant.currency || currencyCode).toUpperCase(),
+        amount: toAmountString(variantCurrentPrice),
+        currencyCode: variantCurrencyCode,
       },
+      compareAtPrice: variantCompareAtPrice,
       availableForSale: isPurchasableFromStockStatus(variant.stock_status, variant.stock_purchasable),
+      stockStatus: variant.stock_status,
+      stockLevel: variant.stock_level,
       selectedOptions,
       images: variant.images || [],
+      bulkPriceTiers: variantBulkPriceTiers.length > 0 ? variantBulkPriceTiers : undefined,
     };
   });
 
@@ -634,8 +877,12 @@ function mapSwellProduct(product: SwellApiProduct): AppProduct {
       id: variant.id,
       title: variant.title,
       price: variant.price,
+      compareAtPrice: variant.compareAtPrice,
       availableForSale: variant.availableForSale,
+      stockStatus: variant.stockStatus,
+      stockLevel: variant.stockLevel,
       selectedOptions: variant.selectedOptions,
+      bulkPriceTiers: variant.bulkPriceTiers,
     },
   }));
 
@@ -654,6 +901,10 @@ function mapSwellProduct(product: SwellApiProduct): AppProduct {
     .map(variant => Number(variant.node.price.amount))
     .filter(price => Number.isFinite(price));
   const minVariantAmount = variantPrices.length > 0 ? Math.min(...variantPrices) : Number(basePrice || 0);
+  const lowestPricedVariant = rawVariants.find(variant => Number(variant.node.price.amount) === minVariantAmount);
+  const productCompareAtPrice =
+    lowestPricedVariant?.node.compareAtPrice ||
+    buildCompareAtPrice(minVariantAmount, comparePrice, currencyCode);
 
   return {
     id: `swell://product/${productId}`,
@@ -665,6 +916,7 @@ function mapSwellProduct(product: SwellApiProduct): AppProduct {
     availableForSale: isPurchasableFromStockStatus(product.stock_status, product.stock_purchasable),
     stockStatus: product.stock_status,
     stockLevel: product.stock_level,
+    purchaseCount: product.purchase_count ?? 0,
     category: firstCategory
       ? {
           id: String(firstCategory.id || firstCategory.slug || firstCategory.name || ''),
@@ -676,6 +928,7 @@ function mapSwellProduct(product: SwellApiProduct): AppProduct {
     images: {
       edges: imageNodes,
     },
+    bulkPriceTiers: productBulkPriceTiers.length > 0 ? productBulkPriceTiers : undefined,
     priceRange: {
       minVariantPrice: {
         amount: toAmountString(minVariantAmount),
@@ -684,8 +937,8 @@ function mapSwellProduct(product: SwellApiProduct): AppProduct {
     },
     compareAtPriceRange: {
       minVariantPrice: {
-        amount: toAmountString(comparePrice),
-        currencyCode,
+        amount: productCompareAtPrice?.amount || toAmountString(minVariantAmount),
+        currencyCode: productCompareAtPrice?.currencyCode || currencyCode,
       },
     },
     variants: {
@@ -701,8 +954,12 @@ function mapSwellProduct(product: SwellApiProduct): AppProduct {
                     amount: toAmountString(basePrice),
                     currencyCode,
                   },
+                  compareAtPrice: buildCompareAtPrice(basePrice, comparePrice, currencyCode),
                   availableForSale: isPurchasableFromStockStatus(product.stock_status, product.stock_purchasable),
+                  stockStatus: product.stock_status,
+                  stockLevel: product.stock_level,
                   selectedOptions: [],
+                  bulkPriceTiers: productBulkPriceTiers.length > 0 ? productBulkPriceTiers : undefined,
                 },
               },
             ],
@@ -820,14 +1077,21 @@ function hasResolvedVariants(product: SwellApiProduct): boolean {
   return unwrapResults(product.variants).length > 0;
 }
 
-async function hydrateProductForVariants(product: SwellApiProduct): Promise<SwellApiProduct> {
+async function hydrateProductForVariants(
+  product: SwellApiProduct,
+  currencyCode?: string
+): Promise<SwellApiProduct> {
   if (!product.id) return product;
   if (!hasVariantOptions(product) || hasResolvedVariants(product)) return product;
 
   try {
-    const hydrated = await swellFetch<SwellApiProduct>(`/products/${encodeURIComponent(String(product.id))}`, {
-      expand: PRODUCT_EXPAND_FIELDS,
-    });
+    const hydrated = await swellFetch<SwellApiProduct>(
+      `/products/${encodeURIComponent(String(product.id))}`,
+      {
+        expand: PRODUCT_EXPAND_FIELDS,
+      },
+      { currencyCode }
+    );
     return hydrated || product;
   } catch (error) {
     console.error(`Failed to hydrate variant data for product ${product.id}:`, error);
@@ -842,6 +1106,7 @@ async function getSwellProducts(params: {
   reverse?: boolean;
   query?: string;
   categoryHandle?: string;
+  currencyCode?: string;
 }): Promise<AppProduct[]> {
   const {
     first = DEFAULT_PAGE_SIZE,
@@ -850,6 +1115,7 @@ async function getSwellProducts(params: {
     reverse = false,
     query,
     categoryHandle,
+    currencyCode,
   } = params;
 
   const pageSize = Math.max(limit || first, DEFAULT_PAGE_SIZE);
@@ -872,13 +1138,17 @@ async function getSwellProducts(params: {
   let total = Number.POSITIVE_INFINITY;
 
   while (collectedProducts.length < targetCount && collectedProducts.length < total) {
-    const productsResponse = await swellFetch<SwellApiListResponse<SwellApiProduct>>('/products', {
-      limit: perPage,
-      page,
-      expand: PRODUCT_EXPAND_FIELDS,
-      category: categoryFilter,
-      search: query,
-    });
+    const productsResponse = await swellFetch<SwellApiListResponse<SwellApiProduct>>(
+      '/products',
+      {
+        limit: perPage,
+        page,
+        expand: PRODUCT_EXPAND_FIELDS,
+        category: categoryFilter,
+        search: query,
+      },
+      { currencyCode }
+    );
 
     const batch = unwrapResults(productsResponse);
     const reportedCount = Number(productsResponse.count || 0);
@@ -909,12 +1179,16 @@ async function getSwellProducts(params: {
       fallbackCollectedProducts.length < targetCount &&
       fallbackCollectedProducts.length < fallbackTotal
     ) {
-      const fallbackResponse = await swellFetch<SwellApiListResponse<SwellApiProduct>>('/products', {
-        limit: perPage,
-        page: fallbackPage,
-        expand: PRODUCT_EXPAND_FIELDS,
-        search: query,
-      });
+      const fallbackResponse = await swellFetch<SwellApiListResponse<SwellApiProduct>>(
+        '/products',
+        {
+          limit: perPage,
+          page: fallbackPage,
+          expand: PRODUCT_EXPAND_FIELDS,
+          search: query,
+        },
+        { currencyCode }
+      );
 
       const fallbackBatch = unwrapResults(fallbackResponse);
       const fallbackReportedCount = Number(fallbackResponse.count || 0);
@@ -947,30 +1221,64 @@ async function getSwellProducts(params: {
 
   const sorted = sortProducts(filtered, sortKey, reverse);
   const pageProducts = sorted.slice(0, pageSize);
-  const hydratedProducts = await Promise.all(pageProducts.map(hydrateProductForVariants));
-  return hydratedProducts.map(mapSwellProduct);
+  const hydratedProducts = await Promise.all(pageProducts.map(product => hydrateProductForVariants(product, currencyCode)));
+  return hydratedProducts.map(product => mapSwellProduct(product, currencyCode));
 }
 
-async function getProductByVariantId(variantId: string): Promise<AppProduct | null> {
+async function getProductByVariantId(variantId: string, currencyCode?: string): Promise<AppProduct | null> {
   const parsed = extractIdsFromVariantId(variantId);
   if (!parsed) return null;
 
-  try {
-    const product = await swellFetch<SwellApiProduct>(`/products/${encodeURIComponent(parsed.productId)}`, {
-      expand: PRODUCT_EXPAND_FIELDS,
-    });
+  const normalizedCurrency = normalizeCurrencyCode(currencyCode, DEFAULT_CURRENCY);
+  const cacheKey = `${variantId}::${normalizedCurrency}`;
+  const now = Date.now();
+  const cached = productByVariantCache.get(cacheKey);
 
-    return mapSwellProduct(product);
-  } catch (error) {
-    console.error('Unable to resolve Swell product for cart variant:', error);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const lookupPromise = (async () => {
+    try {
+      const product = await swellFetch<SwellApiProduct>(
+        `/products/${encodeURIComponent(parsed.productId)}`,
+        {
+          expand: PRODUCT_EXPAND_FIELDS,
+        },
+        { currencyCode: normalizedCurrency }
+      );
+
+      return mapSwellProduct(product, normalizedCurrency);
+    } catch (error) {
+      console.error('Unable to resolve Swell product for cart variant:', error);
+      return null;
+    }
+  })();
+
+  productByVariantCache.set(cacheKey, {
+    expiresAt: now + PRODUCT_LOOKUP_TTL_MS,
+    value: lookupPromise,
+  });
+
+  try {
+    const product = await lookupPromise;
+    if (product === null) {
+      productByVariantCache.delete(cacheKey);
+    }
+    return product;
+  } catch {
+    productByVariantCache.delete(cacheKey);
     return null;
   }
 }
 
-function toSwellCart(state: CartState): AppCart {
-  const currencyCode = state.lines[0]?.merchandise.price.currencyCode || DEFAULT_CURRENCY;
+function toSwellCart(state: CartState, fallbackCurrencyCode?: string): AppCart {
+  const currencyCode = state.lines[0]?.merchandise.price.currencyCode || normalizeCurrencyCode(fallbackCurrencyCode, DEFAULT_CURRENCY);
   const subtotal = state.lines
-    .reduce((sum, line) => sum + Number(line.merchandise.price.amount) * line.quantity, 0)
+    .reduce((sum, line) => {
+      const unitPrice = resolveUnitPrice(line.merchandise.price.amount, line.quantity, line.bulkPriceTiers);
+      return sum + Number(unitPrice) * line.quantity;
+    }, 0)
     .toFixed(2);
 
   return {
@@ -980,6 +1288,7 @@ function toSwellCart(state: CartState): AppCart {
         node: {
           id: line.id,
           quantity: line.quantity,
+          bulkPriceTiers: line.bulkPriceTiers,
           merchandise: line.merchandise,
         },
       })),
@@ -1006,6 +1315,21 @@ function buildLineId(cartId: string, variantId: string) {
   return `${cartId}:${variantId}`;
 }
 
+function resolveCartAvailableQuantity(
+  product: AppProduct,
+  variant?: AppProduct['variants']['edges'][number]['node'] | null
+): number | null {
+  if (typeof variant?.stockLevel === 'number') {
+    return variant.stockLevel;
+  }
+
+  if (!variant || product.variants.edges.length <= 1) {
+    return typeof product.stockLevel === 'number' ? product.stockLevel : null;
+  }
+
+  return null;
+}
+
 // Get all products
 export async function getProducts({
   first = DEFAULT_PAGE_SIZE,
@@ -1013,12 +1337,14 @@ export async function getProducts({
   sortKey = DEFAULT_SORT_KEY,
   reverse = false,
   query: searchQuery,
+  currencyCode,
 }: {
   first?: number;
   limit?: number;
   sortKey?: ProductSortKey;
   reverse?: boolean;
   query?: string;
+  currencyCode?: string;
 }): Promise<AppProduct[]> {
   return getSwellProducts({
     first,
@@ -1026,38 +1352,47 @@ export async function getProducts({
     sortKey,
     reverse,
     query: searchQuery,
+    currencyCode,
   });
 }
 
 // Get single product by handle
-export async function getProduct(handle: string): Promise<AppProduct | null> {
+export async function getProduct(handle: string, currencyCode?: string): Promise<AppProduct | null> {
   const normalizedHandle = normalizeHandle(handle);
-  const matchingProducts = await swellFetch<SwellApiListResponse<SwellApiProduct>>('/products', {
-    where: { slug: normalizedHandle },
-    limit: 1,
-    page: 1,
-    expand: PRODUCT_EXPAND_FIELDS,
-  });
+  const matchingProducts = await swellFetch<SwellApiListResponse<SwellApiProduct>>(
+    '/products',
+    {
+      where: { slug: normalizedHandle },
+      limit: 1,
+      page: 1,
+      expand: PRODUCT_EXPAND_FIELDS,
+    },
+    { currencyCode }
+  );
 
   const matchedProduct = unwrapResults(matchingProducts).find(
     item => normalizeHandle(item.slug || '') === normalizedHandle
   );
   if (matchedProduct && (matchedProduct.active ?? true) !== false) {
-    const hydratedProduct = await hydrateProductForVariants(matchedProduct);
-    return mapSwellProduct(hydratedProduct);
+    const hydratedProduct = await hydrateProductForVariants(matchedProduct, currencyCode);
+    return mapSwellProduct(hydratedProduct, currencyCode);
   }
 
-  const products = await swellFetch<SwellApiListResponse<SwellApiProduct>>('/products', {
-    search: normalizedHandle,
-    limit: 100,
-    page: 1,
-    expand: PRODUCT_EXPAND_FIELDS,
-  });
+  const products = await swellFetch<SwellApiListResponse<SwellApiProduct>>(
+    '/products',
+    {
+      search: normalizedHandle,
+      limit: 100,
+      page: 1,
+      expand: PRODUCT_EXPAND_FIELDS,
+    },
+    { currencyCode }
+  );
 
   const fallback = unwrapResults(products).find(item => normalizeHandle(item.slug || '') === normalizedHandle);
   if (fallback && (fallback.active ?? true) !== false) {
-    const hydratedFallback = await hydrateProductForVariants(fallback);
-    return mapSwellProduct(hydratedFallback);
+    const hydratedFallback = await hydrateProductForVariants(fallback, currencyCode);
+    return mapSwellProduct(hydratedFallback, currencyCode);
   }
 
   return null;
@@ -1079,12 +1414,14 @@ export async function getCollectionProducts({
   sortKey = DEFAULT_SORT_KEY,
   query: searchQuery,
   reverse = false,
+  currencyCode,
 }: {
   collection: string;
   limit?: number;
   sortKey?: ProductCollectionSortKey;
   query?: string;
   reverse?: boolean;
+  currencyCode?: string;
 }): Promise<AppProduct[]> {
   return getSwellProducts({
     limit,
@@ -1092,21 +1429,23 @@ export async function getCollectionProducts({
     reverse,
     query: searchQuery,
     categoryHandle: collection,
+    currencyCode,
   });
 }
 
 // Create cart (headless in-memory cart state)
-export async function createCart(): Promise<AppCart> {
+export async function createCart(currencyCode?: string): Promise<AppCart> {
   const cartId = `swell-cart-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const state: CartState = { id: cartId, lines: [] };
   cartStore.set(cartId, state);
-  return toSwellCart(state);
+  return toSwellCart(state, currencyCode);
 }
 
 // Add items to cart
 export async function addCartLines(
   cartId: string,
-  lines: Array<{ merchandiseId: string; quantity: number }>
+  lines: Array<{ merchandiseId: string; quantity: number }>,
+  currencyCode?: string
 ): Promise<AppCart> {
   let state = cartStore.get(cartId);
   if (!state) {
@@ -1117,24 +1456,39 @@ export async function addCartLines(
   for (const line of lines) {
     const quantity = Math.max(1, Number(line.quantity) || 1);
     const existing = state.lines.find(item => item.variantId === line.merchandiseId);
+    const product = await getProductByVariantId(line.merchandiseId, currencyCode);
+    if (!product) continue;
+    const selectedVariant =
+      product.variants.edges.find(edge => edge.node.id === line.merchandiseId)?.node || product.variants.edges[0]?.node;
+    const availableQuantity = resolveCartAvailableQuantity(product, selectedVariant);
+    const maxQuantity = availableQuantity === null ? null : Math.max(existing?.quantity || 0, availableQuantity);
+    const clampedQuantity = maxQuantity === null ? quantity : Math.max(0, Math.min(quantity, maxQuantity));
 
     if (existing) {
-      existing.quantity += quantity;
+      existing.quantity = maxQuantity === null ? existing.quantity + quantity : Math.min(existing.quantity + quantity, maxQuantity);
+      existing.merchandise.availableQuantity = availableQuantity;
+      existing.merchandise.product.availableForSale = selectedVariant?.availableForSale ?? product.availableForSale;
+      existing.merchandise.product.stockStatus = selectedVariant?.stockStatus ?? product.stockStatus;
+      existing.merchandise.product.stockLevel = selectedVariant?.stockLevel ?? product.stockLevel;
+      existing.merchandise.product.compareAtPrice =
+        selectedVariant?.compareAtPrice ?? product.compareAtPriceRange?.minVariantPrice;
       continue;
     }
 
-    const product = await getProductByVariantId(line.merchandiseId);
-    if (!product) continue;
-
-    const selectedVariant =
-      product.variants.edges.find(variant => variant.node.id === line.merchandiseId)?.node || product.variants.edges[0]?.node;
-
     const firstImage = product.images.edges[0]?.node;
+
+    const variantTiers = selectedVariant?.bulkPriceTiers;
+    const lineTiers = variantTiers?.length ? variantTiers : product.bulkPriceTiers || undefined;
+
+    if (clampedQuantity <= 0) {
+      continue;
+    }
 
     state.lines.push({
       id: buildLineId(cartId, line.merchandiseId),
       variantId: line.merchandiseId,
-      quantity,
+      quantity: clampedQuantity,
+      bulkPriceTiers: lineTiers,
       merchandise: {
         id: line.merchandiseId,
         title: selectedVariant?.title || product.title,
@@ -1142,10 +1496,15 @@ export async function addCartLines(
           amount: product.priceRange.minVariantPrice.amount,
           currencyCode: product.priceRange.minVariantPrice.currencyCode,
         },
+        availableQuantity,
         selectedOptions: selectedVariant?.selectedOptions || [],
         product: {
           title: product.title,
           handle: product.handle,
+          availableForSale: selectedVariant?.availableForSale ?? product.availableForSale,
+          stockStatus: selectedVariant?.stockStatus ?? product.stockStatus,
+          stockLevel: selectedVariant?.stockLevel ?? product.stockLevel,
+          compareAtPrice: selectedVariant?.compareAtPrice ?? product.compareAtPriceRange?.minVariantPrice,
           images: {
             edges: firstImage
               ? [
@@ -1164,13 +1523,14 @@ export async function addCartLines(
     });
   }
 
-  return toSwellCart(state);
+  return toSwellCart(state, currencyCode);
 }
 
 // Update items in cart
 export async function updateCartLines(
   cartId: string,
-  lines: Array<{ id: string; quantity: number }>
+  lines: Array<{ id: string; quantity: number }>,
+  currencyCode?: string
 ): Promise<AppCart> {
   const state = cartStore.get(cartId) || { id: cartId, lines: [] };
   cartStore.set(cartId, state);
@@ -1182,26 +1542,44 @@ export async function updateCartLines(
     if (incoming.quantity <= 0) {
       state.lines.splice(index, 1);
     } else {
-      state.lines[index].quantity = incoming.quantity;
+      const line = state.lines[index];
+      const product = await getProductByVariantId(line.variantId, currencyCode);
+      const selectedVariant =
+        product?.variants.edges.find(edge => edge.node.id === line.variantId)?.node || product?.variants.edges[0]?.node;
+      const availableQuantity = product
+        ? resolveCartAvailableQuantity(product, selectedVariant)
+        : line.merchandise.availableQuantity ?? null;
+      const maxQuantity = availableQuantity === null ? null : Math.max(line.quantity, availableQuantity);
+
+      line.quantity = maxQuantity === null ? incoming.quantity : Math.min(incoming.quantity, maxQuantity);
+      line.merchandise.availableQuantity = availableQuantity;
+
+      if (product) {
+        line.merchandise.product.availableForSale = selectedVariant?.availableForSale ?? product.availableForSale;
+        line.merchandise.product.stockStatus = selectedVariant?.stockStatus ?? product.stockStatus;
+        line.merchandise.product.stockLevel = selectedVariant?.stockLevel ?? product.stockLevel;
+        line.merchandise.product.compareAtPrice =
+          selectedVariant?.compareAtPrice ?? product.compareAtPriceRange?.minVariantPrice;
+      }
     }
   }
 
-  return toSwellCart(state);
+  return toSwellCart(state, currencyCode);
 }
 
 // Remove items from cart
-export async function removeCartLines(cartId: string, lineIds: string[]): Promise<AppCart> {
+export async function removeCartLines(cartId: string, lineIds: string[], currencyCode?: string): Promise<AppCart> {
   const state = cartStore.get(cartId) || { id: cartId, lines: [] };
   cartStore.set(cartId, state);
 
   state.lines = state.lines.filter(line => !lineIds.includes(line.id));
 
-  return toSwellCart(state);
+  return toSwellCart(state, currencyCode);
 }
 
 // Get cart
-export async function getCart(cartId: string): Promise<AppCart | null> {
+export async function getCart(cartId: string, currencyCode?: string): Promise<AppCart | null> {
   const state = cartStore.get(cartId);
   if (!state) return null;
-  return toSwellCart(state);
+  return toSwellCart(state, currencyCode);
 }

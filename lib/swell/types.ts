@@ -52,14 +52,23 @@ export interface SwellProduct {
           amount: string;
           currencyCode: string;
         };
+        compareAtPrice?: {
+          amount: string;
+          currencyCode: string;
+        };
         availableForSale: boolean;
+        stockStatus?: string;
+        stockLevel?: number;
         selectedOptions?: Array<{
           name: string;
           value: string;
         }>;
+        bulkPriceTiers?: BulkPriceTier[];
       };
     }>;
   };
+  bulkPriceTiers?: BulkPriceTier[];
+  purchaseCount?: number;
 }
 
 export interface SwellApiFile {
@@ -115,6 +124,7 @@ export interface SwellApiVariant {
   currency?: string;
   active?: boolean;
   stock_status?: string;
+  stock_level?: number;
   stock_purchasable?: boolean;
   option_value_ids?: string[];
   images?: SwellApiImage[];
@@ -125,6 +135,12 @@ export interface SwellApiVariant {
     }
   >;
   options?: Record<string, string>;
+  price_rules?: unknown;
+  prices?: unknown;
+  price_breaks?: unknown;
+  tiers?: unknown;
+  quantity_pricing?: unknown;
+  purchase_options?: unknown;
 }
 
 export interface SwellApiStock {
@@ -167,6 +183,13 @@ export interface SwellApiProduct {
   options?: SwellApiOption[];
   variants?: SwellApiVariant[] | SwellApiListResponse<SwellApiVariant>;
   stock?: SwellApiStock[] | SwellApiListResponse<SwellApiStock>;
+  price_rules?: unknown;
+  prices?: unknown;
+  price_breaks?: unknown;
+  tiers?: unknown;
+  quantity_pricing?: unknown;
+  purchase_options?: unknown;
+  purchase_count?: number;
   date_created?: string;
   date_updated?: string;
 }
@@ -192,6 +215,7 @@ export interface SwellCollection {
 export interface SwellCartLine {
   id: string;
   quantity: number;
+  bulkPriceTiers?: BulkPriceTier[];
   merchandise: {
     id: string;
     title: string;
@@ -199,6 +223,7 @@ export interface SwellCartLine {
       amount: string;
       currencyCode: string;
     };
+    availableQuantity?: number | null;
     selectedOptions: {
       name: string;
       value: string;
@@ -206,6 +231,13 @@ export interface SwellCartLine {
     product: {
       title: string;
       handle: string;
+      availableForSale?: boolean;
+      stockStatus?: string;
+      stockLevel?: number;
+      compareAtPrice?: {
+        amount: string;
+        currencyCode: string;
+      };
       images: {
         edges: Array<{
           node: {
@@ -264,6 +296,8 @@ export type Product = {
   descriptionHtml: string;
   featuredImage: Image;
   currencyCode: string;
+  stockStatus?: string;
+  stockLevel?: number;
   priceRange: {
     maxVariantPrice: Money;
     minVariantPrice: Money;
@@ -275,6 +309,8 @@ export type Product = {
   variants: ProductVariant[];
   images: Image[];
   availableForSale: boolean;
+  bulkPriceTiers?: BulkPriceTier[];
+  purchaseCount?: number;
 };
 
 export type ProductSortKey =
@@ -307,8 +343,12 @@ export type ProductVariant = {
   id: string;
   title: string;
   availableForSale: boolean;
+  stockStatus?: string;
+  stockLevel?: number;
   selectedOptions: SelectedOptions;
   price: Money;
+  compareAtPrice?: Money;
+  bulkPriceTiers?: BulkPriceTier[];
 };
 
 export type ProductOption = {
@@ -323,6 +363,12 @@ export type ProductOption = {
 export type Money = {
   amount: string;
   currencyCode: string;
+};
+
+export type BulkPriceTier = {
+  minQuantity: number;
+  maxQuantity?: number;
+  price: Money;
 };
 
 export type Image = {
@@ -359,9 +405,11 @@ export type CartItem = {
   cost: {
     totalAmount: Money;
   };
+  bulkPriceTiers?: BulkPriceTier[];
   merchandise: {
     id: string;
     title: string;
+    availableQuantity?: number | null;
     selectedOptions: SelectedOptions;
     product: Product;
   };

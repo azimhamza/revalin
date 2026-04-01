@@ -12,6 +12,7 @@ import { CSSProperties, ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader } from '../ui/loader';
 import { getSwellProductId } from '@/lib/swell/utils';
+import { getInventoryState } from '@/lib/inventory';
 
 interface AddToCartProps extends ButtonProps {
   product: Product;
@@ -36,8 +37,11 @@ const getBaseProductVariant = (product: Product): ProductVariant => {
     id: product.id,
     title: product.title,
     availableForSale: product.availableForSale,
+    stockStatus: product.stockStatus,
+    stockLevel: product.stockLevel,
     selectedOptions: [],
     price: product.priceRange.minVariantPrice,
+    compareAtPrice: product.compareAtPrice,
   };
 };
 
@@ -52,7 +56,7 @@ export function AddToCartButton({
   style,
   ...buttonProps
 }: AddToCartButtonProps) {
-  const { addItem } = useCart();
+  const { addItem, cart, warmCart } = useCart();
   const [isLoading, startTransition] = useTransition();
 
   // Resolve variant locally only for variantless products (purely synchronous)
@@ -62,16 +66,33 @@ export function AddToCartButton({
     if (product.variants.length === 1) return product.variants[0];
     return undefined;
   }, [selectedVariant, product]);
+  const inventory = useMemo(() => getInventoryState(product, resolvedVariant), [product, resolvedVariant]);
+  const existingCartQuantity = useMemo(() => {
+    if (!resolvedVariant) return 0;
+    return cart?.lines.find(line => line.merchandise.id === resolvedVariant.id)?.quantity || 0;
+  }, [cart, resolvedVariant]);
+  const hasReachedAvailableLimit =
+    inventory.availableQuantity !== null && existingCartQuantity >= inventory.availableQuantity;
 
   const getButtonText = () => {
-    if (!product.availableForSale) return 'Out Of Stock';
+    if (inventory.isBackorder) return 'Available in next shipment';
     if (!resolvedVariant) return 'Select one';
+    if (hasReachedAvailableLimit) return 'Max quantity added';
     return 'Add To Cart';
   };
 
-  const isDisabled = !product.availableForSale || !resolvedVariant || isLoading;
-  const isSelectOneState = product.availableForSale && !resolvedVariant;
+  const isDisabled = inventory.isBackorder || hasReachedAvailableLimit || !resolvedVariant || isLoading;
+  const isSelectOneState = !inventory.isBackorder && !resolvedVariant;
   const buttonStyle = isSelectOneState && unselectedStyle ? unselectedStyle : style;
+  const { onPointerEnter, onFocus, onTouchStart, ...restButtonProps } = buttonProps;
+
+  const handleWarmCart = () => {
+    if (!resolvedVariant || hasReachedAvailableLimit || inventory.isBackorder) {
+      return;
+    }
+
+    warmCart();
+  };
 
   const getLoaderSize = () => {
     const buttonSize = buttonProps.size;
@@ -86,9 +107,19 @@ export function AddToCartButton({
       onSubmit={e => {
         e.preventDefault();
 
-        if (resolvedVariant) {
+        if (resolvedVariant && !hasReachedAvailableLimit) {
           startTransition(async () => {
             addItem(resolvedVariant, product);
+            try {
+              const refMatch = document.cookie.match(/(?:^|;\s*)revalin_ref=([^;]+)/);
+              window.op?.track('product_added_to_cart', {
+                productHandle: product.handle,
+                productTitle: product.title,
+                variantTitle: resolvedVariant.title,
+                price: resolvedVariant.price?.amount || product.priceRange.minVariantPrice.amount,
+                affiliate_code: refMatch?.[1] ? decodeURIComponent(refMatch[1]) : null,
+              });
+            } catch {}
           });
         }
       }}
@@ -96,15 +127,27 @@ export function AddToCartButton({
     >
       <Button
         type="submit"
-        aria-label={!resolvedVariant ? 'Select one' : 'Add to cart'}
+        aria-label={inventory.isBackorder ? 'Available in next shipment' : !resolvedVariant ? 'Select one' : 'Add to cart'}
         disabled={isDisabled}
+        onPointerEnter={event => {
+          onPointerEnter?.(event);
+          handleWarmCart();
+        }}
+        onFocus={event => {
+          onFocus?.(event);
+          handleWarmCart();
+        }}
+        onTouchStart={event => {
+          onTouchStart?.(event);
+          handleWarmCart();
+        }}
         className={cn(
           iconOnly ? undefined : 'flex relative justify-between items-center w-full',
           isSelectOneState && 'max-md:pl-3 max-md:pr-2',
           className
         )}
         style={buttonStyle || { backgroundColor: '#0B2E2F', color: '#F4F1EA' }}
-        {...buttonProps}
+        {...restButtonProps}
       >
         <AnimatePresence initial={false} mode="wait">
           {iconOnly ? (
@@ -116,7 +159,7 @@ export function AddToCartButton({
               transition={{ duration: 0.15 }}
               className="flex justify-center items-center"
             >
-              {isLoading ? <Loader size={getLoaderSize()} /> : <span className="inline-block">{icon}</span>}
+              {isLoading ? <Loader size={getLoaderSize()} kind="spinner" className="text-[#0B2E2F]" /> : <span className="inline-block">{icon}</span>}
             </motion.div>
           ) : (
             <motion.div
@@ -128,7 +171,7 @@ export function AddToCartButton({
               className="flex justify-center items-center w-full"
             >
               {isLoading ? (
-                <Loader size={getLoaderSize()} />
+                <Loader size={getLoaderSize()} kind="spinner" className="text-[#0B2E2F]" />
               ) : (
                 <div className={cn('flex justify-between items-center w-full gap-2', contentClassName)}>
                   <span className="min-w-0 truncate">{getButtonText()}</span>
