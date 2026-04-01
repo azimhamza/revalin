@@ -8,6 +8,7 @@ import { Suspense } from 'react';
 import Link from 'next/link';
 import { VariantOptionSelector, useSelectedVariant } from './variant-selector';
 import { PlusIcon } from 'lucide-react';
+import { formatPrice, getDiscountPercentage, getDisplayCompareAtPrice, getDisplayPrice } from '@/lib/swell/utils';
 
 export function FeaturedProductLabel({
   product,
@@ -19,7 +20,9 @@ export function FeaturedProductLabel({
   className?: string;
 }) {
   const selectedVariant = useSelectedVariant(product);
-  const displayPrice = selectedVariant?.price || product.priceRange.minVariantPrice;
+  const displayPrice = getDisplayPrice(product, selectedVariant);
+  const compareAtPrice = getDisplayCompareAtPrice(product, selectedVariant, displayPrice);
+  const discountPercentage = getDiscountPercentage(compareAtPrice, displayPrice);
   const hasSelectableOptions = product.options.length > 0 && !(product.options.length === 1 && product.options[0]?.values.length === 1);
 
   if (principal) {
@@ -73,13 +76,18 @@ export function FeaturedProductLabel({
         {/* Price — left column, same row as CTA on desktop */}
         <div className="col-start-1 row-start-3 mt-6 flex items-baseline gap-3 md:mt-4 md:self-end">
           <span className="text-[2rem] font-bold leading-none tracking-tight text-[#0B2E2F] md:text-[1.75rem]">
-            ${Number(displayPrice.amount)}
+            {formatPrice(displayPrice.amount, displayPrice.currencyCode)}
           </span>
-          {product.compareAtPrice && (
+          {compareAtPrice && (
             <span className="text-base line-through opacity-30">
-              ${Number(product.compareAtPrice.amount)}
+              {formatPrice(compareAtPrice.amount, compareAtPrice.currencyCode)}
             </span>
           )}
+          {discountPercentage ? (
+            <span className="rounded-full bg-[#2D6A4F]/12 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#2D6A4F]">
+              {discountPercentage}% off
+            </span>
+          ) : null}
         </div>
 
         {/* Add to Cart — right column, aligned with dosage column on desktop */}
@@ -120,10 +128,17 @@ export function FeaturedProductLabel({
           {product.title}
         </Link>
         <div className="flex gap-2 items-center text-base font-semibold">
-          ${Number(displayPrice.amount)}
-          {product.compareAtPrice && (
-            <span className="text-sm line-through opacity-30">${Number(product.compareAtPrice.amount)}</span>
+          {formatPrice(displayPrice.amount, displayPrice.currencyCode)}
+          {compareAtPrice && (
+            <span className="text-sm line-through opacity-30">
+              {formatPrice(compareAtPrice.amount, compareAtPrice.currencyCode)}
+            </span>
           )}
+          {discountPercentage ? (
+            <span className="rounded-full bg-[#2D6A4F]/12 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#2D6A4F]">
+              {discountPercentage}% off
+            </span>
+          ) : null}
         </div>
       </div>
       <Suspense fallback={<AddToCartButton product={product} iconOnly variant="default" size="icon-lg" />}>

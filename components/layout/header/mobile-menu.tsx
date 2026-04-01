@@ -5,7 +5,11 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { navItems } from './index';
+import {
+  SITE_LEGAL_ROUTES,
+  SITE_PRIMARY_ROUTES,
+  SITE_SECONDARY_ROUTES,
+} from '@/lib/app-routes';
 import { SidebarLinks } from '../sidebar/product-sidebar-links';
 import { ShopLinks } from '../shop-links';
 import { Collection } from '@/lib/swell/types';
@@ -81,8 +85,8 @@ export default function MobileMenu({ collections }: MobileMenuProps) {
                   </Button>
                 </div>
 
-                <nav className="grid grid-cols-2 gap-y-4 gap-x-6 mb-10">
-                  {navItems.map(item => (
+                <nav className="grid grid-cols-2 gap-y-4 gap-x-6 mb-8">
+                  {SITE_PRIMARY_ROUTES.map(item => (
                     <Button
                       key={item.href}
                       size="sm"
@@ -97,6 +101,46 @@ export default function MobileMenu({ collections }: MobileMenuProps) {
                     </Button>
                   ))}
                 </nav>
+
+                <div className="mb-8 grid grid-cols-2 gap-x-6 gap-y-5">
+                  <div>
+                    <p className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-foreground/45">
+                      Explore
+                    </p>
+                    <div className="flex flex-col gap-2 text-sm">
+                      {SITE_SECONDARY_ROUTES.map((item) => (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          className="text-foreground/70 transition-colors hover:text-foreground"
+                          onClick={closeMobileMenu}
+                          prefetch
+                        >
+                          {item.label}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-foreground/45">
+                      Policies
+                    </p>
+                    <div className="flex flex-col gap-2 text-sm">
+                      {SITE_LEGAL_ROUTES.map((item) => (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          className="text-foreground/70 transition-colors hover:text-foreground"
+                          onClick={closeMobileMenu}
+                          prefetch
+                        >
+                          {item.label}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                </div>
 
                 <ShopLinks label="Categories" collections={collections} />
 

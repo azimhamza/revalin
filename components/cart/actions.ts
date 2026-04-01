@@ -11,24 +11,34 @@ import {
   getCart as getSwellCart,
 } from '@/lib/swell/swell';
 import type { Cart, CartItem, SwellCart, SwellCartLine } from '@/lib/swell/types';
+import { resolveRequestCurrencyCode } from '@/lib/swell/currency';
+import { resolveUnitPrice } from '@/lib/swell/utils';
+
+export type PersistedCartLineInput = {
+  merchandiseId: string;
+  quantity: number;
+};
 
 // Local adapter utilities to return FE Cart (avoid cyclic deps)
 function adaptCartLine(swellLine: SwellCartLine): CartItem {
   const merchandise = swellLine.merchandise;
   const product = merchandise.product;
+  const unitPrice = resolveUnitPrice(merchandise.price.amount, swellLine.quantity, swellLine.bulkPriceTiers);
 
   return {
     id: swellLine.id,
     quantity: swellLine.quantity,
+    bulkPriceTiers: swellLine.bulkPriceTiers,
     cost: {
       totalAmount: {
-        amount: (parseFloat(merchandise.price.amount) * swellLine.quantity).toString(),
+        amount: (parseFloat(unitPrice) * swellLine.quantity).toString(),
         currencyCode: merchandise.price.currencyCode,
       },
     },
     merchandise: {
       id: merchandise.id,
       title: merchandise.title,
+      availableQuantity: merchandise.availableQuantity ?? null,
       selectedOptions: merchandise.selectedOptions || [],
       product: {
         id: product.title,
@@ -47,11 +57,13 @@ function adaptCartLine(swellLine: SwellCartLine): CartItem {
             }
           : { url: '', altText: '', height: 0, width: 0 },
         currencyCode: merchandise.price.currencyCode,
+        stockStatus: product.stockStatus,
+        stockLevel: product.stockLevel,
         priceRange: {
           minVariantPrice: merchandise.price,
           maxVariantPrice: merchandise.price,
         },
-        compareAtPrice: undefined,
+        compareAtPrice: product.compareAtPrice,
         seo: { title: product.title, description: '' },
         options: [],
         tags: [],
@@ -63,7 +75,7 @@ function adaptCartLine(swellLine: SwellCartLine): CartItem {
             height: 600,
             width: 600,
           })) || [],
-        availableForSale: true,
+        availableForSale: product.availableForSale !== false,
       },
     },
   } satisfies CartItem;
@@ -90,7 +102,8 @@ function adaptCart(swellCart: SwellCart | null): Cart | null {
 async function getOrCreateCartId(): Promise<string> {
   let cartId = (await cookies()).get('cartId')?.value;
   if (!cartId) {
-    const newCart = await createSwellCart();
+    const currencyCode = await resolveRequestCurrencyCode();
+    const newCart = await createSwellCart(currencyCode);
     cartId = newCart.id;
     (await cookies()).set('cartId', cartId, {
       httpOnly: true,
@@ -102,13 +115,72 @@ async function getOrCreateCartId(): Promise<string> {
   return cartId;
 }
 
+async function setCartCookie(cartId: string) {
+  (await cookies()).set('cartId', cartId, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24 * 30,
+  });
+}
+
+async function rebuildCartFromSnapshot(
+  lines: PersistedCartLineInput[],
+  currencyCode: string
+): Promise<SwellCart | null> {
+  const normalizedLines = lines
+    .map(line => ({
+      merchandiseId: line.merchandiseId,
+      quantity: Math.max(1, Number(line.quantity) || 1),
+    }))
+    .filter(line => Boolean(line.merchandiseId));
+
+  if (normalizedLines.length === 0) {
+    return null;
+  }
+
+  const newCart = await createSwellCart(currencyCode);
+  await setCartCookie(newCart.id);
+  await addCartLines(newCart.id, normalizedLines, currencyCode);
+  return getSwellCart(newCart.id, currencyCode);
+}
+
+async function resolveCartForMutation(
+  currencyCode: string,
+  cartSnapshotLines: PersistedCartLineInput[] = []
+): Promise<SwellCart> {
+  const cookieStore = await cookies();
+  const cartId = cookieStore.get('cartId')?.value;
+
+  if (cartId) {
+    const existingCart = await getSwellCart(cartId, currencyCode);
+    if (existingCart) {
+      return existingCart;
+    }
+  }
+
+  const restoredCart = await rebuildCartFromSnapshot(cartSnapshotLines, currencyCode);
+  if (restoredCart) {
+    return restoredCart;
+  }
+
+  const newCart = await createSwellCart(currencyCode);
+  await setCartCookie(newCart.id);
+  return newCart;
+}
+
 // Add item server action: returns adapted Cart
-export async function addItem(variantId: string | undefined): Promise<Cart | null> {
+export async function addItem(
+  variantId: string | undefined,
+  quantity = 1,
+  cartSnapshotLines: PersistedCartLineInput[] = []
+): Promise<Cart | null> {
   if (!variantId) return null;
   try {
-    const cartId = await getOrCreateCartId();
-    await addCartLines(cartId, [{ merchandiseId: variantId, quantity: 1 }]);
-    const fresh = await getSwellCart(cartId);
+    const currencyCode = await resolveRequestCurrencyCode();
+    const activeCart = await resolveCartForMutation(currencyCode, cartSnapshotLines);
+    await addCartLines(activeCart.id, [{ merchandiseId: variantId, quantity }], currencyCode);
+    const fresh = await getSwellCart(activeCart.id, currencyCode);
     revalidateTag(TAGS.cart);
     return adaptCart(fresh);
   } catch (error) {
@@ -118,18 +190,36 @@ export async function addItem(variantId: string | undefined): Promise<Cart | nul
 }
 
 // Update item server action (quantity 0 removes): returns adapted Cart
-export async function updateItem({ lineId, quantity }: { lineId: string; quantity: number }): Promise<Cart | null> {
+export async function updateItem({
+  lineId,
+  merchandiseId,
+  quantity,
+  cartSnapshotLines = [],
+}: {
+  lineId: string;
+  merchandiseId: string;
+  quantity: number;
+  cartSnapshotLines?: PersistedCartLineInput[];
+}): Promise<Cart | null> {
   try {
-    const cartId = (await cookies()).get('cartId')?.value;
-    if (!cartId) return null;
+    const currencyCode = await resolveRequestCurrencyCode();
+    const activeCart = await resolveCartForMutation(currencyCode, cartSnapshotLines);
+    const resolvedLineId =
+      activeCart.lines?.edges?.find(edge => edge.node.merchandise.id === merchandiseId)?.node.id || lineId;
 
     if (quantity === 0) {
-      await removeCartLines(cartId, [lineId]);
+      if (resolvedLineId) {
+        await removeCartLines(activeCart.id, [resolvedLineId], currencyCode);
+      }
     } else {
-      await updateCartLines(cartId, [{ id: lineId, quantity }]);
+      if (resolvedLineId) {
+        await updateCartLines(activeCart.id, [{ id: resolvedLineId, quantity }], currencyCode);
+      } else {
+        await addCartLines(activeCart.id, [{ merchandiseId, quantity }], currencyCode);
+      }
     }
 
-    const fresh = await getSwellCart(cartId);
+    const fresh = await getSwellCart(activeCart.id, currencyCode);
     revalidateTag(TAGS.cart);
     return adaptCart(fresh);
   } catch (error) {
@@ -140,14 +230,18 @@ export async function updateItem({ lineId, quantity }: { lineId: string; quantit
 
 export async function createCartAndSetCookie() {
   try {
-    const newCart = await createSwellCart();
+    const currencyCode = await resolveRequestCurrencyCode();
+    const existingCartId = (await cookies()).get('cartId')?.value;
 
-    (await cookies()).set('cartId', newCart.id, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 30, // 30 days
-    });
+    if (existingCartId) {
+      const existingCart = await getSwellCart(existingCartId, currencyCode);
+      if (existingCart) {
+        return existingCart;
+      }
+    }
+
+    const newCart = await createSwellCart(currencyCode);
+    await setCartCookie(newCart.id);
 
     return newCart;
   } catch (error) {
@@ -158,15 +252,31 @@ export async function createCartAndSetCookie() {
 
 export async function getCart(): Promise<Cart | null> {
   try {
+    const currencyCode = await resolveRequestCurrencyCode();
     const cartId = (await cookies()).get('cartId')?.value;
 
     if (!cartId) {
       return null;
     }
-    const fresh = await getSwellCart(cartId);
+    const fresh = await getSwellCart(cartId, currencyCode);
     return adaptCart(fresh);
   } catch (error) {
     console.error('Error fetching cart:', error);
+    return null;
+  }
+}
+
+export async function restoreCart(lines: PersistedCartLineInput[]): Promise<Cart | null> {
+  try {
+    const currencyCode = await resolveRequestCurrencyCode();
+    const fresh = await rebuildCartFromSnapshot(lines, currencyCode);
+    if (!fresh) {
+      return null;
+    }
+    revalidateTag(TAGS.cart);
+    return adaptCart(fresh);
+  } catch (error) {
+    console.error('Error restoring cart:', error);
     return null;
   }
 }

@@ -23,6 +23,25 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `NEXT_PUBLIC_SWELL_PUBLIC_KEY`
 - `NEXT_PUBLIC_SWELL_CHECKOUT_URL`
 - `NEXT_PUBLIC_STORE_CURRENCY` (defaults to `USD`)
+- `STORE_CURRENCY_BY_COUNTRY` (optional country mapping, e.g. `CA:CAD,US:USD,GB:GBP`)
+- `SWELL_MANUAL_PAYMENT_METHOD` (manual payment method ID configured in Swell Payment Settings for NOWPayments sync; defaults to `crypto`)
+- `NOW_PRIVATE_KEY` or `NOWPAYMENTS_API_KEY` (NOWPayments server API key; `NOW_PRIVATE_KEY` is accepted as an alias)
+- `NOW_PUBLIC_KEY` or `NOWPAYMENTS_IPN_SECRET` (NOWPayments webhook signing secret; `NOW_PUBLIC_KEY` is accepted as an alias)
+- `NEXT_PUBLIC_NOWPAYMENTS_QUICK_CURRENCIES` (optional comma-separated checkout currency chips, e.g. `btc,eth,sol,ltc,usdttrc20,trx`)
+- `CHECKOUT_ORDER_STORAGE_PATH` (optional path for persisting checkout order snapshots outside the default local store)
+- `SHIPPO_API_TOKEN` (optional; enables live Shippo rate quotes before order creation)
+- `SHIPPO_ORIGIN_STREET1`, `SHIPPO_ORIGIN_ZIP` (required to activate Shippo live rates)
+- `SHIPPO_ORIGIN_CITY`, `SHIPPO_ORIGIN_STATE`, `SHIPPO_ORIGIN_COUNTRY`, `SHIPPO_ORIGIN_NAME` (optional origin fields; defaults assume Waterloo, ON, CA)
+- `SHIPPO_PARCEL_LENGTH_IN`, `SHIPPO_PARCEL_WIDTH_IN`, `SHIPPO_PARCEL_HEIGHT_IN`, `SHIPPO_DEFAULT_ITEM_WEIGHT_OZ` (optional parcel defaults for small-vial shipments)
+
+## Checkout requirements
+
+The native `/checkout` flow creates real Swell guest accounts, quotes shipping, creates a real Swell order, then
+creates a NOWPayments payment for that Swell order total. For that flow to work:
+
+- `SWELL_SECRET_KEY` must be present
+- `SWELL_MANUAL_PAYMENT_METHOD` must match a manual payment method configured in your Swell dashboard
+- Either Swell shipping services must be configured, or Shippo must be configured with a token plus origin street/postal code
 
 ## Deployment
 

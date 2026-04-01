@@ -2,12 +2,12 @@
 
 import { cva, type VariantProps } from 'class-variance-authority';
 import { CartProduct, Product, ProductOption, ProductVariant, SelectedOptions } from '@/lib/swell/types';
-import { startTransition, useMemo } from 'react';
+import { startTransition, useMemo, useState } from 'react';
 import { useQueryState, parseAsString } from 'nuqs';
 import { useParams, useSearchParams } from 'next/navigation';
 import { ColorSwatch } from '@/components/ui/color-picker';
 import { Button } from '@/components/ui/button';
-import { getColorHex } from '@/lib/utils';
+import { cn, getColorHex } from '@/lib/utils';
 import { getSwellProductId } from '@/lib/swell/utils';
 
 type Combination = {
@@ -28,6 +28,64 @@ const variantOptionSelectorVariants = cva('flex items-start gap-4', {
     variant: 'card',
   },
 });
+
+function VariantValueButton({
+  name,
+  optionName,
+  isActive,
+  isBackordered,
+  variant,
+  onSelect,
+}: {
+  name: string;
+  optionName: string;
+  isActive: boolean;
+  isBackordered: boolean;
+  variant: 'card' | 'condensed' | 'shop' | null | undefined;
+  onSelect: () => void;
+}) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const isCondensed = variant === 'condensed';
+  const isLongCondensedLabel = isCondensed && name.length >= 5;
+
+  return (
+    <span
+      className="relative"
+      onMouseEnter={() => isBackordered && setShowTooltip(true)}
+      onMouseLeave={() => setShowTooltip(false)}
+    >
+      <Button
+        onClick={onSelect}
+        variant={variant === 'shop' ? undefined : isActive ? 'default' : 'outline'}
+        size={variant === 'shop' ? 'default' : 'sm'}
+        title={`${optionName} ${name}`}
+        className={cn(
+          variant === 'shop'
+            ? `h-11 rounded-full border px-4 text-sm font-medium shadow-none ${
+                isActive
+                  ? 'border-[#2d6a4f] bg-[#2d6a4f] text-[#f4f1ea] hover:bg-[#2d6a4f]'
+                  : isBackordered
+                    ? 'border-[#8B7340]/30 bg-white text-[#0B2E2F]/50 hover:bg-[#ece9e2]'
+                    : 'border-[#0B2E2F]/10 bg-white text-[#0B2E2F] hover:bg-[#ece9e2]'
+              }`
+            : isCondensed
+              ? 'h-7 min-w-0 rounded-sm px-2 text-sm leading-none shadow-none sm:px-2.5 sm:text-[15px]'
+              : 'min-w-[40px]',
+          isLongCondensedLabel && 'px-1.5 text-[13px] tracking-[-0.02em] sm:px-2 sm:text-sm',
+          isBackordered && !isActive && 'opacity-60'
+        )}
+      >
+        {name}
+      </Button>
+      {showTooltip && (
+        <span className={`absolute bottom-full mb-2 whitespace-nowrap rounded bg-[#0B2E2F] px-2.5 py-1.5 text-[11px] font-medium text-[#F4F1EA] shadow-lg z-[100] pointer-events-none ${variant === 'condensed' ? 'left-0' : 'right-0'}`}>
+          Next shipment arriving soon
+          <span className={`absolute top-full border-4 border-transparent border-t-[#0B2E2F] ${variant === 'condensed' ? 'left-4' : 'right-4'}`} />
+        </span>
+      )}
+    </span>
+  );
+}
 
 interface VariantOptionSelectorComponentProps extends VariantProps<typeof variantOptionSelectorVariants> {
   option: ProductOption;
@@ -71,7 +129,7 @@ export function VariantOptionSelectorComponent({
   return (
     <dl className={variantOptionSelectorVariants({ variant })}>
       {!hideLabel && <dt className="text-base font-semibold leading-8">{option.name}</dt>}
-      <dd className="flex flex-wrap items-center gap-2">
+      <dd className={cn('flex flex-wrap items-center', variant === 'condensed' ? 'gap-1.5' : 'gap-2')}>
         {option.values.map(value => {
           const currentState = selectedOptions;
           const optionParams = {
@@ -118,26 +176,18 @@ export function VariantOptionSelectorComponent({
             );
           }
 
+          const isBackordered = !isAvailableForSale;
+
           return (
-            <Button
-              onClick={() => onSelect?.(value.name)}
+            <VariantValueButton
               key={value.id}
-              variant={variant === 'shop' ? undefined : isActive ? 'default' : 'outline'}
-              size={variant === 'shop' ? 'default' : 'sm'}
-              disabled={!isAvailableForSale}
-              title={`${option.name} ${value.name}${!isAvailableForSale ? ' (Out of Stock)' : ''}`}
-              className={
-                variant === 'shop'
-                  ? `h-11 rounded-full border px-4 text-sm font-medium shadow-none ${
-                      isActive
-                        ? 'border-[#2d6a4f] bg-[#2d6a4f] text-[#f4f1ea] hover:bg-[#2d6a4f]'
-                        : 'border-[#0B2E2F]/10 bg-white text-[#0B2E2F] hover:bg-[#ece9e2]'
-                    }`
-                  : 'min-w-[40px]'
-              }
-            >
-              {value.name}
-            </Button>
+              name={value.name}
+              optionName={option.name}
+              isActive={isActive}
+              isBackordered={isBackordered}
+              variant={variant}
+              onSelect={() => onSelect?.(value.name)}
+            />
           );
         })}
       </dd>

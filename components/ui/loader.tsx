@@ -5,6 +5,10 @@ import { cn } from '@/lib/utils';
 
 const loaderVariants = cva('flex items-center justify-center', {
   variants: {
+    kind: {
+      dots: '',
+      spinner: '',
+    },
     size: {
       sm: 'space-x-0.5',
       default: 'space-x-1',
@@ -12,6 +16,7 @@ const loaderVariants = cva('flex items-center justify-center', {
     },
   },
   defaultVariants: {
+    kind: 'dots',
     size: 'default',
   },
 });
@@ -33,9 +38,30 @@ export interface LoaderProps extends VariantProps<typeof loaderVariants> {
   className?: string;
 }
 
-function Loader({ size, className }: LoaderProps) {
+const spinnerVariants = cva('animate-spin rounded-full border-solid border-current border-r-transparent', {
+  variants: {
+    size: {
+      sm: 'size-4 border-2',
+      default: 'size-5 border-2',
+      lg: 'size-6 border-2',
+    },
+  },
+  defaultVariants: {
+    size: 'default',
+  },
+});
+
+function Loader({ size, kind, className }: LoaderProps) {
+  if (kind === 'spinner') {
+    return (
+      <div className={cn(loaderVariants({ size, kind }), className)}>
+        <div className={cn(spinnerVariants({ size }))} />
+      </div>
+    );
+  }
+
   return (
-    <div className={cn(loaderVariants({ size }), className)}>
+    <div className={cn(loaderVariants({ size, kind }), className)}>
       {[0, 1, 2].map(index => (
         <motion.div
           key={index}

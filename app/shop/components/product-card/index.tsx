@@ -1,40 +1,28 @@
 'use client';
 
-import React, { Suspense, useMemo } from 'react';
+import React, { Suspense } from 'react';
 import Link from 'next/link';
+import { ArrowRight } from 'lucide-react';
 import { Product } from '@/lib/swell/types';
 import { AddToCart, AddToCartButton } from '@/components/cart/add-to-cart';
-import { formatPrice } from '@/lib/swell/utils';
+import { formatPrice, getDiscountPercentage, getDisplayCompareAtPrice, getDisplayPrice } from '@/lib/swell/utils';
 import { VariantSelector } from '../variant-selector';
 import { ProductImage } from './product-image';
-import { useProductImages, useSelectedVariant } from '@/components/products/variant-selector';
-import { thumbHashToAverageRGBA } from 'thumbhash';
-
-const getOverlayTextClass = (thumbhash?: string) => {
-  if (!thumbhash || thumbhash.startsWith('data:')) return 'text-white';
-
-  try {
-    const thumbhashData = Uint8Array.from(atob(thumbhash), c => c.charCodeAt(0));
-    const { r: red, g: green, b: blue, a: alpha } = thumbHashToAverageRGBA(thumbhashData);
-    const luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) * alpha + (1 - alpha);
-    return luminance > 0.55 ? 'text-black' : 'text-white';
-  } catch {
-    return 'text-white';
-  }
-};
+import { useSelectedVariant } from '@/components/products/variant-selector';
+import { getInventoryState } from '@/lib/inventory';
 
 export const ProductCard = ({ product }: { product: Product }) => {
   const selectedVariant = useSelectedVariant(product);
-  const [variantImage] = useProductImages(product, selectedVariant?.selectedOptions);
-  const displayImage = variantImage || product.featuredImage;
-  const overlayTextClass = useMemo(() => getOverlayTextClass(displayImage?.thumbhash), [displayImage?.thumbhash]);
-  const displayPrice = selectedVariant?.price || product.priceRange.minVariantPrice;
+  const displayPrice = getDisplayPrice(product, selectedVariant);
+  const compareAtPrice = getDisplayCompareAtPrice(product, selectedVariant, displayPrice);
+  const discountPercentage = getDiscountPercentage(compareAtPrice, displayPrice);
+  const inventory = getInventoryState(product, selectedVariant);
 
   return (
-    <div className="relative isolate w-full aspect-[3/4] md:aspect-square bg-muted group overflow-hidden">
+    <div className="relative isolate w-full aspect-[3/4] md:aspect-square bg-muted group">
       <Link
         href={`/product/${product.handle}`}
-        className="block size-full focus-visible:outline-none"
+        className="block size-full overflow-hidden focus-visible:outline-none"
         aria-label={`View details for ${product.title}, price ${displayPrice.amount} ${displayPrice.currencyCode}`}
         prefetch
       >
@@ -45,40 +33,49 @@ export const ProductCard = ({ product }: { product: Product }) => {
 
       {/* Interactive Overlay */}
       <div className="absolute inset-0 p-2 w-full pointer-events-none">
-        <div
-          className={`flex gap-6 justify-between items-baseline px-3 py-1 w-full font-semibold transition-all duration-300 translate-y-0 max-md:hidden group-hover:opacity-0 group-focus-visible:opacity-0 group-hover:-translate-y-full group-focus-visible:-translate-y-full ${overlayTextClass}`}
-        >
-          <p className="text-sm uppercase 2xl:text-base text-balance">{product.title}</p>
-          <div className="flex gap-2 items-center justify-end ml-auto text-right text-sm uppercase 2xl:text-base">
-            {formatPrice(displayPrice.amount, displayPrice.currencyCode)}
-            {product.compareAtPrice && (
-              <span className="line-through opacity-30">
-                {formatPrice(product.compareAtPrice.amount, product.compareAtPrice.currencyCode)}
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="flex absolute inset-x-3 bottom-3 flex-col gap-8 px-2 py-3 rounded-md transition-all duration-300 pointer-events-none bg-popover md:opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 md:translate-y-1/3 group-hover:translate-y-0 group-focus-visible:translate-y-0 group-hover:pointer-events-auto group-focus-visible:pointer-events-auto max-md:pointer-events-auto">
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-2 md:gap-x-4 gap-y-4 items-start">
+        <div className="flex absolute inset-x-3 bottom-3 flex-col gap-8 px-2 py-3 rounded-md bg-popover pointer-events-auto">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-3 items-start md:gap-x-4">
             <p className="text-lg font-semibold leading-tight break-keep">{product.title}</p>
-            <div className="flex gap-1 md:gap-2 items-center justify-end place-self-end text-right text-base md:text-lg font-semibold whitespace-nowrap">
-              {formatPrice(displayPrice.amount, displayPrice.currencyCode)}
-              {product.compareAtPrice && (
-                <span className="text-base line-through opacity-30">
-                  {formatPrice(product.compareAtPrice.amount, product.compareAtPrice.currencyCode)}
+            <div className="flex flex-col items-end gap-0.5 justify-self-end self-start text-right">
+              <div className="flex items-center justify-end gap-1 whitespace-nowrap text-base leading-none font-semibold md:gap-2 md:text-lg">
+                {formatPrice(displayPrice.amount, displayPrice.currencyCode)}
+                {compareAtPrice && (
+                  <span className="text-base line-through opacity-30">
+                    {formatPrice(compareAtPrice.amount, compareAtPrice.currencyCode)}
+                  </span>
+                )}
+              </div>
+              {discountPercentage ? (
+                <span className="text-[10px] leading-none font-semibold uppercase tracking-[0.08em] text-red-800">
+                  {discountPercentage}% off
                 </span>
-              )}
+              ) : null}
             </div>
+            {inventory.isLowStock && !inventory.isBackorder && (
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground/55">
+                Only {inventory.availableQuantity} left
+              </p>
+            )}
             <Suspense fallback={null}>
               <div className="self-start">
                 <VariantSelector product={product} />
               </div>
             </Suspense>
 
-            <Suspense fallback={<AddToCartButton className="col-start-2 self-end" product={product} size="sm" />}>
-              <AddToCart className="col-start-2 self-end" size="sm" product={product} />
-            </Suspense>
+            {inventory.isBackorder ? (
+              <Link
+                href={`/product/${product.handle}`}
+                className="group/waitlist col-start-2 self-end inline-flex h-7 items-center gap-1.5 rounded-sm py-1 px-2 text-base font-semibold text-[#F4F1EA] bg-[#0B2E2F] transition-opacity hover:opacity-90"
+                prefetch
+              >
+                Get Notified
+                <ArrowRight className="size-4 transition-transform duration-200 ease-out group-hover/waitlist:translate-x-0.5" />
+              </Link>
+            ) : (
+              <Suspense fallback={<AddToCartButton className="col-start-2 self-end" product={product} size="sm" />}>
+                <AddToCart className="col-start-2 self-end" size="sm" product={product} />
+              </Suspense>
+            )}
           </div>
         </div>
       </div>

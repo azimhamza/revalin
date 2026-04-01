@@ -19,7 +19,7 @@ export const CONTACT_LINKS: NavItem[] = [
   },
   {
     label: 'Instagram',
-    href: 'https://www.instagram.com/joyco.studio/',
+    href: 'https://www.instagram.com/revalinresearch/',
   },
 ];
 

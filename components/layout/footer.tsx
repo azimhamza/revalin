@@ -1,10 +1,13 @@
 import { LogoSvg } from './header/logo-svg';
 import { ShopLinks } from './shop-links';
+import { EmailCapture } from '../home/email-capture';
 import { getCollections } from '@/lib/swell';
 import Link from 'next/link';
+import { SITE_LEGAL_ROUTES, SITE_PRIMARY_ROUTES, SITE_SECONDARY_ROUTES } from '@/lib/app-routes';
 
 export async function Footer() {
   const collections = await getCollections();
+  const footerLinks = [...SITE_PRIMARY_ROUTES.slice(2), ...SITE_SECONDARY_ROUTES, ...SITE_LEGAL_ROUTES];
   const disclaimer = (
     <>
       Revalin products are for research purposes only. Not for human consumption or clinical use. The buyer is responsible for adhering to all local laws and regulations. Revalin is not a pharmacy and does not provide medical advice, prescriptions, or consultations.
@@ -18,30 +21,35 @@ export async function Footer() {
           <LogoSvg className="md:basis-3/4 max-md:w-full max-w-[1200px] h-auto block" />
           <div className="max-md:hidden md:max-w-[360px] md:flex md:flex-col md:items-end">
             <ShopLinks collections={collections} align="right" className="w-full" />
+            <div className="mt-4 w-full flex justify-end">
+              <EmailCapture />
+            </div>
+            <p className="mt-2 text-xs opacity-60 text-right">support@revalin.ca</p>
             <p className="mt-5 text-sm 2xl:text-base leading-tight opacity-70 text-right">
               {disclaimer}
             </p>
           </div>
           <span className="mt-3 italic font-semibold md:hidden">Research-grade peptides. &gt;99% purity. Third-party tested.</span>
           <p className="mt-4 text-sm leading-tight opacity-70 md:hidden">{disclaimer}</p>
-          <div className="mt-4 md:hidden flex gap-4 text-sm">
-            <Link className="underline underline-offset-4" href="/terms-of-service">
-              Terms of Service
-            </Link>
-            <Link className="underline underline-offset-4" href="/privacy-policy">
-              Privacy Policy
-            </Link>
+          <div className="mt-4 md:hidden flex flex-wrap gap-x-4 gap-y-2 text-sm">
+            {footerLinks.map((link) => (
+              <Link key={link.href} className="underline underline-offset-4" href={link.href}>
+                {link.label}
+              </Link>
+            ))}
+          </div>
+          <div className="mt-4 md:hidden">
+            <EmailCapture />
           </div>
         </div>
         <div className="flex justify-between max-md:contents opacity-70">
           <div className="max-md:mt-4 md:text-right">
-            <div className="hidden md:flex justify-end gap-4 text-sm mb-1">
-              <Link className="underline underline-offset-4" href="/terms-of-service">
-                Terms of Service
-              </Link>
-              <Link className="underline underline-offset-4" href="/privacy-policy">
-                Privacy Policy
-              </Link>
+            <div className="hidden md:flex justify-end flex-wrap gap-x-4 gap-y-1 text-sm mb-1">
+              {footerLinks.map((link) => (
+                <Link key={link.href} className="underline underline-offset-4" href={link.href}>
+                  {link.label}
+                </Link>
+              ))}
             </div>
             <p className="text-base">{new Date().getFullYear()}© — All rights reserved</p>
           </div>
