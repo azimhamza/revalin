@@ -1,39 +1,35 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  MAX_AFFILIATE_SOCIAL_PROFILES,
+  type AffiliateSocialProfile,
+} from "@/lib/checkout/affiliate-social-profiles";
 
 type AffiliateSignupFormProps = {
   initialName?: string;
   initialEmail?: string;
-  isSignedIn?: boolean;
 };
 
 type SubmissionState =
   | { status: "idle"; message: null }
-  | { status: "success"; message: string; code: string }
+  | { status: "success"; message: string }
   | { status: "error"; message: string };
 
-function sanitizeCode(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-+|-+$/g, "");
+function createEmptySocialProfile(): AffiliateSocialProfile {
+  return { platform: "", url: "" };
 }
 
 export function AffiliateSignupForm({
   initialName = "",
   initialEmail = "",
-  isSignedIn = false,
 }: AffiliateSignupFormProps) {
-  const [name, setName] = useState(initialName);
-  const [email, setEmail] = useState(initialEmail);
-  const [code, setCode] = useState("");
-  const [walletAddress, setWalletAddress] = useState("");
+  const [socialProfiles, setSocialProfiles] = useState<
+    AffiliateSocialProfile[]
+  >([createEmptySocialProfile()]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submission, setSubmission] = useState<SubmissionState>({
     status: "idle",
@@ -50,21 +46,16 @@ export function AffiliateSignupForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name,
-          email,
-          code,
-          walletAddress,
+          socialProfiles,
         }),
       });
 
-      const data = (await response.json().catch(() => null)) as
-        | {
-            error?: string;
-            application?: {
-              code: string;
-            };
-          }
-        | null;
+      const data = (await response.json().catch(() => null)) as {
+        error?: string;
+        application?: {
+          id: string;
+        };
+      } | null;
 
       if (!response.ok || !data?.application) {
         setSubmission({
@@ -77,10 +68,8 @@ export function AffiliateSignupForm({
       setSubmission({
         status: "success",
         message:
-          "Application received. We’ll review it in the admin panel and email you once the referral code is approved.",
-        code: data.application.code,
+          "Application received. The admin team will assign your partner code and email you when the referral setup is approved.",
       });
-      setCode(data.application.code);
     } catch {
       setSubmission({
         status: "error",
@@ -89,6 +78,34 @@ export function AffiliateSignupForm({
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function updateSocialProfile(
+    index: number,
+    field: keyof AffiliateSocialProfile,
+    value: string,
+  ) {
+    setSocialProfiles((current) =>
+      current.map((profile, currentIndex) =>
+        currentIndex === index ? { ...profile, [field]: value } : profile,
+      ),
+    );
+  }
+
+  function addSocialProfile() {
+    setSocialProfiles((current) =>
+      current.length >= MAX_AFFILIATE_SOCIAL_PROFILES
+        ? current
+        : [...current, createEmptySocialProfile()],
+    );
+  }
+
+  function removeSocialProfile(index: number) {
+    setSocialProfiles((current) =>
+      current.length === 1
+        ? [createEmptySocialProfile()]
+        : current.filter((_, currentIndex) => currentIndex !== index),
+    );
   }
 
   return (
@@ -102,92 +119,96 @@ export function AffiliateSignupForm({
       {submission.status === "success" ? (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
           <p>{submission.message}</p>
-          <p className="mt-2 font-semibold">
-            Reserved referral route: <span className="font-mono">/{submission.code}</span>
-          </p>
         </div>
       ) : null}
 
-      <label className="flex flex-col gap-1.5">
-        <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">
-          Full name
-        </span>
-        <input
-          type="text"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="Jane Doe"
-          required
-          autoComplete="name"
-          className="h-11 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
-        />
-      </label>
-
-      <label className="flex flex-col gap-1.5">
-        <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">
-          Email
-        </span>
-        <input
-          type="email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          placeholder="you@example.com"
-          required
-          autoComplete="email"
-          className="h-11 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
-        />
-      </label>
-
-      <label className="flex flex-col gap-1.5">
-        <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">
-          Referral code
-        </span>
-        <input
-          type="text"
-          value={code}
-          onChange={(event) => setCode(sanitizeCode(event.target.value))}
-          placeholder="your-lab-handle"
-          required
-          minLength={3}
-          autoCapitalize="off"
-          spellCheck={false}
-          className="h-11 rounded-xl border border-border bg-background px-3.5 font-mono text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
-        />
-        <p className="text-xs text-foreground/55">
-          Your approved referral route will look like <span className="font-mono">/{code || "your-code"}</span>.
-        </p>
-      </label>
-
-      <label className="flex flex-col gap-1.5">
-        <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">
-          Payout wallet
-        </span>
-        <input
-          type="text"
-          value={walletAddress}
-          onChange={(event) => setWalletAddress(event.target.value)}
-          placeholder="USDC wallet address"
-          required
-          autoCapitalize="off"
-          spellCheck={false}
-          className="h-11 rounded-xl border border-border bg-background px-3.5 font-mono text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
-        />
-      </label>
-
       <div className="rounded-xl border border-border bg-background/70 p-4 text-sm leading-6 text-foreground/70">
-        <p>
-          Applications land in the admin queue first. Approved partners receive a discount code, payout tracking,
-          and a live dashboard tied to the email on this application.
+        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">
+          Signed-in account
         </p>
-        {!isSignedIn ? (
-          <p className="mt-2">
-            Already have an account?{" "}
-            <Link href="/login?callbackUrl=/affiliate/signup" className="font-semibold text-[#0B2E2F] underline underline-offset-2">
-              Sign in before applying
-            </Link>
-            .
-          </p>
-        ) : null}
+        <p className="mt-2 font-semibold text-foreground">
+          {initialName || "Growth Partner applicant"}
+        </p>
+        <p className="text-sm text-foreground/60">
+          {initialEmail || "No email available"}
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">
+              Social profiles
+            </p>
+            <p className="mt-1 text-sm text-foreground/60">
+              Add the channels the admin team should review before approval.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={addSocialProfile}
+            disabled={socialProfiles.length >= MAX_AFFILIATE_SOCIAL_PROFILES}
+          >
+            <Plus className="size-4" />
+            Add profile
+          </Button>
+        </div>
+
+        {socialProfiles.map((profile, index) => (
+          <div
+            key={`${index}-${profile.platform}-${profile.url}`}
+            className="grid gap-3 rounded-xl border border-border bg-background p-4 sm:grid-cols-[minmax(0,160px)_minmax(0,1fr)_auto]"
+          >
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">
+                Platform
+              </span>
+              <input
+                type="text"
+                value={profile.platform}
+                onChange={(event) =>
+                  updateSocialProfile(index, "platform", event.target.value)
+                }
+                placeholder="Instagram"
+                required
+                className="h-11 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">
+                Profile URL
+              </span>
+              <input
+                type="text"
+                value={profile.url}
+                onChange={(event) =>
+                  updateSocialProfile(index, "url", event.target.value)
+                }
+                placeholder="https://instagram.com/your-handle"
+                required
+                autoCapitalize="off"
+                spellCheck={false}
+                className="h-11 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
+              />
+            </label>
+
+            <div className="flex items-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => removeSocialProfile(index)}
+                disabled={socialProfiles.length === 1}
+                aria-label={`Remove social profile ${index + 1}`}
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            </div>
+          </div>
+        ))}
       </div>
 
       <Button
@@ -203,7 +224,7 @@ export function AffiliateSignupForm({
             Submitting application...
           </>
         ) : (
-          "Apply for Growth Partner access"
+          "Request Growth Partner access"
         )}
       </Button>
     </form>

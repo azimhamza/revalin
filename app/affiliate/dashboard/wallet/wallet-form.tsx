@@ -1,7 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import {
+  startTransition,
+  type Dispatch,
+  type SetStateAction,
+  useState,
+} from "react";
 import { CheckCircle2, Loader2, Wallet } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,8 +23,29 @@ import {
 import { getConfiguredWallet } from "../wallet-utils";
 
 export function WalletForm({ currentWallet }: { currentWallet: string }) {
+  const [address, setAddress] = useState(getConfiguredWallet(currentWallet));
+  return (
+    <WalletFormContent
+      currentWallet={currentWallet}
+      address={address}
+      setAddress={setAddress}
+    />
+  );
+}
+
+function WalletFormContent({
+  currentWallet,
+  address,
+  setAddress,
+  embedded = false,
+}: {
+  currentWallet: string;
+  address: string;
+  setAddress: Dispatch<SetStateAction<string>>;
+  embedded?: boolean;
+}) {
+  const router = useRouter();
   const initialWallet = getConfiguredWallet(currentWallet);
-  const [address, setAddress] = useState(initialWallet);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSavedAction, setLastSavedAction] = useState<
     "connected" | "updated" | null
@@ -27,8 +54,8 @@ export function WalletForm({ currentWallet }: { currentWallet: string }) {
   const [error, setError] = useState<string | null>(null);
   const successMessage =
     lastSavedAction === "connected"
-      ? "Wallet connected successfully."
-      : "Wallet updated successfully.";
+      ? "Payout wallet saved."
+      : "Payout wallet updated.";
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -53,6 +80,9 @@ export function WalletForm({ currentWallet }: { currentWallet: string }) {
       setAddress(normalizedAddress);
       setLastSavedAction(hasSavedWallet ? "updated" : "connected");
       setHasSavedWallet(true);
+      startTransition(() => {
+        router.refresh();
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update.");
     } finally {
@@ -60,77 +90,104 @@ export function WalletForm({ currentWallet }: { currentWallet: string }) {
     }
   }
 
-  return (
-    <AffiliatePanel>
-      <form onSubmit={handleSave}>
-        <div className="flex items-start gap-3 border-b border-[#0B2E2F]/10 pb-5">
-          <div className={affiliateIconTileClass}>
-            <Wallet className="size-4 text-[#0B2E2F]" />
-          </div>
-
-          <div>
-            <h3 className="text-lg font-semibold tracking-tight text-[#0B2E2F]">
-              USDC Polygon wallet
-            </h3>
-          </div>
+  const content = (
+    <form onSubmit={handleSave}>
+      <div className="flex items-start gap-2.5 border-b border-[#0B2E2F]/10 pb-3">
+        <div className={affiliateIconTileClass}>
+          <Wallet className="size-4 text-[#0B2E2F]" />
         </div>
 
-        <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_220px] lg:items-start">
-          <div className="space-y-2">
-            <Label
-              htmlFor="wallet"
-              className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/46"
-            >
-              Wallet address
-            </Label>
-            <Input
-              id="wallet"
-              value={address}
-              onChange={(e) => {
-                setAddress(e.target.value);
-                setLastSavedAction(null);
-              }}
-              placeholder="0x..."
-              required
-              pattern="^0x[a-fA-F0-9]{40}$"
-              className={`${affiliateFieldClass} font-mono text-sm`}
-            />
-          </div>
+        <div>
+          <h3 className="text-sm font-semibold tracking-tight text-[#0B2E2F]">
+            Payout wallet
+          </h3>
+          <p className="mt-1 text-[11px] leading-4 text-[#0B2E2F]/62">
+            We use USDC on Polygon because it is the fastest way to send Growth
+            Partner payouts. Add a wallet you control that can receive USDC on
+            Polygon.
+          </p>
+        </div>
+      </div>
 
-          <div
-            className={`${affiliateInsetClass} px-4 py-4 text-sm text-[#0B2E2F]/62`}
+      <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_220px] lg:items-start">
+        <div className="space-y-2">
+          <Label
+            htmlFor="wallet"
+            className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/46"
           >
-            Use a Polygon wallet that can receive USDC. Incorrect addresses will
-            block payout delivery.
-          </div>
+            Wallet address
+          </Label>
+          <Input
+            id="wallet"
+            value={address}
+            onChange={(e) => {
+              setAddress(e.target.value);
+              setLastSavedAction(null);
+            }}
+            placeholder="0x..."
+            required
+            pattern="^0x[a-fA-F0-9]{40}$"
+            className={`${affiliateFieldClass} font-mono text-xs`}
+          />
         </div>
 
-        {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
-
-        {lastSavedAction ? (
-          <div className="mt-3 flex items-center gap-2 text-sm text-[#0B2E2F]">
-            <CheckCircle2 className="size-4" />
-            {successMessage}
-          </div>
-        ) : null}
-
-        <Button
-          type="submit"
-          className={`mt-5 h-11 px-5 text-sm font-semibold ${affiliatePrimaryButtonClass}`}
-          disabled={isSaving}
+        <div
+          className={`${affiliateInsetClass} px-3 py-3 text-[11px] leading-4 text-[#0B2E2F]/62`}
         >
-          {isSaving ? (
-            <>
-              <Loader2 className="size-4 animate-spin" />
-              Saving...
-            </>
-          ) : hasSavedWallet ? (
-            "Update wallet"
-          ) : (
-            "Connect wallet"
-          )}
-        </Button>
-      </form>
-    </AffiliatePanel>
+          Use a Polygon wallet that can receive USDC. Incorrect addresses will
+          block payout delivery, and on-chain payouts are faster than handling
+          manual payout details later.
+        </div>
+      </div>
+
+      {error ? <p className="mt-3 text-xs text-red-600">{error}</p> : null}
+
+      {lastSavedAction ? (
+        <div className="mt-3 flex items-center gap-2 text-xs text-[#0B2E2F]">
+          <CheckCircle2 className="size-4" />
+          {successMessage}
+        </div>
+      ) : null}
+
+      <Button
+        type="submit"
+        className={`mt-3 ${affiliatePrimaryButtonClass}`}
+        disabled={isSaving}
+      >
+        {isSaving ? (
+          <>
+            <Loader2 className="size-4 animate-spin" />
+            Saving...
+          </>
+        ) : hasSavedWallet ? (
+          "Update payout wallet"
+        ) : (
+          "Save payout wallet"
+        )}
+      </Button>
+    </form>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return <AffiliatePanel>{content}</AffiliatePanel>;
+}
+
+export function EmbeddedWalletForm({
+  currentWallet,
+}: {
+  currentWallet: string;
+}) {
+  const [address, setAddress] = useState(getConfiguredWallet(currentWallet));
+
+  return (
+    <WalletFormContent
+      currentWallet={currentWallet}
+      address={address}
+      setAddress={setAddress}
+      embedded
+    />
   );
 }

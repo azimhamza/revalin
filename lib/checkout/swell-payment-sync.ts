@@ -5,7 +5,6 @@ import type { NowPaymentsPaymentResponse } from '@/lib/checkout/nowpayments';
 import { purchaseShipEngineLabel, isShipEngineConfigured } from '@/lib/checkout/shipengine';
 import { getCheckoutOrder, updateCheckoutOrder } from '@/lib/checkout/order-store';
 import { sendOrderConfirmationEmail, sendOrderShippedEmail, sendShippingLabelEmail } from '@/lib/email/order-emails';
-import { hasLoopsConfig } from '@/lib/email/loops';
 
 export async function syncCheckoutOrderToSwell(
   order: CheckoutOrderRecord,
@@ -162,11 +161,6 @@ async function purchaseAndEmailLabel(order: CheckoutOrderRecord) {
   // Guard: skip if label already purchased or ShipEngine not configured
   if (order.shipengine?.labelUrl) return;
   if (!isShipEngineConfigured()) return;
-
-  if (!hasLoopsConfig()) {
-    console.warn('Skipping label email: Loops not configured.');
-    return;
-  }
 
   const itemCount = order.lines.reduce((total, line) => total + line.quantity, 0);
 

@@ -1,3 +1,4 @@
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
@@ -55,6 +56,14 @@ export async function POST(request: Request) {
         updatedAt: new Date(),
       })
       .where(eq(affiliates.id, affiliate.id));
+
+    revalidatePath("/affiliate/dashboard", "layout");
+    revalidatePath("/affiliate/dashboard");
+    revalidatePath("/affiliate/dashboard/analytics");
+    revalidatePath("/affiliate/dashboard/payouts");
+    revalidatePath("/account");
+    revalidatePath("/admin/affiliates");
+    revalidatePath("/admin/payouts");
 
     return NextResponse.json({ success: true });
   } catch (error) {

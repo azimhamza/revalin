@@ -26,6 +26,9 @@ export function WelcomePopup() {
   useEffect(() => {
     if (!canShowPopup) {
       setOpen(false);
+      setEmail('');
+      setSubmitted(false);
+      setError(null);
       return;
     }
 
@@ -62,6 +65,10 @@ export function WelcomePopup() {
     },
     [email, isLoading]
   );
+
+  if (!canShowPopup) {
+    return null;
+  }
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>

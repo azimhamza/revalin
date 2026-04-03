@@ -9,6 +9,12 @@ import { resolveRequestCurrencyCode } from '@/lib/swell/currency';
 import { Product } from '../lib/swell/types';
 import { hasAnyVariantInStock } from '@/lib/inventory';
 
+export const metadata = {
+  title: 'Revalin',
+  description:
+    'Research-grade peptides with published COAs, independent batch testing, and same-day fulfillment for qualified buyers.',
+};
+
 const FEATURED_PRODUCT_HANDLE = 'glp-3-triple-agonist';
 const FEATURED_PRODUCT_KEYWORDS = ['glp-3', 'glp-3rt', 'triple-agonist'];
 const FEATURED_PRODUCTS_LIMIT = 5;

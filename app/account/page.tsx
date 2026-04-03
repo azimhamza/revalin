@@ -67,6 +67,11 @@ export default async function AccountPage() {
     (sum, order) => sum + getOrderItemCount(order.lines as any[]),
     0,
   );
+  const showGrowthPartnerPanel =
+    role === "affiliate" ||
+    role === "admin" ||
+    affiliateRecord?.status === "approved";
+  const showGrowthPartnerCta = role !== "admin" && !showGrowthPartnerPanel;
 
   return (
     <div className="space-y-6">
@@ -116,7 +121,7 @@ export default async function AccountPage() {
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1.35fr_0.9fr]">
+      <section className="grid gap-4 lg:grid-cols-[1.35fr_0.9fr]">
         <div className={`${accountPanelClass} p-5 sm:p-6`}>
           <div className="flex flex-col gap-3 border-b border-[#0B2E2F]/10 pb-5 sm:flex-row sm:items-end sm:justify-between">
             <div>
@@ -252,14 +257,16 @@ export default async function AccountPage() {
                   {user.email}
                 </p>
               </div>
-              <div className={`${accountInsetClass} px-4 py-3`}>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">
-                  Role
-                </p>
-                <p className="mt-1 font-semibold capitalize text-[#0B2E2F]">
-                  {role || "customer"}
-                </p>
-              </div>
+              {role && role !== "customer" ? (
+                <div className={`${accountInsetClass} px-4 py-3`}>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">
+                    Role
+                  </p>
+                  <p className="mt-1 font-semibold capitalize text-[#0B2E2F]">
+                    {role}
+                  </p>
+                </div>
+              ) : null}
               <div className={`${accountInsetClass} px-4 py-3`}>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">
                   Preferred crypto
@@ -338,7 +345,7 @@ export default async function AccountPage() {
             </section>
           ) : null}
 
-          {affiliateRecord || role === "affiliate" || role === "admin" ? (
+          {showGrowthPartnerPanel ? (
             <section className={`${accountPanelClass} p-5 sm:p-6`}>
               <div className="flex items-center gap-3">
                 <div className={accountIconTileClass}>
@@ -404,6 +411,37 @@ export default async function AccountPage() {
                   {affiliateRecord
                     ? "Open Growth Partner dashboard"
                     : "Complete Growth Partner setup"}
+                  <ArrowRight className="size-4" />
+                </Link>
+              </Button>
+            </section>
+          ) : showGrowthPartnerCta ? (
+            <section className={`${accountPanelClass} p-5 sm:p-6`}>
+              <div className="flex items-center gap-3">
+                <div className={accountIconTileClass}>
+                  <Users className="size-5 text-[#0B2E2F]" />
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground/45">
+                    Growth Partner
+                  </p>
+                  <h2 className="mt-1 text-lg font-semibold tracking-tight text-[#0B2E2F]">
+                    Become a Growth Partner
+                  </h2>
+                </div>
+              </div>
+
+              <p className="mt-5 text-sm leading-6 text-foreground/58">
+                Apply to get a referral code, partner dashboard access, and
+                commission payouts once the team approves your account.
+              </p>
+
+              <Button
+                asChild
+                className={`mt-5 h-11 w-full text-sm font-semibold ${accountPrimaryButtonClass}`}
+              >
+                <Link href="/affiliate/signup">
+                  Become a Growth Partner
                   <ArrowRight className="size-4" />
                 </Link>
               </Button>

@@ -2,58 +2,55 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getServerSession } from "@/lib/auth-server";
-import { RESERVED_SLUGS } from "@/lib/checkout/affiliate-constants";
 import {
   createAffiliate,
-  getAffiliateByCode,
   getAffiliateByEmail,
 } from "@/lib/checkout/affiliate-service";
+import {
+  MAX_AFFILIATE_SOCIAL_PROFILES,
+  normalizeAffiliateSocialUrl,
+} from "@/lib/checkout/affiliate-social-profiles";
 
-const affiliateSignupSchema = z.object({
-  name: z.string().trim().min(2, "Enter your full name."),
-  email: z.string().trim().email("Enter a valid email address."),
-  code: z.string().trim().min(3, "Choose a referral code with at least 3 characters."),
-  walletAddress: z.string().trim().min(12, "Enter the wallet address for payouts."),
+const socialProfileSchema = z.object({
+  platform: z.string().trim().min(2, "Enter the social platform name."),
+  url: z
+    .string()
+    .trim()
+    .transform((value) => normalizeAffiliateSocialUrl(value))
+    .pipe(z.string().url("Enter a valid social profile URL.")),
 });
 
-function normalizeCode(value: string) {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
+const affiliateSignupSchema = z.object({
+  socialProfiles: z
+    .array(socialProfileSchema)
+    .min(1, "Add at least one social profile.")
+    .max(
+      MAX_AFFILIATE_SOCIAL_PROFILES,
+      `Add up to ${MAX_AFFILIATE_SOCIAL_PROFILES} social profiles.`,
+    ),
+});
 
 export async function POST(request: Request) {
   try {
+    const session = await getServerSession();
+    if (!session?.user?.email) {
+      return NextResponse.json(
+        { error: "Sign in to request Growth Partner access." },
+        { status: 401 },
+      );
+    }
+
     const payload = affiliateSignupSchema.parse(await request.json());
-    const normalizedCode = normalizeCode(payload.code);
-    const normalizedEmail = payload.email.toLowerCase();
+    const normalizedEmail = session.user.email.toLowerCase();
+    const normalizedName =
+      session.user.name?.trim() || "Growth Partner Applicant";
 
-    if (normalizedCode.length < 3) {
-      return NextResponse.json(
-        { error: "Referral codes must be at least 3 characters after cleanup." },
-        { status: 400 },
-      );
-    }
-
-    if (RESERVED_SLUGS.has(normalizedCode)) {
-      return NextResponse.json(
-        { error: "That referral code is reserved by an existing route. Choose another one." },
-        { status: 400 },
-      );
-    }
-
-    const [existingByEmail, existingByCode, session] = await Promise.all([
-      getAffiliateByEmail(normalizedEmail),
-      getAffiliateByCode(normalizedCode),
-      getServerSession(),
-    ]);
+    const existingByEmail = await getAffiliateByEmail(normalizedEmail);
 
     if (existingByEmail) {
       const statusLabel =
-        existingByEmail.status.charAt(0).toUpperCase() + existingByEmail.status.slice(1);
+        existingByEmail.status.charAt(0).toUpperCase() +
+        existingByEmail.status.slice(1);
 
       return NextResponse.json(
         {
@@ -66,29 +63,18 @@ export async function POST(request: Request) {
       );
     }
 
-    if (existingByCode) {
-      return NextResponse.json(
-        { error: "That referral code is already taken. Choose another one." },
-        { status: 409 },
-      );
-    }
-
     const affiliate = await createAffiliate({
-      code: normalizedCode,
-      name: payload.name,
+      name: normalizedName,
       email: normalizedEmail,
-      walletAddress: payload.walletAddress,
-      userId:
-        session?.user?.email?.toLowerCase() === normalizedEmail
-          ? session.user.id
-          : null,
+      walletAddress: "",
+      socialProfiles: payload.socialProfiles,
+      userId: session.user.id,
     });
 
     return NextResponse.json(
       {
         application: {
           id: affiliate.id,
-          code: affiliate.code,
           email: affiliate.email,
           status: affiliate.status,
         },

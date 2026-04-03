@@ -20,6 +20,14 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 
   /* Spacing */
   --spacing-sides: var(--sides);
@@ -75,6 +83,14 @@
   --border: oklch(0.7974 0 0);
   --input: #EFEADE;
   --ring: oklch(0.7079 0 0);
+  --sidebar: #EBE7DC;
+  --sidebar-foreground: oklch(0.1457 0 0);
+  --sidebar-primary: #0B2E2F;
+  --sidebar-primary-foreground: #F4F1EA;
+  --sidebar-accent: #F0EDE4;
+  --sidebar-accent-foreground: oklch(0.1457 0 0);
+  --sidebar-border: rgba(11, 46, 47, 0.12);
+  --sidebar-ring: rgba(11, 46, 47, 0.24);
 
   --radius: 0.5rem;
   --sides: 1rem;
@@ -82,6 +98,42 @@
   --top-spacing: 5rem;
   --height-fold: 100vh;
   --height-fold: 100svh;
+}
+
+.admin-theme {
+  --radius: 0px;
+  --radius-md: 0px;
+  --radius-sm: 0px;
+  --background: #F4F1EA;
+  --foreground: #0B2E2F;
+  --card: #FCFAF6;
+  --card-foreground: #0B2E2F;
+  --popover: #FCFAF6;
+  --popover-foreground: #0B2E2F;
+  --primary: #0B2E2F;
+  --primary-foreground: #F4F1EA;
+  --secondary: #E8E0D1;
+  --secondary-foreground: #0B2E2F;
+  --muted: #EFE7D8;
+  --muted-foreground: rgba(11, 46, 47, 0.62);
+  --accent: #E4DCCB;
+  --accent-foreground: #0B2E2F;
+  --destructive: #B42318;
+  --border: rgba(11, 46, 47, 0.12);
+  --input: #FCFAF6;
+  --ring: rgba(11, 46, 47, 0.22);
+  --sidebar: #0B2E2F;
+  --sidebar-foreground: #F4F1EA;
+  --sidebar-primary: #D3A34F;
+  --sidebar-primary-foreground: #0B2E2F;
+  --sidebar-accent: #173D3E;
+  --sidebar-accent-foreground: #F4F1EA;
+  --sidebar-border: rgba(244, 241, 234, 0.14);
+  --sidebar-ring: rgba(211, 163, 79, 0.4);
+}
+
+.admin-theme :where([class*="rounded"]) {
+  border-radius: 0 !important;
 }
 
 @media (width >= 768px) {

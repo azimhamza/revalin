@@ -1,6 +1,6 @@
 # Swell Headless Storefront
 
-*Automatically synced with your [v0.app](https://v0.app) deployments*
+_Automatically synced with your [v0.app](https://v0.app) deployments_
 
 [![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com)
 [![Built with v0](https://img.shields.io/badge/Built%20with-v0.app-black?style=for-the-badge)](https://v0.app/chat/projects/PRfRz1Lck6u)
@@ -29,10 +29,23 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `NOW_PUBLIC_KEY` or `NOWPAYMENTS_IPN_SECRET` (NOWPayments webhook signing secret; `NOW_PUBLIC_KEY` is accepted as an alias)
 - `NEXT_PUBLIC_NOWPAYMENTS_QUICK_CURRENCIES` (optional comma-separated checkout currency chips, e.g. `btc,eth,sol,ltc,usdttrc20,trx`)
 - `CHECKOUT_ORDER_STORAGE_PATH` (optional path for persisting checkout order snapshots outside the default local store)
+- `SHIPENGINE_API_KEY` (optional; enables live ShipEngine rates and automatic label purchase after payment)
+- `SHIPENGINE_ORIGIN_STREET1`, `SHIPENGINE_ORIGIN_ZIP` (required to activate ShipEngine live rates / labels)
+- `SHIPENGINE_ORIGIN_CITY`, `SHIPENGINE_ORIGIN_STATE`, `SHIPENGINE_ORIGIN_COUNTRY`, `SHIPENGINE_ORIGIN_NAME`, `SHIPENGINE_ORIGIN_PHONE` (optional origin fields used for rating and labels)
+- `SHIPENGINE_CARRIER_IDS` (optional comma-separated carrier IDs; otherwise carriers are auto-discovered)
+- `SHIPENGINE_PARCEL_LENGTH_IN`, `SHIPENGINE_PARCEL_WIDTH_IN`, `SHIPENGINE_PARCEL_HEIGHT_IN`, `SHIPENGINE_DEFAULT_ITEM_WEIGHT_OZ` (optional parcel defaults for small-vial shipments)
 - `SHIPPO_API_TOKEN` (optional; enables live Shippo rate quotes before order creation)
 - `SHIPPO_ORIGIN_STREET1`, `SHIPPO_ORIGIN_ZIP` (required to activate Shippo live rates)
 - `SHIPPO_ORIGIN_CITY`, `SHIPPO_ORIGIN_STATE`, `SHIPPO_ORIGIN_COUNTRY`, `SHIPPO_ORIGIN_NAME` (optional origin fields; defaults assume Waterloo, ON, CA)
 - `SHIPPO_PARCEL_LENGTH_IN`, `SHIPPO_PARCEL_WIDTH_IN`, `SHIPPO_PARCEL_HEIGHT_IN`, `SHIPPO_DEFAULT_ITEM_WEIGHT_OZ` (optional parcel defaults for small-vial shipments)
+- `LOOPS_API_KEY` (optional; enables Loops events + transactional emails)
+- `LOOPS_TRANSACTIONAL_ORDER_CONFIRMATION` (optional Loops template ID for customer order confirmation)
+- `LOOPS_TRANSACTIONAL_ORDER_SHIPPED` (optional Loops template ID for customer shipped notification)
+- `LOOPS_TRANSACTIONAL_SHIPPING_LABEL` (optional Loops template ID for the internal shipping-label email with PDF attachment)
+- `LOOPS_TRANSACTIONAL_AFFILIATE_APPROVED` (optional Loops template ID for first-time Growth Partner approval)
+- `LOOPS_TRANSACTIONAL_AFFILIATE_REMOVED` (optional Loops template ID for Growth Partner suspension / removal notices)
+- `LOOPS_TRANSACTIONAL_AFFILIATE_REINSTATED` (optional Loops template ID for Growth Partner reinstatement notices)
+- `SHIPPING_LABEL_EMAIL` or `SHIPPING_LABEL_EMAILS` (recipient inbox for internal shipping label emails; `SHIPPING_LABEL_EMAILS` accepts comma-separated recipients)
 
 ## Checkout requirements
 
@@ -41,7 +54,7 @@ creates a NOWPayments payment for that Swell order total. For that flow to work:
 
 - `SWELL_SECRET_KEY` must be present
 - `SWELL_MANUAL_PAYMENT_METHOD` must match a manual payment method configured in your Swell dashboard
-- Either Swell shipping services must be configured, or Shippo must be configured with a token plus origin street/postal code
+- Either Swell shipping services must be configured, or ShipEngine / Shippo must be configured with API credentials plus origin street/postal code
 
 ## Deployment
 

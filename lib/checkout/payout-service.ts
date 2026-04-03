@@ -1,8 +1,14 @@
-import { eq, desc } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { affiliatePayouts, affiliates, checkoutOrders } from '@/lib/db/schema';
 import { decrypt } from '@/lib/db/encryption';
 import type { CheckoutOrderAffiliate } from '@/lib/checkout/types';
+import {
+  getCommissionMonthKey,
+  getPayoutApprovalPreview,
+  hydrateOrderAffiliateCommissionMonth,
+  syncAffiliateCommissionMonth,
+} from '@/lib/checkout/commission-service';
 
 export type PayoutRecord = typeof affiliatePayouts.$inferSelect;
 
@@ -32,25 +38,49 @@ export async function createPayoutFromOrder(
 
   const orderTotal = (order.totals as any)?.totalAmount?.amount;
   if (!orderTotal) return null;
+  const commissionMonthKey = getCommissionMonthKey(new Date());
+  const initialCommissionRate =
+    affiliate.commissionRateAtPurchase || affiliate.commissionRate;
 
-  const commissionAmount = (Number(orderTotal) * Number(affiliate.commissionRate)).toFixed(2);
+  const commissionAmount = (Number(orderTotal) * Number(initialCommissionRate)).toFixed(2);
   const currencyCode = order.currencyCode || 'USD';
 
-  const [payout] = await db
+  await db
     .insert(affiliatePayouts)
     .values({
       orderId,
       affiliateId: affiliate.id,
       affiliateCode: affiliate.code,
       orderTotal,
-      commissionRate: affiliate.commissionRate,
+      commissionMonthKey,
+      commissionTierKey: null,
+      commissionTierLabel: affiliate.commissionTierAtPurchase || null,
+      commissionRate: initialCommissionRate,
       commissionAmount,
       currencyCode,
       paymentProvider: provider,
     })
     .returning();
 
-  return payout!;
+  const { summary } = await syncAffiliateCommissionMonth({
+    affiliateId: affiliate.id,
+    monthKey: commissionMonthKey,
+    eventType: 'recalculated',
+    notes: `Payout created from order ${orderId}.`,
+    recordEvent: true,
+  });
+
+  await hydrateOrderAffiliateCommissionMonth({
+    orderId,
+    affiliateId: affiliate.id,
+    monthKey: summary.monthKey,
+    effectiveRate: summary.effectiveRate,
+    tierLabel: summary.hasOverride
+      ? `${summary.tierLabel} override`
+      : summary.tierLabel,
+  });
+
+  return getPayoutByOrderId(orderId);
 }
 
 export async function getPayoutByOrderId(orderId: string): Promise<PayoutRecord | null> {
@@ -58,6 +88,16 @@ export async function getPayoutByOrderId(orderId: string): Promise<PayoutRecord 
     .select()
     .from(affiliatePayouts)
     .where(eq(affiliatePayouts.orderId, orderId))
+    .limit(1);
+
+  return row ?? null;
+}
+
+export async function getPayoutById(payoutId: string): Promise<PayoutRecord | null> {
+  const [row] = await db
+    .select()
+    .from(affiliatePayouts)
+    .where(eq(affiliatePayouts.id, payoutId))
     .limit(1);
 
   return row ?? null;
@@ -106,6 +146,20 @@ export async function getPayoutsForAffiliate(
 }
 
 export async function approvePayout(payoutId: string): Promise<void> {
+  const payout = await getPayoutById(payoutId);
+  if (!payout) {
+    throw new Error('Payout not found.');
+  }
+
+  const monthKey = payout.commissionMonthKey || getCommissionMonthKey(payout.createdAt);
+  await syncAffiliateCommissionMonth({
+    affiliateId: payout.affiliateId,
+    monthKey,
+    eventType: 'recalculated',
+    notes: `Approval review for payout ${payout.orderId}.`,
+    recordEvent: true,
+  });
+
   await db
     .update(affiliatePayouts)
     .set({
@@ -117,6 +171,11 @@ export async function approvePayout(payoutId: string): Promise<void> {
 }
 
 export async function rejectPayout(payoutId: string, notes?: string): Promise<void> {
+  const payout = await getPayoutById(payoutId);
+  if (!payout) {
+    throw new Error('Payout not found.');
+  }
+
   await db
     .update(affiliatePayouts)
     .set({
@@ -126,9 +185,32 @@ export async function rejectPayout(payoutId: string, notes?: string): Promise<vo
       updatedAt: new Date(),
     })
     .where(eq(affiliatePayouts.id, payoutId));
+
+  const monthKey = payout.commissionMonthKey || getCommissionMonthKey(payout.createdAt);
+  await syncAffiliateCommissionMonth({
+    affiliateId: payout.affiliateId,
+    monthKey,
+    eventType: 'recalculated',
+    notes: notes || `Rejected payout ${payout.orderId}.`,
+    recordEvent: true,
+  });
 }
 
 export async function markPayoutPaid(payoutId: string, txHash: string): Promise<void> {
+  const payout = await getPayoutById(payoutId);
+  if (!payout) {
+    throw new Error('Payout not found.');
+  }
+
+  const monthKey = payout.commissionMonthKey || getCommissionMonthKey(payout.createdAt);
+  await syncAffiliateCommissionMonth({
+    affiliateId: payout.affiliateId,
+    monthKey,
+    eventType: 'recalculated',
+    notes: `Settlement review for payout ${payout.orderId}.`,
+    recordEvent: true,
+  });
+
   await db
     .update(affiliatePayouts)
     .set({
@@ -139,3 +221,5 @@ export async function markPayoutPaid(payoutId: string, txHash: string): Promise<
     })
     .where(eq(affiliatePayouts.id, payoutId));
 }
+
+export { getPayoutApprovalPreview };

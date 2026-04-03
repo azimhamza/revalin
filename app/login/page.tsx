@@ -13,25 +13,8 @@ export default function LoginPage() {
     <>
       <div className="min-h-screen md:grid md:grid-cols-2">
         {/* ── Left panel — sign-in form on cream ── */}
-        <div className="flex min-h-screen flex-col justify-center bg-background px-sides py-16 md:px-10 lg:px-16">
+        <div className="flex min-h-screen flex-col justify-center bg-background px-sides py-16 md:justify-start md:px-10 md:pt-top-spacing lg:px-16">
           <div className="mx-auto w-full max-w-[400px]">
-            {/* Mobile brand strip */}
-            <div className="mb-8 rounded-xl border border-[#0B2E2F]/12 bg-[#0B2E2F] px-4 py-3.5 md:hidden">
-              <div className="flex items-center justify-between gap-4">
-                <p className="text-sm font-semibold text-[#F4F1EA]">Revalin Research</p>
-                <div className="flex gap-3">
-                  <div className="text-center">
-                    <p className="text-[9px] uppercase tracking-[0.12em] text-[#F4F1EA]/40">Purity</p>
-                    <p className="text-sm font-semibold text-[#F4F1EA]">&gt;99%</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-[9px] uppercase tracking-[0.12em] text-[#F4F1EA]/40">Ships</p>
-                    <p className="text-sm font-semibold text-[#F4F1EA]">Same-day</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
             <div className="mb-8">
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">
                 Welcome back
@@ -65,30 +48,30 @@ export default function LoginPage() {
 
         {/* ── Right panel — dark teal brand panel ── */}
         <div className="relative hidden overflow-hidden bg-[#0B2E2F] md:flex md:flex-col md:justify-between">
-          <div className="relative z-10 flex flex-1 flex-col justify-center px-10 lg:px-16">
+          <div className="relative z-10 flex flex-1 flex-col justify-start px-10 pt-16 md:pt-[calc(var(--top-spacing)-0.75rem)] lg:px-16">
             <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#F4F1EA]/50">
               Revalin Research
             </p>
-            <h2 className="mt-4 text-[2.25rem] font-semibold tracking-[-0.03em] leading-[1.08] text-[#F4F1EA] lg:text-[2.75rem]">
+            <h2 className="mt-4 text-[2rem] font-semibold tracking-[-0.03em] leading-[1.08] text-[#F4F1EA] lg:text-[2.375rem]">
               Reference-standard peptides for serious research.
             </h2>
-            <p className="mt-4 max-w-md text-base leading-relaxed text-[#F4F1EA]/60">
+            <p className="mt-4 max-w-md text-sm leading-relaxed text-[#F4F1EA]/60">
               Sign in to manage orders, access batch-specific certificates of analysis, and track shipments from your dashboard.
             </p>
 
             {/* Stats row */}
             <div className="mt-10 flex flex-wrap gap-3">
               <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Avg. purity</p>
-                <p className="mt-1 text-2xl font-semibold tracking-tight text-[#F4F1EA]">&gt;99%</p>
+                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Avg. purity</p>
+                <p className="mt-1 text-xl font-semibold tracking-tight text-[#F4F1EA]">&gt;99%</p>
               </div>
               <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Fulfillment</p>
-                <p className="mt-1 text-2xl font-semibold tracking-tight text-[#F4F1EA]">Same-day</p>
+                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Fulfillment</p>
+                <p className="mt-1 text-xl font-semibold tracking-tight text-[#F4F1EA]">Same-day</p>
               </div>
               <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Testing</p>
-                <p className="mt-1 text-2xl font-semibold tracking-tight text-[#F4F1EA]">Third-party</p>
+                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Testing</p>
+                <p className="mt-1 text-xl font-semibold tracking-tight text-[#F4F1EA]">Third-party</p>
               </div>
             </div>
 
@@ -104,7 +87,7 @@ export default function LoginPage() {
                   <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5">
                     <item.icon className="size-3.5 text-[#F4F1EA]/70" strokeWidth={1.5} />
                   </div>
-                  <p className="text-sm leading-snug text-[#F4F1EA]/55">{item.text}</p>
+                  <p className="text-[13px] leading-snug text-[#F4F1EA]/55">{item.text}</p>
                 </div>
               ))}
             </div>

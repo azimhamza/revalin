@@ -546,8 +546,9 @@ export async function upsertSwellGuestAccount(args: {
   };
 
   if (existing) {
-    const billingMatches = addressesMatch(existing.billing, args.billing)
-      && addressFieldMatches(existing.billing?.method, args.billing.method);
+    const billingMatches =
+      addressesMatch(existing.billing, args.billing) &&
+      addressFieldMatches(existing.billing?.method, args.billing.method);
     const isUnchanged =
       addressFieldMatches(existing.email, payload.email) &&
       addressFieldMatches(existing.first_name, payload.first_name) &&
@@ -903,6 +904,10 @@ export async function updateSwellCoupon(
       body,
     },
   );
+}
+
+export async function deleteSwellCoupon(couponId: string) {
+  await swellBackendRequest("DELETE", `/coupons/${couponId}`);
 }
 
 export async function setSwellCouponActive(couponId: string, active: boolean) {

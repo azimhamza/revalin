@@ -1,8 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { CheckCircle2, Copy, Loader2, MoreHorizontal } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  Copy,
+  Loader2,
+  MoreHorizontal,
+} from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +16,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
@@ -35,7 +40,6 @@ import {
   adminPrimaryButtonClass,
   adminSecondaryButtonClass,
   AdminPanel,
-  AdminSectionHeader,
   AdminStatCard,
 } from "../_components/admin-shell";
 
@@ -45,12 +49,28 @@ type AffiliateRow = {
   name: string;
   email: string;
   walletAddress: string;
+  socialProfiles: Array<{
+    platform: string;
+    url: string;
+  }>;
   userId: string | null;
   swellCouponId: string | null;
   discountCode: string | null;
   discountPercent: string | null;
   commissionRate: string;
+  currentMonthRevenue: string;
+  currentMonthOrderCount: number;
+  currentCommissionRate: string;
+  currentCommissionTier: string | null;
+  currentCommissionOverride: boolean;
   status: "pending" | "approved" | "rejected" | "suspended";
+  createdAt: Date;
+};
+
+type OrphanAffiliateUser = {
+  userId: string;
+  name: string;
+  email: string;
   createdAt: Date;
 };
 
@@ -62,24 +82,99 @@ type AffiliateFilter =
   | "suspended";
 
 type AssignmentFormState = {
-  discountCode: string;
+  affiliateCode: string;
   discountPercent: string;
   commissionRate: string;
   sendApprovalEmail: boolean;
+  reinstatementReason: string;
+  confirmAssignment: boolean;
 };
+
+type DialogTab = "codes" | "rates" | "commission" | "history" | "options" | "danger";
 
 type AssignmentResult = {
   affiliateCode: string;
   discountCode: string | null;
-  discountPercent: string | null;
-  commissionRate: string;
-  status: AffiliateRow["status"];
   referralLink: string;
   checkoutLink: string | null;
   emailSent: boolean;
   affiliateName: string;
   affiliateEmail: string;
 };
+
+type AssignmentAvailability = {
+  affiliateCode: {
+    value: string;
+    available: boolean;
+    message: string;
+  };
+  discountCode: {
+    value: string;
+    available: boolean;
+    message: string;
+  };
+};
+
+type DiscountHistoryRow = {
+  id: string;
+  discountCode: string | null;
+  oldDiscountPercent: string | null;
+  newDiscountPercent: string | null;
+  reason: string | null;
+  changeScope: string;
+  createdAt: string;
+};
+
+type CommissionSummary = {
+  monthKey: string;
+  startingRate: string;
+  carriedForwardFromMonthKey: string | null;
+  recognizedRevenue: string;
+  recognizedOrderCount: number;
+  tierKey: string;
+  tierLabel: string;
+  effectiveRate: string;
+  overrideRate: string | null;
+  overrideReason: string | null;
+  hasOverride: boolean;
+};
+
+type CommissionEventRow = {
+  id: string;
+  monthKey: string;
+  eventType: string;
+  oldRate: string | null;
+  newRate: string | null;
+  notes: string | null;
+  createdAt: string;
+};
+
+type CommissionOverview = {
+  summary: CommissionSummary;
+  recentMonths: CommissionSummary[];
+  events: CommissionEventRow[];
+};
+
+type BulkDiscountSummary = {
+  mode: "selected" | "filtered";
+  totalTargeted: number;
+  eligibleCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  dryRun: boolean;
+  results: Array<{
+    affiliateId: string;
+    affiliateCode: string;
+    discountCode: string | null;
+    oldDiscountPercent: string | null;
+    newDiscountPercent: string;
+    eligible: boolean;
+    updated: boolean;
+    error: string | null;
+  }>;
+};
+
 
 function statusBadgeVariant(
   status: string,
@@ -94,41 +189,100 @@ function formatDiscountSummary(entry: AffiliateRow) {
     return "Not assigned";
   }
 
-  if (entry.discountCode && entry.discountPercent) {
-    return `${entry.discountCode} • ${entry.discountPercent}% off`;
-  }
-
   if (entry.discountCode) {
     return entry.discountCode;
   }
 
-  return `${entry.discountPercent}% off`;
+  return "Assigned";
+}
+
+function sanitizePartnerCode(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function formatCommissionPercent(value: string | null | undefined) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return "0";
+  return `${Number((numeric * 100).toFixed(2))}`;
+}
+
+function formatCurrency(value: string | number) {
+  const numeric = Number(value || 0);
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(numeric) ? numeric : 0);
 }
 
 export function AffiliateManagement({
   affiliates,
+  orphanUsers,
 }: {
   affiliates: AffiliateRow[];
+  orphanUsers: OrphanAffiliateUser[];
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [repairingUserId, setRepairingUserId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<AffiliateFilter>("all");
   const [assignmentOpen, setAssignmentOpen] = useState(false);
   const [assignmentLoading, setAssignmentLoading] = useState(false);
+  const [assignmentRemoving, setAssignmentRemoving] = useState(false);
   const [assignmentError, setAssignmentError] = useState<string | null>(null);
-  const [resultOpen, setResultOpen] = useState(false);
   const [selectedAffiliate, setSelectedAffiliate] =
     useState<AffiliateRow | null>(null);
+  const [activeTab, setActiveTab] = useState<DialogTab>("codes");
+  const [profilesExpanded, setProfilesExpanded] = useState(false);
   const [assignmentForm, setAssignmentForm] = useState<AssignmentFormState>({
-    discountCode: "",
-    discountPercent: "",
-    commissionRate: "0.05",
+    affiliateCode: "",
+    discountPercent: "10",
+    commissionRate: "10",
     sendApprovalEmail: true,
+    reinstatementReason: "",
+    confirmAssignment: false,
   });
   const [assignmentResult, setAssignmentResult] =
     useState<AssignmentResult | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availability, setAvailability] =
+    useState<AssignmentAvailability | null>(null);
+  const [selectedAffiliateIds, setSelectedAffiliateIds] = useState<string[]>(
+    [],
+  );
+  const [bulkMode, setBulkMode] = useState<"selected" | "filtered">("selected");
+  const [bulkDiscountPercent, setBulkDiscountPercent] = useState("20");
+  const [bulkReason, setBulkReason] = useState("");
+  const [bulkConfirm, setBulkConfirm] = useState(false);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkPreview, setBulkPreview] = useState<BulkDiscountSummary | null>(
+    null,
+  );
+  const [commissionMonthKey, setCommissionMonthKey] = useState(() =>
+    new Date().toISOString().slice(0, 7),
+  );
+  const [commissionLoading, setCommissionLoading] = useState(false);
+  const [commissionOverview, setCommissionOverview] =
+    useState<CommissionOverview | null>(null);
+  const [discountHistory, setDiscountHistory] = useState<DiscountHistoryRow[]>(
+    [],
+  );
+  const [overrideRateInput, setOverrideRateInput] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
+  const [overrideSaving, setOverrideSaving] = useState(false);
+  const [affiliateActionReason, setAffiliateActionReason] = useState("");
+  const [dangerZoneMode, setDangerZoneMode] = useState<
+    "suspended" | "delete" | null
+  >(null);
+  const autoOpenedAffiliateId = useRef<string | null>(null);
 
   const counts = useMemo(
     () => ({
@@ -143,6 +297,13 @@ export function AffiliateManagement({
       assignedCodes: affiliates.filter((entry) => Boolean(entry.discountCode))
         .length,
       linked: affiliates.filter((entry) => Boolean(entry.userId)).length,
+      currentMonthRevenue: affiliates.reduce(
+        (sum, entry) => sum + Number(entry.currentMonthRevenue || 0),
+        0,
+      ),
+      activeOverrides: affiliates.filter(
+        (entry) => entry.currentCommissionOverride,
+      ).length,
     }),
     [affiliates],
   );
@@ -158,6 +319,11 @@ export function AffiliateManagement({
         entry.code.toLowerCase().includes(normalizedQuery) ||
         entry.name.toLowerCase().includes(normalizedQuery) ||
         entry.email.toLowerCase().includes(normalizedQuery) ||
+        entry.socialProfiles.some(
+          (profile) =>
+            profile.platform.toLowerCase().includes(normalizedQuery) ||
+            profile.url.toLowerCase().includes(normalizedQuery),
+        ) ||
         (entry.discountCode || "").toLowerCase().includes(normalizedQuery) ||
         entry.walletAddress.toLowerCase().includes(normalizedQuery)
       );
@@ -176,21 +342,305 @@ export function AffiliateManagement({
     { key: "rejected", label: "Rejected", count: counts.rejected },
   ];
 
-  function openAssignmentDialog(entry: AffiliateRow) {
+  const eligibleFilteredAffiliates = useMemo(
+    () =>
+      filteredAffiliates.filter(
+        (entry) =>
+          entry.status === "approved" &&
+          Boolean(entry.discountCode) &&
+          Boolean(entry.swellCouponId),
+      ),
+    [filteredAffiliates],
+  );
+
+  const eligibleFilteredIds = useMemo(
+    () => eligibleFilteredAffiliates.map((entry) => entry.id),
+    [eligibleFilteredAffiliates],
+  );
+
+  const selectedEligibleIds = useMemo(
+    () => selectedAffiliateIds.filter((id) => eligibleFilteredIds.includes(id)),
+    [eligibleFilteredIds, selectedAffiliateIds],
+  );
+
+  const isReinstatementFlow =
+    selectedAffiliate?.status === "suspended" ||
+    selectedAffiliate?.status === "rejected";
+
+  const derivedDiscountCode = assignmentForm.affiliateCode.toUpperCase();
+
+  const openAssignmentDialog = useCallback((entry: AffiliateRow) => {
     setSelectedAffiliate(entry);
     setAssignmentError(null);
+    setAssignmentResult(null);
+    setAvailability(null);
+    setActiveTab("codes");
+    setProfilesExpanded(false);
     setAssignmentForm({
-      discountCode: entry.discountCode || "",
-      discountPercent: entry.discountPercent || "",
-      commissionRate: entry.commissionRate,
+      affiliateCode: entry.code,
+      discountPercent: entry.discountPercent || "10",
+      commissionRate: formatCommissionPercent(entry.commissionRate),
       sendApprovalEmail: entry.status !== "approved",
+      reinstatementReason: "",
+      confirmAssignment: false,
     });
+    setCommissionMonthKey(new Date().toISOString().slice(0, 7));
+    setOverrideRateInput("");
+    setOverrideReason("");
     setAssignmentOpen(true);
+  }, []);
+
+  function handleAssignmentOpenChange(open: boolean) {
+    setAssignmentOpen(open);
+
+    if (!open) {
+      setAssignmentResult(null);
+      setAvailability(null);
+      setAssignmentError(null);
+      setDangerZoneMode(null);
+      setAffiliateActionReason("");
+      setActiveTab("codes");
+      setProfilesExpanded(false);
+    }
+  }
+
+  useEffect(() => {
+    const requestedAffiliateId = searchParams.get("openAffiliate");
+    if (
+      !requestedAffiliateId ||
+      autoOpenedAffiliateId.current === requestedAffiliateId
+    ) {
+      return;
+    }
+
+    const requestedAffiliate = affiliates.find(
+      (entry) => entry.id === requestedAffiliateId,
+    );
+    if (!requestedAffiliate) {
+      return;
+    }
+
+    autoOpenedAffiliateId.current = requestedAffiliateId;
+    openAssignmentDialog(requestedAffiliate);
+
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete("openAffiliate");
+    const nextQuery = nextParams.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname);
+  }, [affiliates, openAssignmentDialog, pathname, router, searchParams]);
+
+  useEffect(() => {
+    if (!assignmentOpen || !selectedAffiliate) {
+      return;
+    }
+
+    let cancelled = false;
+    setCommissionLoading(true);
+
+    fetch(
+      `/api/admin/affiliates/${selectedAffiliate.id}?monthKey=${encodeURIComponent(
+        commissionMonthKey,
+      )}`,
+    )
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(
+            data.error || "Failed to load Growth Partner detail.",
+          );
+        }
+
+        if (cancelled) return;
+
+        setCommissionOverview(data.commission ?? null);
+        setDiscountHistory(data.discountHistory ?? []);
+        if (data.commission?.summary) {
+          setOverrideRateInput(
+            data.commission.summary.overrideRate
+              ? formatCommissionPercent(data.commission.summary.overrideRate)
+              : "",
+          );
+          setOverrideReason(data.commission.summary.overrideReason ?? "");
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAssignmentError(
+            error instanceof Error
+              ? error.message
+              : "Failed to load Growth Partner detail.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCommissionLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [assignmentOpen, commissionMonthKey, selectedAffiliate]);
+
+  function toggleAffiliateSelection(id: string, checked: boolean) {
+    setSelectedAffiliateIds((current) =>
+      checked
+        ? Array.from(new Set([...current, id]))
+        : current.filter((entry) => entry !== id),
+    );
+  }
+
+  function toggleSelectAllFiltered(checked: boolean) {
+    setSelectedAffiliateIds((current) => {
+      if (!checked) {
+        return current.filter((id) => !eligibleFilteredIds.includes(id));
+      }
+
+      return Array.from(new Set([...current, ...eligibleFilteredIds]));
+    });
+  }
+
+  async function handleCheckAvailability() {
+    if (!selectedAffiliate) return;
+
+    setAvailabilityLoading(true);
+    setAssignmentError(null);
+
+    try {
+      const response = await fetch(
+        `/api/admin/affiliates/${selectedAffiliate.id}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "check_availability",
+            affiliateCode: assignmentForm.affiliateCode,
+            discountCode: derivedDiscountCode,
+          }),
+        },
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to check code availability.");
+      }
+
+      setAvailability(data.availability ?? null);
+      if (data.availability?.affiliateCode?.value) {
+        setAssignmentForm((current) => ({
+          ...current,
+          affiliateCode:
+            data.availability?.affiliateCode?.value || current.affiliateCode,
+        }));
+      }
+    } catch (error) {
+      setAssignmentError(
+        error instanceof Error
+          ? error.message
+          : "Failed to check code availability.",
+      );
+    } finally {
+      setAvailabilityLoading(false);
+    }
+  }
+
+  async function submitBulkDiscount(dryRun: boolean) {
+    const targetIds =
+      bulkMode === "selected" ? selectedEligibleIds : eligibleFilteredIds;
+
+    if (targetIds.length === 0) {
+      setBulkPreview(null);
+      setAssignmentError(
+        "No eligible affiliates are selected for a bulk update.",
+      );
+      return;
+    }
+
+    setBulkLoading(true);
+    setAssignmentError(null);
+
+    try {
+      const response = await fetch("/api/admin/affiliates/bulk-discount", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: bulkMode,
+          affiliateIds: targetIds,
+          discountPercent: bulkDiscountPercent,
+          changeReason: bulkReason,
+          dryRun,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          data.error || "Failed to run the bulk discount update.",
+        );
+      }
+
+      setBulkPreview(data.summary ?? null);
+      if (!dryRun) {
+        setBulkConfirm(false);
+        router.refresh();
+      }
+    } catch (error) {
+      setAssignmentError(
+        error instanceof Error
+          ? error.message
+          : "Failed to run the bulk discount update.",
+      );
+    } finally {
+      setBulkLoading(false);
+    }
+  }
+
+  async function handleOverrideSave(clearOverride = false) {
+    if (!selectedAffiliate) return;
+
+    setOverrideSaving(true);
+    setAssignmentError(null);
+
+    try {
+      const response = await fetch(
+        `/api/admin/affiliates/${selectedAffiliate.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            commissionOverrideMonthKey: commissionMonthKey,
+            commissionOverrideRate: clearOverride ? null : overrideRateInput,
+            clearCommissionOverride: clearOverride,
+            changeReason: overrideReason,
+          }),
+        },
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          data.error || "Failed to update the commission override.",
+        );
+      }
+
+      setCommissionOverview(data.commission ?? null);
+      router.refresh();
+    } catch (error) {
+      setAssignmentError(
+        error instanceof Error
+          ? error.message
+          : "Failed to update the commission override.",
+      );
+    } finally {
+      setOverrideSaving(false);
+    }
   }
 
   async function handleStatusChange(
     id: string,
     status: "pending" | "approved" | "rejected" | "suspended",
+    options?: {
+      changeReason?: string;
+      suspensionReason?: string;
+    },
   ) {
     setLoadingId(id);
 
@@ -198,7 +648,13 @@ export function AffiliateManagement({
       const res = await fetch(`/api/admin/affiliates/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({
+          status,
+          changeReason:
+            options?.changeReason ||
+            `Growth Partner status moved to ${status}.`,
+          suspensionReason: options?.suspensionReason,
+        }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -207,8 +663,15 @@ export function AffiliateManagement({
       }
 
       router.refresh();
+      return true;
     } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to update Growth Partner.";
       console.error("Failed to update Growth Partner:", error);
+      window.alert(message);
+      return false;
     } finally {
       setLoadingId(null);
     }
@@ -218,6 +681,18 @@ export function AffiliateManagement({
     e.preventDefault();
 
     if (!selectedAffiliate) return;
+    const reinstatementReason = assignmentForm.reinstatementReason.trim();
+
+    if (
+      isReinstatementFlow &&
+      assignmentForm.sendApprovalEmail &&
+      !reinstatementReason
+    ) {
+      setAssignmentError(
+        "A reinstatement reason is required to send the reinstatement email.",
+      );
+      return;
+    }
 
     setAssignmentLoading(true);
     setAssignmentError(null);
@@ -228,10 +703,18 @@ export function AffiliateManagement({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: "approved",
-          discountCode: assignmentForm.discountCode,
+          affiliateCode: assignmentForm.affiliateCode,
+          discountCode: derivedDiscountCode,
           discountPercent: assignmentForm.discountPercent,
           commissionRate: assignmentForm.commissionRate,
           sendApprovalEmail: assignmentForm.sendApprovalEmail,
+          changeReason: isReinstatementFlow
+            ? reinstatementReason ||
+              "Growth Partner reinstated from admin dashboard."
+            : "Growth Partner assignment updated from admin dashboard.",
+          reinstatementReason: isReinstatementFlow
+            ? reinstatementReason
+            : undefined,
         }),
       });
 
@@ -240,20 +723,15 @@ export function AffiliateManagement({
         throw new Error(data.error || "Failed to save affiliate assignment.");
       }
 
-      setAssignmentOpen(false);
       setAssignmentResult({
         affiliateCode: data.assignment.affiliateCode,
         discountCode: data.assignment.discountCode,
-        discountPercent: data.assignment.discountPercent,
-        commissionRate: data.assignment.commissionRate,
-        status: data.assignment.status,
         referralLink: data.assignment.referralLink,
         checkoutLink: data.assignment.checkoutLink,
         emailSent: Boolean(data.assignment.emailSent),
         affiliateName: selectedAffiliate.name,
         affiliateEmail: selectedAffiliate.email,
       });
-      setResultOpen(true);
       router.refresh();
     } catch (error) {
       setAssignmentError(
@@ -262,6 +740,121 @@ export function AffiliateManagement({
     } finally {
       setAssignmentLoading(false);
     }
+  }
+
+  async function handleAssignmentRemoval() {
+    if (!selectedAffiliate) return;
+
+    const confirmed = window.confirm(
+      `Remove the Swell assignment for ${selectedAffiliate.name}? This will delete the coupon and move the affiliate back to pending.`,
+    );
+    if (!confirmed) return;
+
+    setAssignmentRemoving(true);
+    setAssignmentError(null);
+
+    try {
+      const res = await fetch(`/api/admin/affiliates/${selectedAffiliate.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          removeAssignment: true,
+          changeReason:
+            "Growth Partner Swell assignment removed from admin dashboard.",
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to remove affiliate assignment.");
+      }
+
+      setAssignmentOpen(false);
+      router.refresh();
+    } catch (error) {
+      setAssignmentError(
+        error instanceof Error
+          ? error.message
+          : "Failed to remove affiliate assignment.",
+      );
+    } finally {
+      setAssignmentRemoving(false);
+    }
+  }
+
+  async function handleAffiliateDeletion(
+    entry: AffiliateRow,
+    removalReason: string,
+  ) {
+    setLoadingId(entry.id);
+
+    try {
+      const res = await fetch(`/api/admin/affiliates/${entry.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          removalReason,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          data.error || "Failed to delete the Growth Partner record.",
+        );
+      }
+
+      setAssignmentOpen(false);
+      setSelectedAffiliate(null);
+      setDangerZoneMode(null);
+      setAffiliateActionReason("");
+      router.refresh();
+      return true;
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to delete the Growth Partner record.";
+
+      console.error("Failed to delete Growth Partner:", error);
+      window.alert(message);
+      return false;
+    } finally {
+      setLoadingId(null);
+    }
+  }
+
+  async function handleDangerZoneConfirm() {
+    if (!selectedAffiliate || !dangerZoneMode) return;
+
+    const reason = affiliateActionReason.trim();
+    if (!reason) {
+      window.alert(
+        dangerZoneMode === "suspended"
+          ? "A suspension reason is required."
+          : "A removal reason is required.",
+      );
+      return;
+    }
+
+    if (dangerZoneMode === "suspended") {
+      const updated = await handleStatusChange(
+        selectedAffiliate.id,
+        "suspended",
+        {
+          changeReason: `Growth Partner suspended: ${reason}`,
+          suspensionReason: reason,
+        },
+      );
+      if (updated) {
+        setAssignmentOpen(false);
+        setDangerZoneMode(null);
+        setAffiliateActionReason("");
+      }
+      return;
+    }
+
+    await handleAffiliateDeletion(selectedAffiliate, reason);
   }
 
   async function copyValue(field: string, value: string) {
@@ -276,340 +869,989 @@ export function AffiliateManagement({
     }
   }
 
+  async function handleOrphanRepair(userId: string) {
+    setRepairingUserId(userId);
+
+    try {
+      const res = await fetch(`/api/admin/affiliates/orphan-users/${userId}`, {
+        method: "POST",
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          data.error || "Failed to create the missing Growth Partner record.",
+        );
+      }
+
+      window.alert(
+        data?.repair?.created
+          ? "Pending Growth Partner record created. Review and approve it below."
+          : "Growth Partner record linked successfully.",
+      );
+      router.refresh();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to create the missing Growth Partner record.";
+      console.error("Failed to repair orphan Growth Partner:", error);
+      window.alert(message);
+    } finally {
+      setRepairingUserId(null);
+    }
+  }
+
   return (
-    <div className="space-y-6">
-      <AdminSectionHeader
-        eyebrow="Growth Partners"
-        title="Approval and code assignment"
-        description="Applicants become active only after an admin assigns a Swell discount code, sets the customer discount, and approves the record. The branded subroute keeps attribution tied to the referral slug."
-      />
+    <div className="space-y-3">
+      {orphanUsers.length > 0 ? (
+        <AdminPanel tone="muted" className="space-y-3">
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0B2E2F]/46">
+              Needs Repair
+            </p>
+            <h3 className="text-sm font-semibold tracking-[-0.04em] text-[#0B2E2F]">
+              Growth Partner users missing partner records
+            </h3>
+            <p className="max-w-3xl text-[11px] leading-4 text-[#0B2E2F]/62">
+              These accounts are marked as Growth Partners in auth, but they do
+              not have a linked record in the affiliates table. Repair creates a
+              pending partner record linked to the user so approval can continue
+              in this screen.
+            </p>
+          </div>
 
-      <Dialog open={assignmentOpen} onOpenChange={setAssignmentOpen}>
-        <DialogContent className="rounded-none border-[#0B2E2F]/16 bg-[#FCFAF6] p-0 shadow-[0_24px_80px_rgba(11,46,47,0.12)]">
-          <DialogHeader className="border-b border-[#0B2E2F]/12 px-6 py-5">
-            <DialogTitle className="tracking-[-0.04em] text-[#0B2E2F]">
-              {selectedAffiliate?.status === "approved"
-                ? "Update Swell code assignment"
-                : "Approve and assign Swell code"}
-            </DialogTitle>
-            <DialogDescription className="pt-2 text-[#0B2E2F]/68">
-              Assign or update the Swell discount code, customer discount
-              percent, and notification email from one place.
-            </DialogDescription>
-          </DialogHeader>
-
-          {selectedAffiliate ? (
-            <form
-              onSubmit={handleAssignmentSubmit}
-              className="space-y-4 px-6 py-6"
-            >
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Affiliate</Label>
-                  <Input
-                    value={selectedAffiliate.name}
-                    disabled
-                    className={adminFieldClass}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Email</Label>
-                  <Input
-                    value={selectedAffiliate.email}
-                    disabled
-                    className={adminFieldClass}
-                  />
-                </div>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Referral slug</Label>
-                  <Input
-                    value={selectedAffiliate.code}
-                    disabled
-                    className={adminFieldClass}
-                  />
-                  <p className="text-xs text-[#0B2E2F]/56">
-                    This powers the branded subroute:{" "}
-                    <span className="font-mono">
-                      revalin.ca/{selectedAffiliate.code}
-                    </span>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {orphanUsers.map((entry) => (
+              <div
+                key={entry.userId}
+                className="flex flex-col gap-2.5 border border-[#0B2E2F]/12 bg-[#FCFAF6] px-3 py-3 md:flex-row md:items-end md:justify-between"
+              >
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-[#0B2E2F]">
+                    {entry.name || "Unnamed user"}
+                  </p>
+                  <p className="text-xs text-[#0B2E2F]/60">{entry.email}</p>
+                  <p className="text-xs text-[#0B2E2F]/42">
+                    Marked Growth Partner on{" "}
+                    {new Date(entry.createdAt).toLocaleDateString()}
                   </p>
                 </div>
-                <div className="space-y-2">
-                  <Label>Swell discount code</Label>
-                  <Input
-                    value={assignmentForm.discountCode}
-                    onChange={(event) =>
-                      setAssignmentForm((current) => ({
-                        ...current,
-                        discountCode: event.target.value.toUpperCase(),
-                      }))
-                    }
-                    className={adminFieldClass}
-                    placeholder="e.g. AZIM10"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Customer discount (%)</Label>
-                  <Input
-                    value={assignmentForm.discountPercent}
-                    onChange={(event) =>
-                      setAssignmentForm((current) => ({
-                        ...current,
-                        discountPercent: event.target.value,
-                      }))
-                    }
-                    className={adminFieldClass}
-                    placeholder="10"
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Commission rate</Label>
-                  <Input
-                    value={assignmentForm.commissionRate}
-                    onChange={(event) =>
-                      setAssignmentForm((current) => ({
-                        ...current,
-                        commissionRate: event.target.value,
-                      }))
-                    }
-                    className={adminFieldClass}
-                    placeholder="0.05"
-                    required
-                  />
-                </div>
-              </div>
-
-              <label className="flex items-start gap-3 rounded-none border border-[#0B2E2F]/12 bg-white/70 px-4 py-3 text-sm text-[#0B2E2F]/72">
-                <input
-                  type="checkbox"
-                  checked={assignmentForm.sendApprovalEmail}
-                  onChange={(event) =>
-                    setAssignmentForm((current) => ({
-                      ...current,
-                      sendApprovalEmail: event.target.checked,
-                    }))
-                  }
-                  className="mt-1 size-4 rounded-none border-[#0B2E2F]/30 text-[#0B2E2F] focus:ring-0"
-                />
-                <span>
-                  Send the affiliate approval email with the Swell code, branded
-                  referral link, and checkout link.
-                </span>
-              </label>
-
-              {assignmentError ? (
-                <p className="text-sm text-red-600">{assignmentError}</p>
-              ) : null}
-
-              <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
                 <Button
                   type="button"
-                  variant="outline"
-                  className={adminSecondaryButtonClass}
-                  onClick={() => setAssignmentOpen(false)}
-                  disabled={assignmentLoading}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
                   className={adminPrimaryButtonClass}
-                  disabled={assignmentLoading}
+                  disabled={repairingUserId === entry.userId}
+                  onClick={() => handleOrphanRepair(entry.userId)}
                 >
-                  {assignmentLoading ? (
+                  {repairingUserId === entry.userId ? (
                     <Loader2 className="size-4 animate-spin" />
-                  ) : selectedAffiliate.status === "approved" ? (
-                    "Save code changes"
-                  ) : (
-                    "Approve and assign"
-                  )}
+                  ) : null}
+                  Repair record
                 </Button>
+              </div>
+            ))}
+          </div>
+        </AdminPanel>
+      ) : null}
+
+      <Dialog open={assignmentOpen} onOpenChange={handleAssignmentOpenChange}>
+        <DialogContent className="flex max-w-[900px] flex-col gap-0 overflow-hidden rounded-none border-[#0B2E2F]/16 bg-[#FCFAF6] p-0 shadow-[0_24px_80px_rgba(11,46,47,0.12)] sm:h-[80vh]">
+          <DialogTitle className="sr-only">
+            {assignmentResult
+              ? "Assignment saved"
+              : selectedAffiliate?.status === "approved"
+                ? "Manage assignment"
+                : isReinstatementFlow
+                  ? "Reinstate affiliate"
+                  : "Approve affiliate"}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            {assignmentResult
+              ? "Codes and links updated."
+              : isReinstatementFlow
+                ? "Edit codes and reinstatement settings."
+                : "Edit codes and approval settings."}
+          </DialogDescription>
+
+          {selectedAffiliate && !assignmentResult ? (
+            <form
+              onSubmit={handleAssignmentSubmit}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              {/* ── Dialog Header ── */}
+              <div className="shrink-0 border-b border-[#0B2E2F]/12 px-5 py-4">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <p className="text-sm font-semibold tracking-[-0.04em] text-[#0B2E2F]">
+                    {selectedAffiliate.name}
+                  </p>
+                  <span className="text-xs text-[#0B2E2F]/58">
+                    {selectedAffiliate.email}
+                  </span>
+                  <Badge
+                    variant={statusBadgeVariant(selectedAffiliate.status)}
+                    className="rounded-none px-2.5 py-0.5 text-[10px] uppercase tracking-[0.14em]"
+                  >
+                    {selectedAffiliate.status}
+                  </Badge>
+                  {selectedAffiliate.socialProfiles.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setProfilesExpanded((p) => !p)}
+                      className="flex items-center gap-1 text-xs font-semibold text-[#0B2E2F]/62 hover:text-[#0B2E2F]"
+                    >
+                      {selectedAffiliate.socialProfiles.length} profile
+                      {selectedAffiliate.socialProfiles.length === 1 ? "" : "s"}
+                      <ChevronDown
+                        className={`size-3 transition-transform ${profilesExpanded ? "rotate-180" : ""}`}
+                      />
+                    </button>
+                  ) : null}
+                </div>
+                {profilesExpanded && selectedAffiliate.socialProfiles.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {selectedAffiliate.socialProfiles.map((profile, index) => (
+                      <a
+                        key={`${profile.platform}-${profile.url}-${index}`}
+                        href={profile.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-none border border-[#0B2E2F]/10 bg-white/85 px-2.5 py-1.5 text-xs font-semibold text-[#0B2E2F] underline-offset-4 hover:underline"
+                      >
+                        {profile.platform}
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
+              {/* ── Dialog Body (sidebar + content) ── */}
+              <div className="flex min-h-0 flex-1">
+                {/* Left tab nav */}
+                <nav className="flex w-[160px] shrink-0 flex-col gap-0.5 border-r border-[#0B2E2F]/10 bg-[#F8F5EF] px-2 py-3">
+                  {(
+                    [
+                      { key: "codes", label: "Codes" },
+                      { key: "rates", label: "Rates" },
+                      { key: "commission", label: "Commission" },
+                      { key: "history", label: "History" },
+                      { key: "options", label: "Options" },
+                      { key: "danger", label: "Danger" },
+                    ] as const
+                  ).map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setActiveTab(tab.key)}
+                      className={[
+                        "rounded-none px-3 py-2 text-left text-xs font-semibold transition-colors",
+                        activeTab === tab.key
+                          ? "bg-[#0B2E2F] text-[#F4F1EA]"
+                          : tab.key === "danger"
+                            ? "text-red-700 hover:bg-red-50"
+                            : "text-[#0B2E2F]/62 hover:bg-[#EFE7D8] hover:text-[#0B2E2F]",
+                      ].join(" ")}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </nav>
+
+                {/* Right content */}
+                <div className="flex-1 overflow-y-auto px-5 py-5">
+                  {/* ── Codes Tab ── */}
+                  {activeTab === "codes" ? (
+                    <div className="space-y-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
+                        Codes
+                      </p>
+                      <div className="space-y-2">
+                        <Label>Partner code</Label>
+                        <Input
+                          value={assignmentForm.affiliateCode}
+                          onChange={(event) =>
+                            setAssignmentForm((current) => ({
+                              ...current,
+                              affiliateCode: sanitizePartnerCode(
+                                event.target.value,
+                              ),
+                              confirmAssignment: false,
+                            }))
+                          }
+                          className={adminFieldClass}
+                          placeholder="e.g. azim-lab"
+                          required
+                        />
+                        <p className="text-xs text-[#0B2E2F]/56">
+                          Route:{" "}
+                          <span className="font-mono">
+                            revalin.ca/
+                            {assignmentForm.affiliateCode || "partner-code"}
+                          </span>
+                        </p>
+                        <p className="text-xs text-[#0B2E2F]/56">
+                          Swell code:{" "}
+                          <span className="font-mono font-semibold">
+                            {derivedDiscountCode || "—"}
+                          </span>
+                        </p>
+                      </div>
+
+                      <div className="flex flex-col gap-2.5 rounded-none border border-[#0B2E2F]/10 bg-white/80 px-3 py-3">
+                        <div className="flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
+                              Assignment-time code check
+                            </p>
+                            <p className="mt-1 text-xs text-[#0B2E2F]/58">
+                              Confirms the route slug and Swell code can be
+                              reserved before saving.
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={adminSecondaryButtonClass}
+                            onClick={handleCheckAvailability}
+                            disabled={availabilityLoading}
+                          >
+                            {availabilityLoading ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : null}
+                            Check availability
+                          </Button>
+                        </div>
+
+                        {availability ? (
+                          <div className="grid gap-2.5 sm:grid-cols-2">
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Partner code
+                              </p>
+                              <p
+                                className={`mt-1.5 text-xs font-semibold ${
+                                  availability.affiliateCode.available
+                                    ? "text-emerald-700"
+                                    : "text-red-600"
+                                }`}
+                              >
+                                {availability.affiliateCode.message}
+                              </p>
+                            </div>
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Swell code
+                              </p>
+                              <p
+                                className={`mt-1.5 text-xs font-semibold ${
+                                  availability.discountCode.available
+                                    ? "text-emerald-700"
+                                    : "text-red-600"
+                                }`}
+                              >
+                                {availability.discountCode.message}
+                              </p>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* ── Rates Tab ── */}
+                  {activeTab === "rates" ? (
+                    <div className="space-y-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
+                        Rates
+                      </p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label>Discount percent</Label>
+                          <Input
+                            value={assignmentForm.discountPercent}
+                            onChange={(event) =>
+                              setAssignmentForm((current) => ({
+                                ...current,
+                                discountPercent: event.target.value,
+                                confirmAssignment: false,
+                              }))
+                            }
+                            className={adminFieldClass}
+                            placeholder="10"
+                            required
+                          />
+                          <p className="text-xs text-[#0B2E2F]/56">
+                            Customer-facing Swell discount applied in checkout.
+                          </p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Baseline commission percent</Label>
+                          <Input
+                            value={assignmentForm.commissionRate}
+                            onChange={(event) =>
+                              setAssignmentForm((current) => ({
+                                ...current,
+                                commissionRate: event.target.value,
+                                confirmAssignment: false,
+                              }))
+                            }
+                            className={adminFieldClass}
+                            placeholder="10"
+                            required
+                          />
+                          <p className="text-xs text-[#0B2E2F]/56">
+                            Starting rate carried into new commission months.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* ── Commission Tab ── */}
+                  {activeTab === "commission" ? (
+                    <div className="space-y-3">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
+                            Commission month
+                          </p>
+                          <p className="mt-1 text-xs text-[#0B2E2F]/58">
+                            Paid-month tier state, override controls, and payout
+                            impact for the selected month.
+                          </p>
+                        </div>
+                        <div className="w-full max-w-[180px] space-y-2">
+                          <Label>Month</Label>
+                          <Input
+                            type="month"
+                            value={commissionMonthKey}
+                            onChange={(event) =>
+                              setCommissionMonthKey(event.target.value)
+                            }
+                            className={adminFieldClass}
+                          />
+                        </div>
+                      </div>
+
+                      {commissionLoading ? (
+                        <div className="flex items-center gap-2 text-xs text-[#0B2E2F]/58">
+                          <Loader2 className="size-4 animate-spin" />
+                          Loading commission state...
+                        </div>
+                      ) : commissionOverview?.summary ? (
+                        <div className="space-y-3">
+                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Revenue
+                              </p>
+                              <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
+                                {formatCurrency(
+                                  commissionOverview.summary.recognizedRevenue,
+                                )}
+                              </p>
+                            </div>
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Orders
+                              </p>
+                              <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
+                                {commissionOverview.summary.recognizedOrderCount}
+                              </p>
+                            </div>
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Tier
+                              </p>
+                              <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
+                                {commissionOverview.summary.tierLabel}
+                              </p>
+                            </div>
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Effective rate
+                              </p>
+                              <div className="mt-1.5 flex items-center gap-2">
+                                <p className="text-sm font-semibold text-[#0B2E2F]">
+                                  {formatCommissionPercent(
+                                    commissionOverview.summary.effectiveRate,
+                                  )}
+                                  %
+                                </p>
+                                {commissionOverview.summary.hasOverride ? (
+                                  <Badge
+                                    variant="secondary"
+                                    className="rounded-none"
+                                  >
+                                    Override
+                                  </Badge>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                            <div className="space-y-2">
+                              <Label>Month-specific override percent</Label>
+                              <Input
+                                value={overrideRateInput}
+                                onChange={(event) =>
+                                  setOverrideRateInput(event.target.value)
+                                }
+                                className={adminFieldClass}
+                                placeholder="e.g. 22"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Override reason</Label>
+                              <Input
+                                value={overrideReason}
+                                onChange={(event) =>
+                                  setOverrideReason(event.target.value)
+                                }
+                                className={adminFieldClass}
+                                placeholder="Why this month needs a manual rate"
+                              />
+                            </div>
+                            <div className="flex flex-col gap-2 self-end lg:flex-row">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className={adminSecondaryButtonClass}
+                                onClick={() => handleOverrideSave(true)}
+                                disabled={
+                                  overrideSaving ||
+                                  !commissionOverview.summary.hasOverride
+                                }
+                              >
+                                Clear override
+                              </Button>
+                              <Button
+                                type="button"
+                                className={adminPrimaryButtonClass}
+                                onClick={() => handleOverrideSave(false)}
+                                disabled={
+                                  overrideSaving || !overrideRateInput.trim()
+                                }
+                              >
+                                {overrideSaving ? (
+                                  <Loader2 className="size-4 animate-spin" />
+                                ) : null}
+                                Save override
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {/* ── History Tab ── */}
+                  {activeTab === "history" ? (
+                    <div className="space-y-4">
+                      <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                          Recent commission events
+                        </p>
+                        {commissionOverview?.events &&
+                        commissionOverview.events.length > 0 ? (
+                          <div className="mt-2.5 space-y-2.5">
+                            {commissionOverview.events
+                              .slice(0, 4)
+                              .map((event) => (
+                                <div
+                                  key={event.id}
+                                  className="border-t border-[#0B2E2F]/8 pt-2.5 first:border-t-0 first:pt-0"
+                                >
+                                  <p className="text-xs font-semibold capitalize text-[#0B2E2F]">
+                                    {event.eventType.replace(/_/g, " ")}
+                                  </p>
+                                  <p className="mt-1 text-xs text-[#0B2E2F]/52">
+                                    {new Date(event.createdAt).toLocaleString()}
+                                  </p>
+                                  {event.notes ? (
+                                    <p className="mt-1 text-xs text-[#0B2E2F]/62">
+                                      {event.notes}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ))}
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-xs text-[#0B2E2F]/58">
+                            No commission events recorded yet.
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                          Recent discount changes
+                        </p>
+                        {discountHistory.length > 0 ? (
+                          <div className="mt-2.5 space-y-2.5">
+                            {discountHistory.slice(0, 4).map((change) => (
+                              <div
+                                key={change.id}
+                                className="border-t border-[#0B2E2F]/8 pt-2.5 first:border-t-0 first:pt-0"
+                              >
+                                <p className="text-xs font-semibold text-[#0B2E2F]">
+                                  {change.discountCode || "Code removed"}
+                                </p>
+                                <p className="mt-1 text-xs text-[#0B2E2F]/52">
+                                  {change.oldDiscountPercent || "-"}% →{" "}
+                                  {change.newDiscountPercent || "-"}% •{" "}
+                                  {new Date(change.createdAt).toLocaleString()}
+                                </p>
+                                {change.reason ? (
+                                  <p className="mt-1 text-xs text-[#0B2E2F]/62">
+                                    {change.reason}
+                                  </p>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-xs text-[#0B2E2F]/58">
+                            No discount changes recorded yet.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* ── Options Tab ── */}
+                  {activeTab === "options" ? (
+                    <div className="space-y-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
+                        Options
+                      </p>
+
+                      {isReinstatementFlow ? (
+                        <div className="space-y-2">
+                          <Label
+                            htmlFor="reinstatement-reason"
+                            className="text-xs font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/55"
+                          >
+                            Reinstatement reason
+                          </Label>
+                          <Input
+                            id="reinstatement-reason"
+                            value={assignmentForm.reinstatementReason}
+                            onChange={(event) =>
+                              setAssignmentForm((current) => ({
+                                ...current,
+                                reinstatementReason: event.target.value,
+                              }))
+                            }
+                            placeholder="Explain why this Growth Partner is being reinstated"
+                            className={adminFieldClass}
+                          />
+                          <p className="text-xs text-[#0B2E2F]/52">
+                            Sent in the reinstatement email when email delivery
+                            is enabled below.
+                          </p>
+                        </div>
+                      ) : null}
+
+                      <label className="flex items-start gap-3 rounded-none border border-[#0B2E2F]/12 bg-white/70 px-3 py-2.5 text-xs text-[#0B2E2F]/72">
+                        <input
+                          type="checkbox"
+                          checked={assignmentForm.sendApprovalEmail}
+                          onChange={(event) =>
+                            setAssignmentForm((current) => ({
+                              ...current,
+                              sendApprovalEmail: event.target.checked,
+                            }))
+                          }
+                          className="mt-1 size-4 rounded-none border-[#0B2E2F]/30 text-[#0B2E2F] focus:ring-0"
+                        />
+                        <span>
+                          {isReinstatementFlow
+                            ? "Send reinstatement email"
+                            : "Send approval email"}
+                        </span>
+                      </label>
+
+                      <label className="flex items-start gap-3 rounded-none border border-[#0B2E2F]/12 bg-[#F4F1EA] px-3 py-2.5 text-xs text-[#0B2E2F]/78">
+                        <input
+                          type="checkbox"
+                          checked={assignmentForm.confirmAssignment}
+                          onChange={(event) =>
+                            setAssignmentForm((current) => ({
+                              ...current,
+                              confirmAssignment: event.target.checked,
+                            }))
+                          }
+                          className="mt-1 size-4 rounded-none border-[#0B2E2F]/30 text-[#0B2E2F] focus:ring-0"
+                        />
+                        <span>I confirm these codes are correct.</span>
+                      </label>
+                    </div>
+                  ) : null}
+
+                  {/* ── Danger Tab ── */}
+                  {activeTab === "danger" ? (
+                    <div className="space-y-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-red-700">
+                        Danger zone
+                      </p>
+
+                      {!dangerZoneMode ? (
+                        <div className="flex gap-2">
+                          {selectedAffiliate.status !== "suspended" ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-7 rounded-none border border-red-200 bg-white px-2.5 text-[10px] uppercase tracking-[0.14em] text-red-700 hover:bg-red-100 hover:text-red-800"
+                              onClick={() => setDangerZoneMode("suspended")}
+                            >
+                              Suspend
+                            </Button>
+                          ) : null}
+                          <Button
+                            type="button"
+                            className="h-7 rounded-none bg-red-600 px-2.5 text-[10px] uppercase tracking-[0.14em] text-white hover:bg-red-700"
+                            onClick={() => setDangerZoneMode("delete")}
+                          >
+                            Delete record
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <p className="text-xs text-red-700">
+                            {dangerZoneMode === "delete"
+                              ? `Deleting ${selectedAffiliate.name} will remove the application and send the removal email immediately.`
+                              : `Suspending ${selectedAffiliate.name} will disable Growth Partner access and send the suspension email.`}
+                          </p>
+                          <div className="space-y-2">
+                            <Label className="text-xs font-semibold uppercase tracking-[0.16em] text-red-700/70">
+                              {dangerZoneMode === "delete"
+                                ? "Removal reason"
+                                : "Suspension reason"}
+                            </Label>
+                            <Input
+                              value={affiliateActionReason}
+                              onChange={(event) =>
+                                setAffiliateActionReason(event.target.value)
+                              }
+                              placeholder={
+                                dangerZoneMode === "delete"
+                                  ? "Explain why this record is being deleted"
+                                  : "Explain why this Growth Partner is being suspended"
+                              }
+                              className={adminFieldClass}
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className={adminSecondaryButtonClass}
+                              onClick={() => {
+                                setDangerZoneMode(null);
+                                setAffiliateActionReason("");
+                              }}
+                              disabled={loadingId === selectedAffiliate.id}
+                            >
+                              Back
+                            </Button>
+                            <Button
+                              type="button"
+                              className={
+                                dangerZoneMode === "delete"
+                                  ? "h-7 rounded-none bg-red-600 px-2.5 text-[10px] uppercase tracking-[0.14em] text-white hover:bg-red-700"
+                                  : adminPrimaryButtonClass
+                              }
+                              onClick={handleDangerZoneConfirm}
+                              disabled={loadingId === selectedAffiliate.id}
+                            >
+                              {loadingId === selectedAffiliate.id ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : null}
+                              {dangerZoneMode === "delete"
+                                ? "Delete record"
+                                : "Suspend affiliate"}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {selectedAffiliate.discountCode ||
+                      selectedAffiliate.swellCouponId ? (
+                        <div className="border-t border-red-200 pt-3">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-7 rounded-none border border-red-200 bg-white px-2.5 text-[10px] uppercase tracking-[0.14em] text-red-700 hover:bg-red-100 hover:text-red-800"
+                            onClick={handleAssignmentRemoval}
+                            disabled={assignmentLoading || assignmentRemoving}
+                          >
+                            {assignmentRemoving ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              "Remove from Swell"
+                            )}
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {assignmentError ? (
+                    <p className="mt-3 text-xs text-red-600">
+                      {assignmentError}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+
+              {/* ── Dialog Footer ── */}
+              <div className="shrink-0 border-t border-[#0B2E2F]/12 bg-[#FCFAF6] px-5 py-3">
+                <div className="flex justify-end gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={adminSecondaryButtonClass}
+                    onClick={() => setAssignmentOpen(false)}
+                    disabled={assignmentLoading || assignmentRemoving}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    className={adminPrimaryButtonClass}
+                    disabled={
+                      assignmentLoading ||
+                      assignmentRemoving ||
+                      !assignmentForm.confirmAssignment
+                    }
+                  >
+                    {assignmentLoading ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : selectedAffiliate.status === "approved" ? (
+                      "Save assignment"
+                    ) : isReinstatementFlow ? (
+                      "Reinstate and assign"
+                    ) : (
+                      "Approve and assign"
+                    )}
+                  </Button>
+                </div>
               </div>
             </form>
           ) : null}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={resultOpen} onOpenChange={setResultOpen}>
-        <DialogContent className="rounded-none border-[#0B2E2F]/16 bg-[#FCFAF6] p-0 shadow-[0_24px_80px_rgba(11,46,47,0.12)]">
-          <DialogHeader className="border-b border-[#0B2E2F]/12 px-6 py-5">
-            <DialogTitle className="tracking-[-0.04em] text-[#0B2E2F]">
-              Growth Partner assignment saved
-            </DialogTitle>
-            <DialogDescription className="pt-2 text-[#0B2E2F]/68">
-              The branded route and Swell code are now connected.
-            </DialogDescription>
-          </DialogHeader>
 
           {assignmentResult ? (
-            <div className="space-y-4 px-6 py-6">
-              <div className="rounded-[20px] border border-[#0B2E2F]/10 bg-white/85 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
-                  Growth Partner
-                </p>
-                <p className="mt-1 font-semibold text-[#0B2E2F]">
-                  {assignmentResult.affiliateName}
-                </p>
-                <p className="text-sm text-[#0B2E2F]/55">
-                  {assignmentResult.affiliateEmail}
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <div className="rounded-[20px] border border-[#0B2E2F]/10 bg-white/85 px-4 py-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
-                        Swell discount code
-                      </p>
-                      <p className="mt-1 font-mono text-sm font-semibold text-[#0B2E2F]">
-                        {assignmentResult.discountCode}
-                      </p>
-                      <p className="mt-1 text-xs text-[#0B2E2F]/58">
-                        {assignmentResult.discountPercent || "0"}% customer
-                        discount
-                      </p>
-                    </div>
-                    {assignmentResult.discountCode ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          copyValue(
-                            "discount-code",
-                            assignmentResult.discountCode!,
-                          )
-                        }
-                      >
-                        {copiedField === "discount-code" ? (
-                          <CheckCircle2 className="size-4" />
-                        ) : (
-                          <Copy className="size-4" />
-                        )}
-                        {copiedField === "discount-code" ? "Copied" : "Copy"}
-                      </Button>
-                    ) : null}
-                  </div>
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="flex-1 space-y-3 overflow-y-auto px-5 py-5">
+                <div className="rounded-none border border-[#0B2E2F]/10 bg-white/85 px-3 py-2.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
+                    Affiliate
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-[#0B2E2F]">
+                    {assignmentResult.affiliateName}
+                  </p>
+                  <p className="text-xs text-[#0B2E2F]/55">
+                    {assignmentResult.affiliateEmail}
+                  </p>
                 </div>
 
-                <div className="rounded-[20px] border border-[#0B2E2F]/10 bg-white/85 px-4 py-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
-                        Branded referral link
-                      </p>
-                      <p className="mt-1 break-all font-mono text-sm font-semibold text-[#0B2E2F]">
-                        {assignmentResult.referralLink}
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        copyValue(
-                          "referral-link",
-                          assignmentResult.referralLink,
-                        )
-                      }
-                    >
-                      {copiedField === "referral-link" ? (
-                        <CheckCircle2 className="size-4" />
-                      ) : (
-                        <Copy className="size-4" />
-                      )}
-                      {copiedField === "referral-link" ? "Copied" : "Copy"}
-                    </Button>
-                  </div>
-                </div>
-
-                {assignmentResult.checkoutLink ? (
-                  <div className="rounded-[20px] border border-[#0B2E2F]/10 bg-white/85 px-4 py-3">
+                <div className="space-y-3">
+                  <div className="rounded-none border border-[#0B2E2F]/10 bg-white/85 px-3 py-2.5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
-                          Direct checkout link
+                          Partner code
                         </p>
-                        <p className="mt-1 break-all font-mono text-sm font-semibold text-[#0B2E2F]">
-                          {assignmentResult.checkoutLink}
+                        <p className="mt-1 font-mono text-xs font-semibold text-[#0B2E2F]">
+                          /{assignmentResult.affiliateCode}
                         </p>
                       </div>
                       <Button
                         type="button"
                         variant="outline"
-                        size="sm"
+                        className={adminSecondaryButtonClass}
                         onClick={() =>
                           copyValue(
-                            "checkout-link",
-                            assignmentResult.checkoutLink!,
+                            "affiliate-code",
+                            assignmentResult.affiliateCode,
                           )
                         }
                       >
-                        {copiedField === "checkout-link" ? (
+                        {copiedField === "affiliate-code" ? (
                           <CheckCircle2 className="size-4" />
                         ) : (
                           <Copy className="size-4" />
                         )}
-                        {copiedField === "checkout-link" ? "Copied" : "Copy"}
+                        {copiedField === "affiliate-code" ? "Copied" : "Copy"}
                       </Button>
                     </div>
                   </div>
-                ) : null}
+
+                  <div className="rounded-none border border-[#0B2E2F]/10 bg-white/85 px-3 py-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
+                          Swell discount code
+                        </p>
+                        <p className="mt-1 font-mono text-xs font-semibold text-[#0B2E2F]">
+                          {assignmentResult.discountCode}
+                        </p>
+                      </div>
+                      {assignmentResult.discountCode ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className={adminSecondaryButtonClass}
+                          onClick={() =>
+                            copyValue(
+                              "discount-code",
+                              assignmentResult.discountCode!,
+                            )
+                          }
+                        >
+                          {copiedField === "discount-code" ? (
+                            <CheckCircle2 className="size-4" />
+                          ) : (
+                            <Copy className="size-4" />
+                          )}
+                          {copiedField === "discount-code"
+                            ? "Copied"
+                            : "Copy"}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="rounded-none border border-[#0B2E2F]/10 bg-white/85 px-3 py-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
+                          Branded referral link
+                        </p>
+                        <p className="mt-1 break-all font-mono text-xs font-semibold text-[#0B2E2F]">
+                          {assignmentResult.referralLink}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={adminSecondaryButtonClass}
+                        onClick={() =>
+                          copyValue(
+                            "referral-link",
+                            assignmentResult.referralLink,
+                          )
+                        }
+                      >
+                        {copiedField === "referral-link" ? (
+                          <CheckCircle2 className="size-4" />
+                        ) : (
+                          <Copy className="size-4" />
+                        )}
+                        {copiedField === "referral-link" ? "Copied" : "Copy"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {assignmentResult.checkoutLink ? (
+                    <div className="rounded-none border border-[#0B2E2F]/10 bg-white/85 px-3 py-2.5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
+                            Direct checkout link
+                          </p>
+                          <p className="mt-1 break-all font-mono text-xs font-semibold text-[#0B2E2F]">
+                            {assignmentResult.checkoutLink}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className={adminSecondaryButtonClass}
+                          onClick={() =>
+                            copyValue(
+                              "checkout-link",
+                              assignmentResult.checkoutLink!,
+                            )
+                          }
+                        >
+                          {copiedField === "checkout-link" ? (
+                            <CheckCircle2 className="size-4" />
+                          ) : (
+                            <Copy className="size-4" />
+                          )}
+                          {copiedField === "checkout-link"
+                            ? "Copied"
+                            : "Copy"}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <p className="text-xs leading-5 text-[#0B2E2F]/62">
+                  {assignmentResult.emailSent
+                    ? "Approval email sent."
+                    : "Saved without email."}
+                </p>
               </div>
 
-              <p className="text-sm leading-6 text-[#0B2E2F]/62">
-                {assignmentResult.emailSent
-                  ? "The approval email was sent with the current Swell code and links."
-                  : "No email was sent for this save. The assignment is still active and the subroute will track incoming traffic."}
-              </p>
+              <div className="shrink-0 border-t border-[#0B2E2F]/12 bg-[#FCFAF6] px-5 py-3">
+                <div className="flex justify-end gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={adminSecondaryButtonClass}
+                    onClick={() => setAssignmentResult(null)}
+                  >
+                    Edit again
+                  </Button>
+                  <Button
+                    type="button"
+                    className={adminPrimaryButtonClass}
+                    onClick={() => handleAssignmentOpenChange(false)}
+                  >
+                    Done
+                  </Button>
+                </div>
+              </div>
             </div>
           ) : null}
         </DialogContent>
       </Dialog>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <AdminStatCard
-          label="Applicants"
-          value={counts.all}
-          detail="All Growth Partner records currently in the system."
-        />
-        <AdminStatCard
-          label="Pending approval"
-          value={counts.pending}
-          detail="Applicants waiting for a Swell code assignment and approval."
-        />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <AdminStatCard label="Applicants" value={counts.all} size="compact" />
+        <AdminStatCard label="Pending" value={counts.pending} size="compact" />
         <AdminStatCard
           label="Approved"
           value={counts.approved}
-          detail="Approved partners whose codes are active for tracking."
+          size="compact"
         />
         <AdminStatCard
           label="Codes assigned"
           value={counts.assignedCodes}
-          detail="Affiliate records already connected to a Swell discount code."
+          size="compact"
+        />
+        <AdminStatCard
+          label="Month revenue"
+          value={formatCurrency(counts.currentMonthRevenue)}
+          size="compact"
         />
       </div>
 
-      <AdminPanel className="space-y-4">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="grid gap-3 xl:w-full xl:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
+      <AdminPanel className="space-y-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="grid gap-2 xl:w-full xl:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search slug, name, email, Swell code, or wallet"
+              placeholder="Search code, name, email, or wallet"
               className={adminFieldClass}
             />
 
-            <div className="grid gap-2 sm:grid-cols-5">
+            <div className="grid gap-1.5 sm:grid-cols-5">
               {filterOptions.map((option) => {
                 const active = filter === option.key;
 
@@ -619,16 +1861,16 @@ export function AffiliateManagement({
                     type="button"
                     onClick={() => setFilter(option.key)}
                     className={[
-                      "rounded-none border px-3 py-2 text-left transition-colors",
+                      "flex min-h-7 items-center justify-between gap-2 rounded-none border px-2.5 py-1.5 text-left transition-colors",
                       active
                         ? "border-[#0B2E2F] bg-[#0B2E2F] text-[#F4F1EA]"
                         : "border-[#0B2E2F]/12 bg-[#FCFAF6] text-[#0B2E2F]/64 hover:bg-[#EFE7D8]",
                     ].join(" ")}
                   >
-                    <span className="block text-[10px] font-semibold uppercase tracking-[0.16em]">
+                    <span className="text-[9px] font-semibold uppercase tracking-[0.14em]">
                       {option.label}
                     </span>
-                    <span className="mt-1 block text-sm font-semibold">
+                    <span className="text-[11px] font-semibold leading-none">
                       {option.count}
                     </span>
                   </button>
@@ -638,35 +1880,257 @@ export function AffiliateManagement({
           </div>
         </div>
 
+        <div className="rounded-none border border-[#0B2E2F]/12 bg-white/70 px-2.5 py-2.5">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+              <div>
+                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                  Bulk discount control
+                </p>
+                <p className="mt-1 text-xs leading-5 text-[#0B2E2F]/58">
+                  Update the customer-facing Swell discount percent for selected
+                  affiliates or every eligible affiliate in the current filtered
+                  view.
+                </p>
+              </div>
+              <div className="text-xs text-[#0B2E2F]/58">
+                Selected eligible{" "}
+                <span className="font-semibold text-[#0B2E2F]">
+                  {selectedEligibleIds.length}
+                </span>{" "}
+                / filtered eligible{" "}
+                <span className="font-semibold text-[#0B2E2F]">
+                  {eligibleFilteredIds.length}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid gap-3 xl:grid-cols-[200px_minmax(0,120px)_minmax(0,1fr)_auto]">
+              <div className="space-y-2">
+                <Label>Target mode</Label>
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                  <button
+                    type="button"
+                    onClick={() => setBulkMode("selected")}
+                    className={[
+                      "rounded-none border px-2.5 py-1.5 text-left text-xs font-semibold transition-colors",
+                      bulkMode === "selected"
+                        ? "border-[#0B2E2F] bg-[#0B2E2F] text-[#F4F1EA]"
+                        : "border-[#0B2E2F]/12 bg-[#FCFAF6] text-[#0B2E2F]/70 hover:bg-[#EFE7D8]",
+                    ].join(" ")}
+                  >
+                    Selected individuals
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBulkMode("filtered")}
+                    className={[
+                      "rounded-none border px-2.5 py-1.5 text-left text-xs font-semibold transition-colors",
+                      bulkMode === "filtered"
+                        ? "border-[#0B2E2F] bg-[#0B2E2F] text-[#F4F1EA]"
+                        : "border-[#0B2E2F]/12 bg-[#FCFAF6] text-[#0B2E2F]/70 hover:bg-[#EFE7D8]",
+                    ].join(" ")}
+                  >
+                    All filtered individuals
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Discount %</Label>
+                <Input
+                  value={bulkDiscountPercent}
+                  onChange={(event) =>
+                    setBulkDiscountPercent(event.target.value)
+                  }
+                  className={adminFieldClass}
+                  placeholder="20"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Reason</Label>
+                <Input
+                  value={bulkReason}
+                  onChange={(event) => setBulkReason(event.target.value)}
+                  className={adminFieldClass}
+                  placeholder="Why this discount is changing"
+                />
+              </div>
+
+              <div className="flex flex-col gap-2 self-end lg:flex-row">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={adminSecondaryButtonClass}
+                  onClick={() => submitBulkDiscount(true)}
+                  disabled={bulkLoading}
+                >
+                  {bulkLoading ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : null}
+                  Preview
+                </Button>
+                <Button
+                  type="button"
+                  className={adminPrimaryButtonClass}
+                  onClick={() => submitBulkDiscount(false)}
+                  disabled={bulkLoading || !bulkConfirm || !bulkPreview}
+                >
+                  Apply bulk update
+                </Button>
+              </div>
+            </div>
+
+            <label className="flex items-start gap-3 rounded-none border border-[#0B2E2F]/12 bg-[#F4F1EA] px-3 py-2.5 text-xs text-[#0B2E2F]/78">
+              <input
+                type="checkbox"
+                checked={bulkConfirm}
+                onChange={(event) => setBulkConfirm(event.target.checked)}
+                className="mt-1 size-4 rounded-none border-[#0B2E2F]/30 text-[#0B2E2F] focus:ring-0"
+              />
+              <span>
+                I confirm the selected mode and new discount percent are
+                correct.
+              </span>
+            </label>
+
+            {bulkPreview ? (
+              <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-3 py-3">
+                <div className="grid gap-3 md:grid-cols-5">
+                  <div>
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-[#0B2E2F]/45">
+                      Targeted
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-[#0B2E2F]">
+                      {bulkPreview.totalTargeted}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-[#0B2E2F]/45">
+                      Eligible
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-[#0B2E2F]">
+                      {bulkPreview.eligibleCount}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-[#0B2E2F]/45">
+                      Updated
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-[#0B2E2F]">
+                      {bulkPreview.updatedCount}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-[#0B2E2F]/45">
+                      Skipped
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-[#0B2E2F]">
+                      {bulkPreview.skippedCount}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-[#0B2E2F]/45">
+                      Failed
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-[#0B2E2F]">
+                      {bulkPreview.failedCount}
+                    </p>
+                  </div>
+                </div>
+
+                {bulkPreview.results.length > 0 ? (
+                  <div className="mt-3 space-y-2">
+                    {bulkPreview.results.slice(0, 6).map((result) => (
+                      <div
+                        key={`${result.affiliateId}-${result.affiliateCode}`}
+                        className="flex flex-col gap-1 border-t border-[#0B2E2F]/8 pt-2 first:border-t-0 first:pt-0 md:flex-row md:items-center md:justify-between"
+                      >
+                        <div>
+                          <p className="text-xs font-semibold text-[#0B2E2F]">
+                            {result.affiliateCode || result.affiliateId}
+                          </p>
+                          <p className="text-xs text-[#0B2E2F]/52">
+                            {result.oldDiscountPercent || "-"}% →{" "}
+                            {result.newDiscountPercent}%
+                          </p>
+                        </div>
+                        <p
+                          className={`text-xs ${
+                            result.error
+                              ? "text-red-600"
+                              : result.updated
+                                ? "text-emerald-700"
+                                : "text-[#0B2E2F]/58"
+                          }`}
+                        >
+                          {result.error ||
+                            (bulkPreview.dryRun
+                              ? "Ready to update"
+                              : result.updated
+                                ? "Updated"
+                                : "Skipped")}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {assignmentError && !assignmentOpen ? (
+              <p className="text-xs text-red-600">{assignmentError}</p>
+            ) : null}
+          </div>
+        </div>
+
         <div className="overflow-hidden border border-[#0B2E2F]/12 bg-[#FCFAF6]">
           <Table>
             <TableHeader>
               <TableRow className="border-b border-[#0B2E2F]/10 hover:bg-transparent">
-                <TableHead className="px-5 py-3 text-[10px] uppercase tracking-[0.16em] text-[#0B2E2F]/46">
-                  Slug
+                <TableHead className="w-12 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={
+                      eligibleFilteredIds.length > 0 &&
+                      selectedEligibleIds.length === eligibleFilteredIds.length
+                    }
+                    onChange={(event) =>
+                      toggleSelectAllFiltered(event.target.checked)
+                    }
+                    className="size-4 rounded-none border-[#0B2E2F]/30 text-[#0B2E2F] focus:ring-0"
+                    aria-label="Select all eligible affiliates in view"
+                  />
                 </TableHead>
-                <TableHead className="px-5 py-3 text-[10px] uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                <TableHead className="px-3 py-2.5 text-[9px] uppercase tracking-[0.14em] text-[#0B2E2F]/46">
+                  Partner code
+                </TableHead>
+                <TableHead className="px-3 py-2.5 text-[9px] uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Applicant
                 </TableHead>
-                <TableHead className="px-5 py-3 text-[10px] uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                <TableHead className="px-3 py-2.5 text-[9px] uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Status
                 </TableHead>
-                <TableHead className="px-5 py-3 text-[10px] uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                <TableHead className="px-3 py-2.5 text-[9px] uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Swell code
                 </TableHead>
-                <TableHead className="px-5 py-3 text-[10px] uppercase tracking-[0.16em] text-[#0B2E2F]/46">
-                  Commission
+                <TableHead className="px-3 py-2.5 text-[9px] uppercase tracking-[0.14em] text-[#0B2E2F]/46">
+                  Month revenue
                 </TableHead>
-                <TableHead className="px-5 py-3 text-[10px] uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                <TableHead className="px-3 py-2.5 text-[9px] uppercase tracking-[0.14em] text-[#0B2E2F]/46">
+                  Effective commission
+                </TableHead>
+                <TableHead className="px-3 py-2.5 text-[9px] uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Wallet
                 </TableHead>
-                <TableHead className="px-5 py-3 text-[10px] uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                <TableHead className="px-3 py-2.5 text-[9px] uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Linked
                 </TableHead>
-                <TableHead className="px-5 py-3 text-[10px] uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                <TableHead className="px-3 py-2.5 text-[9px] uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Created
                 </TableHead>
-                <TableHead className="w-16 px-5 py-3" />
+                <TableHead className="w-12 px-3 py-2.5" />
               </TableRow>
             </TableHeader>
 
@@ -676,20 +2140,44 @@ export function AffiliateManagement({
                   key={entry.id}
                   className="border-b border-[#0B2E2F]/8 bg-[#FCFAF6] hover:bg-[#F5EFE4]"
                 >
-                  <TableCell className="px-5 py-4 align-top">
-                    <p className="font-mono text-sm font-semibold text-[#0B2E2F]">
+                  <TableCell className="px-3 py-2.5 align-top">
+                    <input
+                      type="checkbox"
+                      checked={selectedAffiliateIds.includes(entry.id)}
+                      disabled={
+                        !(
+                          entry.status === "approved" &&
+                          entry.discountCode &&
+                          entry.swellCouponId
+                        )
+                      }
+                      onChange={(event) =>
+                        toggleAffiliateSelection(entry.id, event.target.checked)
+                      }
+                      className="mt-1 size-4 rounded-none border-[#0B2E2F]/30 text-[#0B2E2F] focus:ring-0 disabled:opacity-40"
+                      aria-label={`Select ${entry.code}`}
+                    />
+                  </TableCell>
+                  <TableCell className="px-3 py-2.5 align-top">
+                    <p className="font-mono text-xs font-semibold text-[#0B2E2F]">
                       {entry.code}
                     </p>
                   </TableCell>
-                  <TableCell className="px-5 py-4 align-top">
-                    <p className="text-sm font-semibold text-[#0B2E2F]">
+                  <TableCell className="px-3 py-2.5 align-top">
+                    <p className="text-xs font-semibold text-[#0B2E2F]">
                       {entry.name}
                     </p>
-                    <p className="mt-1 text-sm text-[#0B2E2F]/58">
+                    <p className="mt-1 text-xs text-[#0B2E2F]/58">
                       {entry.email}
                     </p>
+                    {entry.socialProfiles.length ? (
+                      <p className="mt-1 text-xs text-[#0B2E2F]/46">
+                        {entry.socialProfiles.length} profile
+                        {entry.socialProfiles.length === 1 ? "" : "s"}
+                      </p>
+                    ) : null}
                   </TableCell>
-                  <TableCell className="px-5 py-4 align-top">
+                  <TableCell className="px-3 py-2.5 align-top">
                     <Badge
                       variant={statusBadgeVariant(entry.status)}
                       className="rounded-none px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]"
@@ -697,8 +2185,8 @@ export function AffiliateManagement({
                       {entry.status}
                     </Badge>
                   </TableCell>
-                  <TableCell className="px-5 py-4 align-top">
-                    <p className="text-sm font-semibold text-[#0B2E2F]">
+                  <TableCell className="px-3 py-2.5 align-top">
+                    <p className="text-xs font-semibold text-[#0B2E2F]">
                       {formatDiscountSummary(entry)}
                     </p>
                     {entry.swellCouponId ? (
@@ -706,51 +2194,77 @@ export function AffiliateManagement({
                         Coupon {entry.swellCouponId}
                       </p>
                     ) : null}
+                    {entry.discountPercent ? (
+                      <p className="mt-1 text-xs text-[#0B2E2F]/52">
+                        {entry.discountPercent}% live
+                      </p>
+                    ) : null}
                   </TableCell>
-                  <TableCell className="px-5 py-4 align-top text-sm text-[#0B2E2F]/58">
-                    {(Number(entry.commissionRate) * 100).toFixed(1)}%
+                  <TableCell className="px-3 py-2.5 align-top text-xs text-[#0B2E2F]/62">
+                    <p className="text-xs font-semibold text-[#0B2E2F]">
+                      {formatCurrency(entry.currentMonthRevenue)}
+                    </p>
+                    <p className="mt-1 text-xs text-[#0B2E2F]/52">
+                      {entry.currentMonthOrderCount} paid order
+                      {entry.currentMonthOrderCount === 1 ? "" : "s"}
+                    </p>
                   </TableCell>
-                  <TableCell className="max-w-[180px] px-5 py-4 align-top font-mono text-xs text-[#0B2E2F]/48">
+                  <TableCell className="px-3 py-2.5 align-top text-xs text-[#0B2E2F]/62">
+                    <p className="text-xs font-semibold text-[#0B2E2F]">
+                      {formatCommissionPercent(entry.currentCommissionRate)}%
+                    </p>
+                    <p className="mt-1 text-xs text-[#0B2E2F]/52">
+                      {entry.currentCommissionTier || "No month summary yet"}
+                    </p>
+                    {entry.currentCommissionOverride ? (
+                      <Badge variant="secondary" className="mt-2 rounded-none">
+                        Override
+                      </Badge>
+                    ) : null}
+                  </TableCell>
+                  <TableCell className="max-w-[180px] px-3 py-2.5 align-top font-mono text-[11px] text-[#0B2E2F]/48">
                     <span className="block truncate">
-                      {entry.walletAddress}
+                      {entry.walletAddress || "Not connected"}
                     </span>
                   </TableCell>
-                  <TableCell className="px-5 py-4 align-top text-sm text-[#0B2E2F]/56">
+                  <TableCell className="px-3 py-2.5 align-top text-xs text-[#0B2E2F]/56">
                     {entry.userId ? "Connected" : "Not linked"}
                   </TableCell>
-                  <TableCell className="px-5 py-4 align-top text-sm text-[#0B2E2F]/56">
+                  <TableCell className="px-3 py-2.5 align-top text-xs text-[#0B2E2F]/56">
                     {new Date(entry.createdAt).toLocaleDateString()}
                   </TableCell>
-                  <TableCell className="px-5 py-4 align-top">
+                  <TableCell className="px-3 py-2.5 align-top">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
                           variant="ghost"
                           size="icon-sm"
                           disabled={loadingId === entry.id}
-                          className="rounded-none border border-[#0B2E2F]/12 text-[#0B2E2F]/56 hover:bg-[#EFE7D8] hover:text-[#0B2E2F]"
+                        className="h-7 w-7 rounded-none border border-[#0B2E2F]/12 text-[#0B2E2F]/56 hover:bg-[#EFE7D8] hover:text-[#0B2E2F]"
                         >
                           <MoreHorizontal className="size-4" />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent
                         align="end"
-                        className="rounded-none border-[#0B2E2F]/14 bg-[#FCFAF6] p-1"
+                        className="rounded-none border-[#0B2E2F]/14 bg-[#FCFAF6] p-0.5"
                       >
                         <DropdownMenuItem
                           onClick={() => openAssignmentDialog(entry)}
-                          className="rounded-none px-3 py-2 focus:bg-[#EFE7D8]"
+                          className="rounded-none px-2.5 py-1.5 text-xs focus:bg-[#EFE7D8]"
                         >
                           {entry.status === "approved"
-                            ? "Manage code"
-                            : "Approve and assign code"}
+                            ? "Manage assignment"
+                            : "Approve and assign"}
                         </DropdownMenuItem>
                         {entry.status !== "suspended" ? (
                           <DropdownMenuItem
-                            onClick={() =>
-                              handleStatusChange(entry.id, "suspended")
-                            }
-                            className="rounded-none px-3 py-2 focus:bg-[#EFE7D8]"
+                            onClick={() => {
+                              openAssignmentDialog(entry);
+                              setActiveTab("danger");
+                              setDangerZoneMode("suspended");
+                            }}
+                            className="rounded-none px-2.5 py-1.5 text-xs focus:bg-[#EFE7D8]"
                           >
                             Suspend
                           </DropdownMenuItem>
@@ -760,11 +2274,21 @@ export function AffiliateManagement({
                             onClick={() =>
                               handleStatusChange(entry.id, "rejected")
                             }
-                            className="rounded-none px-3 py-2 text-red-600 focus:bg-[#F6DDD8] focus:text-red-700"
+                            className="rounded-none px-2.5 py-1.5 text-xs text-red-600 focus:bg-[#F6DDD8] focus:text-red-700"
                           >
                             Reject
                           </DropdownMenuItem>
                         ) : null}
+                        <DropdownMenuItem
+                          onClick={() => {
+                            openAssignmentDialog(entry);
+                            setActiveTab("danger");
+                            setDangerZoneMode("delete");
+                          }}
+                          className="rounded-none px-2.5 py-1.5 text-xs text-red-600 focus:bg-[#F6DDD8] focus:text-red-700"
+                        >
+                          Delete record
+                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -774,11 +2298,10 @@ export function AffiliateManagement({
               {filteredAffiliates.length === 0 ? (
                 <TableRow className="border-b-0 bg-[#FCFAF6] hover:bg-[#FCFAF6]">
                   <TableCell
-                    colSpan={9}
-                    className="px-5 py-10 text-center text-sm text-[#0B2E2F]/52"
+                    colSpan={11}
+                    className="px-3 py-8 text-center text-xs text-[#0B2E2F]/52"
                   >
-                    No Growth Partners match the current search and status
-                    filter.
+                    No affiliates match this filter.
                   </TableCell>
                 </TableRow>
               ) : null}

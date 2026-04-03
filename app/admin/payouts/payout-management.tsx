@@ -33,6 +33,7 @@ import {
 import {
   adminFieldClass,
   adminPrimaryButtonClass,
+  AdminFilterTabs,
   AdminPanel,
   AdminSectionHeader,
   AdminStatCard,
@@ -44,6 +45,9 @@ type PayoutRow = {
   affiliateId: string;
   affiliateCode: string;
   orderTotal: string;
+  commissionMonthKey: string | null;
+  commissionTierKey: string | null;
+  commissionTierLabel: string | null;
   commissionRate: string;
   commissionAmount: string;
   currencyCode: string;
@@ -57,6 +61,33 @@ type PayoutRow = {
   rejectedAt: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+type PayoutPreview = {
+  payoutId: string;
+  affiliateId: string;
+  affiliateCode: string;
+  monthKey: string;
+  summary: {
+    recognizedRevenue: string;
+    recognizedOrderCount: number;
+    tierLabel: string;
+    effectiveRate: string;
+    hasOverride: boolean;
+    overrideReason: string | null;
+  };
+  targetImpact: {
+    oldCommissionRate: string;
+    newCommissionRate: string;
+    oldCommissionAmount: string;
+    newCommissionAmount: string;
+  } | null;
+  siblingImpacts: Array<{
+    payoutId: string;
+    orderId: string;
+    changed: boolean;
+  }>;
+  affectedCount: number;
 };
 
 type StatusFilter = "all" | "pending" | "approved" | "paid" | "rejected";
@@ -78,6 +109,10 @@ function formatUsd(value: number) {
   }).format(value);
 }
 
+function formatCommissionRate(value: string) {
+  return `${(Number(value || 0) * 100).toFixed(1)}%`;
+}
+
 export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
   const router = useRouter();
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -88,6 +123,9 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
   const [selectedPayoutId, setSelectedPayoutId] = useState<string | null>(null);
   const [txHashInput, setTxHashInput] = useState("");
   const [notesInput, setNotesInput] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [actionPreview, setActionPreview] = useState<PayoutPreview | null>(null);
 
   async function handleAction(
     id: string,
@@ -113,9 +151,40 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
     }
   }
 
-  function openMarkPaid(id: string) {
+  async function loadPreview(
+    id: string,
+    action: "approve" | "mark_paid",
+    openDialog = true,
+  ) {
+    setPreviewLoading(true);
     setSelectedPayoutId(id);
+    setActionPreview(null);
+
+    try {
+      const response = await fetch(`/api/admin/payouts/${id}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to load payout preview.");
+      }
+
+      setActionPreview(data.preview ?? null);
+      if (openDialog) {
+        setPreviewOpen(true);
+      }
+    } catch (error) {
+      console.error("Failed to load payout preview:", error);
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  function openApprove(id: string) {
+    loadPreview(id, "approve");
+  }
+
+  function openMarkPaid(id: string) {
     setTxHashInput("");
+    loadPreview(id, "mark_paid", false);
     setMarkPaidOpen(true);
   }
 
@@ -175,23 +244,24 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <AdminSectionHeader title="Payout queue" />
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <AdminStatCard label="Payout requests" value={counts.all} />
-        <AdminStatCard label="Pending review" value={counts.pending} />
-        <AdminStatCard label="Ready to send" value={counts.approved} />
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <AdminStatCard label="Payout requests" value={counts.all} size="compact" />
+        <AdminStatCard label="Pending review" value={counts.pending} size="compact" />
+        <AdminStatCard label="Ready to send" value={counts.approved} size="compact" />
         <AdminStatCard
           label="Paid volume"
           value={formatUsd(totals.paid)}
           tone="muted"
+          size="compact"
         />
       </div>
 
-      <AdminPanel className="space-y-4">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="grid gap-3 xl:w-full xl:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
+      <AdminPanel className="space-y-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="grid gap-2 xl:w-full xl:grid-cols-[minmax(0,300px)_minmax(0,1fr)]">
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -199,36 +269,16 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
               className={adminFieldClass}
             />
 
-            <div className="grid gap-2 sm:grid-cols-5">
-              {filterOptions.map((option) => {
-                const active = filter === option.key;
-
-                return (
-                  <button
-                    key={option.key}
-                    type="button"
-                    onClick={() => setFilter(option.key)}
-                    className={`flex h-10 items-center justify-between border px-3 text-left text-sm transition-colors ${
-                      active
-                        ? "border-[#0B2E2F] bg-[#0B2E2F] text-[#F4F1EA]"
-                        : "border-[#0B2E2F]/12 bg-[#FCFAF6] text-[#0B2E2F] hover:bg-[#F1EADB]"
-                    }`}
-                  >
-                    <span className="font-semibold">{option.label}</span>
-                    <span
-                      className={`text-xs ${active ? "text-[#F4F1EA]/62" : "text-[#0B2E2F]/48"}`}
-                    >
-                      {option.count}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+            <AdminFilterTabs
+              options={filterOptions}
+              value={filter}
+              onChange={setFilter}
+            />
           </div>
 
-          <div className="shrink-0 text-sm text-[#0B2E2F]/56">
+          <div className="shrink-0 text-xs text-muted-foreground">
             Showing{" "}
-            <span className="font-semibold text-[#0B2E2F]">
+            <span className="font-semibold text-foreground">
               {filteredPayouts.length}
             </span>{" "}
             of {payouts.length}
@@ -237,110 +287,118 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
       </AdminPanel>
 
       <AdminPanel className="overflow-hidden p-0">
-        <div className="flex flex-col gap-2 border-b border-[#0B2E2F]/12 px-5 py-4 md:flex-row md:items-end md:justify-between">
-          <h3 className="text-xl font-semibold tracking-[-0.05em] text-[#0B2E2F]">
+        <div className="border-b border-border/70 px-3 py-2.5">
+          <h3 className="text-sm font-semibold tracking-[-0.03em] text-foreground">
             Approvals and payout state
           </h3>
         </div>
 
         <Table>
-          <TableHeader className="bg-[#EFE7D8]">
-            <TableRow className="border-b-[#0B2E2F]/10 hover:bg-transparent">
-              <TableHead className="h-11 px-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0B2E2F]/48">
+          <TableHeader className="bg-muted/60">
+            <TableRow className="border-b-border hover:bg-transparent">
+              <TableHead className="h-9 px-3 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 Order
               </TableHead>
-              <TableHead className="h-11 px-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0B2E2F]/48">
+              <TableHead className="h-9 px-3 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 Growth Partner
               </TableHead>
-              <TableHead className="h-11 px-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0B2E2F]/48">
+              <TableHead className="h-9 px-3 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 Payout
               </TableHead>
-              <TableHead className="h-11 px-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0B2E2F]/48">
-                Provider
+              <TableHead className="h-9 px-3 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Month / tier
               </TableHead>
-              <TableHead className="h-11 px-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0B2E2F]/48">
+              <TableHead className="h-9 px-3 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 Status
               </TableHead>
-              <TableHead className="h-11 px-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0B2E2F]/48">
+              <TableHead className="h-9 px-3 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 Wallet
               </TableHead>
-              <TableHead className="h-11 px-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0B2E2F]/48">
+              <TableHead className="h-9 px-3 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 Tx hash
               </TableHead>
-              <TableHead className="h-11 px-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0B2E2F]/48">
+              <TableHead className="h-9 px-3 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 Updated
               </TableHead>
-              <TableHead className="w-16 px-5" />
+              <TableHead className="w-12 px-3" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredPayouts.map((entry) => (
               <TableRow
                 key={entry.id}
-                className="border-b-[#0B2E2F]/10 bg-[#FCFAF6] transition-colors hover:bg-[#F1EADB]"
+                className="border-b-border bg-background transition-colors hover:bg-muted/40"
               >
-                <TableCell className="px-5 py-4 align-top">
+                <TableCell className="px-3 py-2.5 align-top">
                   <div className="space-y-1">
-                    <p className="font-mono text-xs text-[#0B2E2F]">
+                    <p className="font-mono text-[11px] text-foreground">
                       {entry.orderId}
                     </p>
-                    <p className="text-sm text-[#0B2E2F]/56">
+                    <p className="text-xs text-muted-foreground">
                       Created {new Date(entry.createdAt).toLocaleDateString()}
                     </p>
                   </div>
                 </TableCell>
-                <TableCell className="px-5 py-4 align-top">
+                <TableCell className="px-3 py-2.5 align-top">
                   <div className="space-y-1">
-                    <p className="font-semibold text-[#0B2E2F]">
+                    <p className="text-sm font-semibold text-foreground">
                       {entry.affiliateCode}
                     </p>
-                    <p className="font-mono text-[11px] uppercase tracking-[0.12em] text-[#0B2E2F]/34">
+                    <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground/80">
                       {entry.affiliateId}
                     </p>
                   </div>
                 </TableCell>
-                <TableCell className="px-5 py-4 align-top text-sm text-[#0B2E2F]/62">
-                  <p className="font-semibold text-[#0B2E2F]">
+                <TableCell className="px-3 py-2.5 align-top text-xs text-muted-foreground">
+                  <p className="text-sm font-semibold text-foreground">
                     ${entry.commissionAmount} {entry.currencyCode}
                   </p>
                   <p className="mt-1">
                     Order ${entry.orderTotal} at{" "}
-                    {(Number(entry.commissionRate) * 100).toFixed(1)}%
+                    {formatCommissionRate(entry.commissionRate)}
+                  </p>
+                  {entry.commissionTierLabel ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {entry.commissionTierLabel}
+                    </p>
+                  ) : null}
+                </TableCell>
+                <TableCell className="px-3 py-2.5 align-top text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                  <p>{entry.commissionMonthKey || "-"}</p>
+                  <p className="mt-1 text-[11px] normal-case tracking-normal text-muted-foreground">
+                    {entry.paymentProvider}
                   </p>
                 </TableCell>
-                <TableCell className="px-5 py-4 align-top text-xs uppercase tracking-[0.14em] text-[#0B2E2F]/48">
-                  {entry.paymentProvider}
-                </TableCell>
-                <TableCell className="px-5 py-4 align-top">
+                <TableCell className="px-3 py-2.5 align-top">
                   <Badge
                     variant={statusBadgeVariant(entry.status)}
-                    className="rounded-none capitalize"
+                    className="capitalize"
                   >
                     {entry.status}
                   </Badge>
                 </TableCell>
-                <TableCell className="max-w-[180px] px-5 py-4 align-top font-mono text-xs text-[#0B2E2F]/48">
+                <TableCell className="max-w-[180px] px-3 py-2.5 align-top font-mono text-[11px] text-muted-foreground">
                   <span className="block truncate">{entry.walletAddress}</span>
                 </TableCell>
-                <TableCell className="max-w-[180px] px-5 py-4 align-top font-mono text-xs text-[#0B2E2F]/48">
+                <TableCell className="max-w-[180px] px-3 py-2.5 align-top font-mono text-[11px] text-muted-foreground">
                   <span className="block truncate">{entry.txHash || "-"}</span>
                   {entry.adminNotes ? (
-                    <span className="mt-2 block text-[11px] leading-4 text-[#0B2E2F]/38">
+                    <span className="mt-1.5 block text-[10px] leading-4 text-muted-foreground">
                       {entry.adminNotes}
                     </span>
                   ) : null}
                 </TableCell>
-                <TableCell className="px-5 py-4 align-top text-sm text-[#0B2E2F]/56">
+                <TableCell className="px-3 py-2.5 align-top text-xs text-muted-foreground">
                   {new Date(entry.updatedAt).toLocaleDateString()}
                 </TableCell>
-                <TableCell className="px-5 py-4 align-top">
+                <TableCell className="px-3 py-2.5 align-top">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
                         variant="ghost"
                         size="icon-sm"
                         disabled={loadingId === entry.id}
-                        className="rounded-none border border-[#0B2E2F]/12 text-[#0B2E2F]/56 hover:bg-[#EFE7D8] hover:text-[#0B2E2F]"
+                        className="h-7 w-7 rounded-none border border-border text-muted-foreground hover:bg-accent hover:text-foreground"
                       >
                         {loadingId === entry.id ? (
                           <Loader2 className="size-4 animate-spin" />
@@ -351,12 +409,12 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
                       align="end"
-                      className="rounded-none border-[#0B2E2F]/14 bg-[#FCFAF6] p-1"
+                      className="rounded-none border-border bg-popover p-0.5"
                     >
                       {entry.status === "pending" ? (
                         <DropdownMenuItem
-                          onClick={() => handleAction(entry.id, "approve")}
-                          className="rounded-none px-3 py-2 focus:bg-[#EFE7D8]"
+                          onClick={() => openApprove(entry.id)}
+                          className="rounded-none px-2.5 py-1.5 text-xs focus:bg-accent"
                         >
                           Approve
                         </DropdownMenuItem>
@@ -364,7 +422,7 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
                       {entry.status === "approved" ? (
                         <DropdownMenuItem
                           onClick={() => openMarkPaid(entry.id)}
-                          className="rounded-none px-3 py-2 focus:bg-[#EFE7D8]"
+                          className="rounded-none px-2.5 py-1.5 text-xs focus:bg-accent"
                         >
                           Mark as paid
                         </DropdownMenuItem>
@@ -373,7 +431,7 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
                       entry.status === "approved" ? (
                         <DropdownMenuItem
                           onClick={() => openReject(entry.id)}
-                          className="rounded-none px-3 py-2 text-red-600 focus:bg-[#F6DDD8] focus:text-red-700"
+                          className="rounded-none px-2.5 py-1.5 text-xs text-red-600 focus:bg-red-50 focus:text-red-700"
                         >
                           Reject
                         </DropdownMenuItem>
@@ -385,10 +443,10 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
             ))}
 
             {filteredPayouts.length === 0 ? (
-              <TableRow className="border-b-0 bg-[#FCFAF6] hover:bg-[#FCFAF6]">
+              <TableRow className="border-b-0 bg-background hover:bg-background">
                 <TableCell
                   colSpan={9}
-                  className="px-5 py-10 text-center text-sm text-[#0B2E2F]/52"
+                  className="px-3 py-8 text-center text-xs text-muted-foreground"
                 >
                   No payouts match the current search and status filter.
                 </TableCell>
@@ -398,10 +456,114 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
         </Table>
       </AdminPanel>
 
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="rounded-none border-border bg-background p-0 shadow-[0_18px_56px_rgba(15,23,42,0.12)]">
+          <DialogHeader className="border-b border-border px-3 py-2.5">
+            <DialogTitle className="tracking-[-0.04em] text-foreground">
+              Approval preview
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2.5 px-3 py-3">
+            {previewLoading ? (
+              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Loading month recalculation preview...
+              </div>
+            ) : actionPreview ? (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-none border border-border bg-muted/30 px-2.5 py-2">
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      Month
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-foreground">
+                      {actionPreview.monthKey}
+                    </p>
+                  </div>
+                  <div className="rounded-none border border-border bg-muted/30 px-2.5 py-2">
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      Revenue
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-foreground">
+                      {formatUsd(Number(actionPreview.summary.recognizedRevenue))}
+                    </p>
+                  </div>
+                  <div className="rounded-none border border-border bg-muted/30 px-2.5 py-2">
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      Tier
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-foreground">
+                      {actionPreview.summary.tierLabel}
+                    </p>
+                  </div>
+                  <div className="rounded-none border border-border bg-muted/30 px-2.5 py-2">
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      Effective rate
+                    </p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <p className="text-sm font-semibold text-foreground">
+                        {formatCommissionRate(actionPreview.summary.effectiveRate)}
+                      </p>
+                      {actionPreview.summary.hasOverride ? (
+                        <Badge variant="secondary">
+                          Override
+                        </Badge>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+
+                {actionPreview.targetImpact ? (
+                  <div className="rounded-none border border-border bg-muted/30 px-2.5 py-2.5">
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      Selected payout impact
+                    </p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Rate {formatCommissionRate(actionPreview.targetImpact.oldCommissionRate)} →{" "}
+                      {formatCommissionRate(actionPreview.targetImpact.newCommissionRate)}.
+                    </p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Amount ${actionPreview.targetImpact.oldCommissionAmount} → $
+                      {actionPreview.targetImpact.newCommissionAmount}.
+                    </p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {actionPreview.affectedCount} open payout
+                      {actionPreview.affectedCount === 1 ? "" : "s"} in this affiliate-month may be recalculated.
+                    </p>
+                  </div>
+                ) : null}
+
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    className={adminPrimaryButtonClass}
+                    disabled={!selectedPayoutId || loadingId === selectedPayoutId}
+                    onClick={async () => {
+                      if (!selectedPayoutId) return;
+                      await handleAction(selectedPayoutId, "approve");
+                      setPreviewOpen(false);
+                    }}
+                  >
+                    {loadingId === selectedPayoutId ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : null}
+                    Confirm approval
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">
+                Preview unavailable for this payout.
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={markPaidOpen} onOpenChange={setMarkPaidOpen}>
-        <DialogContent className="rounded-none border-[#0B2E2F]/16 bg-[#FCFAF6] p-0 shadow-[0_24px_80px_rgba(11,46,47,0.12)]">
-          <DialogHeader className="border-b border-[#0B2E2F]/12 px-6 py-5">
-            <DialogTitle className="tracking-[-0.04em] text-[#0B2E2F]">
+        <DialogContent className="rounded-none border-border bg-background p-0 shadow-[0_18px_56px_rgba(15,23,42,0.12)]">
+          <DialogHeader className="border-b border-border px-3 py-2.5">
+            <DialogTitle className="tracking-[-0.04em] text-foreground">
               Mark payout as paid
             </DialogTitle>
           </DialogHeader>
@@ -415,8 +577,23 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
                 setMarkPaidOpen(false);
               }
             }}
-            className="space-y-4 px-6 py-6"
+            className="space-y-2.5 px-3 py-3"
           >
+            {actionPreview ? (
+              <div className="rounded-none border border-border bg-muted/30 px-2.5 py-2.5">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  Commission snapshot
+                </p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {actionPreview.monthKey} • {actionPreview.summary.tierLabel} •{" "}
+                  {formatCommissionRate(actionPreview.summary.effectiveRate)}
+                </p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {actionPreview.affectedCount} open payout
+                  {actionPreview.affectedCount === 1 ? "" : "s"} may be recalculated before settlement.
+                </p>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label>Transaction hash</Label>
               <Input
@@ -438,9 +615,9 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
       </Dialog>
 
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
-        <DialogContent className="rounded-none border-[#0B2E2F]/16 bg-[#FCFAF6] p-0 shadow-[0_24px_80px_rgba(11,46,47,0.12)]">
-          <DialogHeader className="border-b border-[#0B2E2F]/12 px-6 py-5">
-            <DialogTitle className="tracking-[-0.04em] text-[#0B2E2F]">
+        <DialogContent className="rounded-none border-border bg-background p-0 shadow-[0_18px_56px_rgba(15,23,42,0.12)]">
+          <DialogHeader className="border-b border-border px-3 py-2.5">
+            <DialogTitle className="tracking-[-0.04em] text-foreground">
               Reject payout
             </DialogTitle>
           </DialogHeader>
@@ -454,7 +631,7 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
                 setRejectOpen(false);
               }
             }}
-            className="space-y-4 px-6 py-6"
+            className="space-y-2.5 px-3 py-3"
           >
             <div className="space-y-2">
               <Label>Notes (optional)</Label>
@@ -468,7 +645,7 @@ export function PayoutManagement({ payouts }: { payouts: PayoutRow[] }) {
             <Button
               type="submit"
               variant="destructive"
-              className="w-full rounded-none"
+              className="w-full rounded-none text-[10px] uppercase tracking-[0.14em]"
             >
               Reject payout
             </Button>

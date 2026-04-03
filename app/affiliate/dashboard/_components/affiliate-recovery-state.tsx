@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, LifeBuoy, ShieldAlert } from "lucide-react";
+import { LifeBuoy, ShieldAlert } from "lucide-react";
 
 import {
   AffiliatePanel,
@@ -17,72 +17,66 @@ export function AffiliateRecoveryState({
   email,
 }: AffiliateRecoveryStateProps) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <AffiliatePanel>
         <AffiliateSectionHeader
-          title="Complete Growth Partner setup"
-          description="This account can reach the Growth Partner area, but no linked partner record was found. The dashboard depends on an affiliate record tied to the same email used for sign-in."
+          title="Partner record not linked"
+          description="This account can reach the Growth Partner area, but no linked partner record was found. If you were already assigned as a Growth Partner, do not submit a new application. The team needs to finish linking the record used for referrals and payouts."
+          eyebrow="Recovery"
         />
 
-        <div className="mt-5 grid gap-3 lg:grid-cols-3">
-          <div className={`${affiliateInsetClass} px-4 py-4`}>
-            <div className="flex items-center gap-2 text-sm font-semibold text-[#0B2E2F]">
+        <div className="mt-3 grid gap-3 lg:grid-cols-3">
+          <div className={`${affiliateInsetClass} px-3 py-3`}>
+            <div className="flex items-center gap-2 text-xs font-semibold text-[#0B2E2F]">
               <ShieldAlert className="size-4" />
               Linked record
             </div>
-            <p className="mt-3 text-sm font-semibold text-[#0B2E2F]">
-              Not found
+            <p className="mt-2 text-xs font-semibold text-[#0B2E2F]">
+              Not linked yet
             </p>
-            <p className="mt-2 text-sm leading-5 text-[#0B2E2F]/58">
-              No Growth Partner application is currently linked to this account.
+            <p className="mt-2 text-[11px] leading-4 text-[#0B2E2F]/58">
+              No Growth Partner record is currently linked to this account.
             </p>
           </div>
 
-          <div className={`${affiliateInsetClass} px-4 py-4`}>
-            <p className="text-sm font-semibold text-[#0B2E2F]">
+          <div className={`${affiliateInsetClass} px-3 py-3`}>
+            <p className="text-xs font-semibold text-[#0B2E2F]">
               Signed-in email
             </p>
-            <p className="mt-3 break-all text-sm font-semibold text-[#0B2E2F]">
+            <p className="mt-2 break-all text-xs font-semibold text-[#0B2E2F]">
               {email || "Unavailable"}
             </p>
-            <p className="mt-2 text-sm leading-5 text-[#0B2E2F]/58">
-              Use the same email address that was used on the partner
-              application.
+            <p className="mt-2 text-[11px] leading-4 text-[#0B2E2F]/58">
+              This email needs to match the partner record the admin team
+              linked for referrals and payouts.
             </p>
           </div>
 
-          <div className={`${affiliateInsetClass} px-4 py-4`}>
-            <div className="flex items-center gap-2 text-sm font-semibold text-[#0B2E2F]">
+          <div className={`${affiliateInsetClass} px-3 py-3`}>
+            <div className="flex items-center gap-2 text-xs font-semibold text-[#0B2E2F]">
               <LifeBuoy className="size-4" />
               Common causes
             </div>
-            <p className="mt-3 text-sm leading-5 text-[#0B2E2F]/58">
-              The application may still be pending, the affiliate role may have
-              been assigned manually, or the approved record may live under a
+            <p className="mt-2 text-[11px] leading-4 text-[#0B2E2F]/58">
+              The Growth Partner role may have been assigned before the partner
+              record was linked, or the linked record may live under a
               different email address.
             </p>
           </div>
         </div>
 
-        <div className="mt-5 flex flex-wrap gap-3">
+        <div className="mt-3 flex flex-wrap gap-2">
           <Link
-            href="/affiliate/signup"
-            className={`inline-flex h-11 items-center justify-center gap-2 px-5 text-sm font-semibold ${affiliatePrimaryButtonClass}`}
+            href="/contact"
+            className={`inline-flex items-center justify-center gap-2 ${affiliatePrimaryButtonClass}`}
           >
-            Open application
-            <ArrowRight className="size-4" />
+            Contact support
           </Link>
           <Link
             href="/account"
-            className={`inline-flex h-11 items-center justify-center gap-2 px-5 text-sm font-semibold ${affiliateSecondaryButtonClass}`}
+            className={`inline-flex items-center justify-center gap-2 ${affiliateSecondaryButtonClass}`}
           >
             Back to account
-          </Link>
-          <Link
-            href="/contact"
-            className={`inline-flex h-11 items-center justify-center gap-2 px-5 text-sm font-semibold ${affiliateSecondaryButtonClass}`}
-          >
-            Contact support
           </Link>
         </div>
       </AffiliatePanel>

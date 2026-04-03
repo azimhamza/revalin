@@ -127,6 +127,11 @@ export type CheckoutOrderAffiliate = {
   id: string;
   code: string;
   commissionRate: string;
+  commissionRateAtPurchase?: string;
+  commissionTierAtPurchase?: string | null;
+  commissionMonthKey?: string | null;
+  discountCode?: string | null;
+  discountPercentAtPurchase?: string | null;
   source: 'url' | 'discount_code' | null;
 };
 
