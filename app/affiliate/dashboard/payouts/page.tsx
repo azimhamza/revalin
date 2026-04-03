@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/table";
 import { getServerSession } from "@/lib/auth-server";
 import { getAffiliateByUserIdentity } from "@/lib/checkout/affiliate-service";
+import { getAffiliateCommissionOverview } from "@/lib/checkout/commission-service";
 import { getPayoutsForAffiliate } from "@/lib/checkout/payout-service";
 
 import {
@@ -51,7 +52,13 @@ export default async function AffiliatePayoutsPage() {
     return <AffiliateRecoveryState email={session.user.email} />;
   }
 
-  const payouts = await getPayoutsForAffiliate(affiliate.id);
+  const [payouts, commissionOverview] = await Promise.all([
+    getPayoutsForAffiliate(affiliate.id),
+    getAffiliateCommissionOverview({ affiliateId: affiliate.id }).catch(
+      () => null,
+    ),
+  ]);
+  const currentCommissionSummary = commissionOverview?.summary ?? null;
   const totalEarned = payouts.reduce(
     (sum, payout) => sum + Number(payout.commissionAmount),
     0,
@@ -88,18 +95,20 @@ export default async function AffiliatePayoutsPage() {
   );
 
   return (
-    <div className="space-y-6">
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+    <div className="space-y-3">
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <AffiliateStatCard
           label="Total earned"
           value={`$${totalEarned.toFixed(2)}`}
           detail={`${payouts.length} ledger ${payouts.length === 1 ? "entry" : "entries"}.`}
           tone="inverse"
+          size="compact"
         />
         <AffiliateStatCard
           label="Pending review"
           value={`$${totalPendingReview.toFixed(2)}`}
           detail="Waiting for approval."
+          size="compact"
         />
         <AffiliateStatCard
           label="Ready to send"
@@ -107,85 +116,95 @@ export default async function AffiliatePayoutsPage() {
           detail={
             hasWallet
               ? `Wallet ${walletPreview}.`
-              : "Connect a wallet before approved payouts are sent."
+              : "Set a payout wallet before approved payouts are sent."
           }
+          size="compact"
         />
         <AffiliateStatCard
           label="Paid out"
           value={`$${totalPaid.toFixed(2)}`}
           detail="Completed USDC payouts."
+          size="compact"
         />
         <AffiliateStatCard
           label="Rejected"
           value={`$${totalRejected.toFixed(2)}`}
           detail="Entries removed from payout flow."
+          size="compact"
         />
       </section>
 
       <AffiliatePanel>
         <AffiliateSectionHeader
+          eyebrow="Payouts"
           title="Payout ledger"
           action={
             <Link
-              href="/affiliate/dashboard/wallet"
-              className={`inline-flex h-11 items-center justify-center gap-2 px-5 text-sm font-semibold ${affiliateSecondaryButtonClass}`}
+              href="/affiliate/dashboard#payout-settings"
+              className={`inline-flex items-center justify-center gap-2 ${affiliateSecondaryButtonClass}`}
             >
               <Wallet className="size-4" />
-              Wallet settings
+              Payout settings
             </Link>
           }
         />
 
-        <div className="mt-5 grid gap-3 lg:grid-cols-3">
-          <div className="border border-[#0B2E2F]/10 bg-[#FCFAF6] px-4 py-4">
-            <div className="flex items-center gap-2 text-sm font-semibold text-[#0B2E2F]">
+        <div className="mt-3 grid gap-3 lg:grid-cols-3">
+          <div className="border border-[#0B2E2F]/10 bg-[#FCFAF6] px-3 py-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-[#0B2E2F]">
               <Wallet className="size-4" />
               Current wallet
             </div>
-            <p className="mt-3 font-mono text-sm font-semibold text-[#0B2E2F]">
+            <p className="mt-2 font-mono text-xs font-semibold text-[#0B2E2F]">
               {walletPreview}
             </p>
             <Link
-              href="/affiliate/dashboard/wallet"
-              className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-[#0B2E2F] underline underline-offset-4"
+              href="/affiliate/dashboard#payout-settings"
+              className="mt-3 inline-flex items-center gap-2 text-[11px] font-semibold text-[#0B2E2F] underline underline-offset-4"
             >
-              {hasWallet ? "Update wallet" : "Connect wallet"}
+              {hasWallet ? "Update payout wallet" : "Set payout wallet"}
               <ArrowRight className="size-4" />
             </Link>
           </div>
 
-          <div className="border border-[#0B2E2F]/10 bg-[#FCFAF6] px-4 py-4">
-            <div className="flex items-center gap-2 text-sm font-semibold text-[#0B2E2F]">
+          <div className="border border-[#0B2E2F]/10 bg-[#FCFAF6] px-3 py-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-[#0B2E2F]">
               <CheckCircle className="size-4" />
               Growth Partner status
             </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <span
                 className={`${affiliateStatusChipClass} ${getAffiliateStatusClasses(affiliate.status)}`}
               >
                 {affiliate.status}
               </span>
-              <span className="text-sm font-semibold text-[#0B2E2F]">
+              <span className="text-xs font-semibold text-[#0B2E2F]">
                 {affiliate.code}
               </span>
             </div>
-            <p className="mt-3 text-sm text-[#0B2E2F]/58">
-              Commission rate{" "}
-              {(Number(affiliate.commissionRate) * 100).toFixed(1)}%.
+            <p className="mt-2 text-[11px] text-[#0B2E2F]/58">
+              Effective rate{" "}
+              {(
+                Number(
+                  currentCommissionSummary?.effectiveRate ||
+                    affiliate.commissionRate,
+                ) * 100
+              ).toFixed(1)}
+              %.
             </p>
           </div>
 
-          <div className="border border-[#0B2E2F]/10 bg-[#FCFAF6] px-4 py-4">
-            <div className="flex items-center gap-2 text-sm font-semibold text-[#0B2E2F]">
+          <div className="border border-[#0B2E2F]/10 bg-[#FCFAF6] px-3 py-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-[#0B2E2F]">
               <Clock className="size-4" />
               Transaction sources
             </div>
             {providerSummary.length > 0 ? (
-              <div className="mt-3 space-y-2">
+              <div className="mt-2 space-y-1.5">
                 {providerSummary.map(([provider, summary]) => (
                   <div
                     key={provider}
-                    className="flex items-center justify-between gap-3 text-sm text-[#0B2E2F]"
+                    className="flex items-center justify-between gap-3 text-[11px] text-[#0B2E2F]"
                   >
                     <span>{formatProviderLabel(provider)}</span>
                     <span className="font-semibold">
@@ -195,41 +214,41 @@ export default async function AffiliatePayoutsPage() {
                 ))}
               </div>
             ) : (
-              <p className="mt-3 text-sm text-[#0B2E2F]/58">
+              <p className="mt-2 text-[11px] text-[#0B2E2F]/58">
                 No payouts recorded yet.
               </p>
             )}
             {nextToSettle ? (
-              <p className="mt-4 text-sm text-[#0B2E2F]/58">
+              <p className="mt-3 text-[11px] text-[#0B2E2F]/58">
                 Next in flow: order {nextToSettle.orderId}.
               </p>
             ) : null}
           </div>
         </div>
 
-        <div className="mt-6 overflow-hidden border border-[#0B2E2F]/10 bg-white/72">
+        <div className="mt-3 overflow-hidden border border-[#0B2E2F]/10 bg-white/72">
           <Table>
             <TableHeader>
               <TableRow className="border-[#0B2E2F]/10">
-                <TableHead className="h-12 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Order
                 </TableHead>
-                <TableHead className="h-12 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Order total
                 </TableHead>
-                <TableHead className="h-12 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Commission
                 </TableHead>
-                <TableHead className="h-12 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Status
                 </TableHead>
-                <TableHead className="h-12 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Source
                 </TableHead>
-                <TableHead className="h-12 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Transaction
                 </TableHead>
-                <TableHead className="h-12 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/46">
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Date
                 </TableHead>
               </TableRow>
@@ -237,26 +256,26 @@ export default async function AffiliatePayoutsPage() {
             <TableBody>
               {payouts.map((payout) => (
                 <TableRow key={payout.id} className="border-[#0B2E2F]/10">
-                  <TableCell className="font-mono text-xs text-[#0B2E2F]">
+                  <TableCell className="py-2 font-mono text-[11px] text-[#0B2E2F]">
                     {payout.orderId}
                   </TableCell>
-                  <TableCell className="text-sm text-[#0B2E2F]/72">
+                  <TableCell className="py-2 text-xs text-[#0B2E2F]/72">
                     ${payout.orderTotal} {payout.currencyCode}
                   </TableCell>
-                  <TableCell className="text-sm font-semibold text-[#0B2E2F]">
+                  <TableCell className="py-2 text-xs font-semibold text-[#0B2E2F]">
                     ${payout.commissionAmount}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="py-2">
                     <span
                       className={`${affiliateStatusChipClass} ${getPayoutStatusClasses(payout.status)}`}
                     >
                       {payout.status}
                     </span>
                   </TableCell>
-                  <TableCell className="text-xs text-[#0B2E2F]/58">
+                  <TableCell className="py-2 text-xs text-[#0B2E2F]/58">
                     {formatProviderLabel(payout.paymentProvider)}
                   </TableCell>
-                  <TableCell className="max-w-[140px] truncate text-xs font-mono text-[#0B2E2F]/46">
+                  <TableCell className="max-w-[140px] truncate py-2 text-[11px] font-mono text-[#0B2E2F]/46">
                     {payout.txHash ? (
                       <a
                         href={`https://polygonscan.com/tx/${payout.txHash}`}
@@ -271,7 +290,7 @@ export default async function AffiliatePayoutsPage() {
                       "-"
                     )}
                   </TableCell>
-                  <TableCell className="text-xs text-[#0B2E2F]/46">
+                  <TableCell className="py-2 text-xs text-[#0B2E2F]/46">
                     {new Date(payout.createdAt).toLocaleDateString()}
                   </TableCell>
                 </TableRow>
@@ -281,7 +300,7 @@ export default async function AffiliatePayoutsPage() {
                 <TableRow className="border-[#0B2E2F]/10">
                   <TableCell
                     colSpan={7}
-                    className="py-10 text-center text-sm text-[#0B2E2F]/58"
+                    className="py-8 text-center text-[11px] text-[#0B2E2F]/58"
                   >
                     No payouts yet. Referred paid orders will populate this
                     ledger automatically.

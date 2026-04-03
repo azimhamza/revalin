@@ -9,6 +9,7 @@ import {
   uniqueIndex,
   index,
   boolean,
+  integer,
 } from "drizzle-orm/pg-core";
 import type { AffiliateSocialProfile } from "../checkout/affiliate-social-profiles";
 
@@ -199,7 +200,7 @@ export const affiliates = pgTable(
       .default([])
       .notNull(),
     commissionRate: varchar("commission_rate", { length: 16 })
-      .default("0.05")
+      .default("0.10")
       .notNull(),
     status: affiliateStatusEnum("status").default("pending").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -252,6 +253,9 @@ export const affiliatePayouts = pgTable(
       .references(() => affiliates.id),
     affiliateCode: varchar("affiliate_code", { length: 64 }).notNull(),
     orderTotal: varchar("order_total", { length: 32 }).notNull(),
+    commissionMonthKey: varchar("commission_month_key", { length: 7 }),
+    commissionTierKey: varchar("commission_tier_key", { length: 32 }),
+    commissionTierLabel: varchar("commission_tier_label", { length: 64 }),
     commissionRate: varchar("commission_rate", { length: 16 }).notNull(),
     commissionAmount: varchar("commission_amount", { length: 32 }).notNull(),
     currencyCode: varchar("currency_code", { length: 8 }).notNull(),
@@ -273,6 +277,109 @@ export const affiliatePayouts = pgTable(
     index("affiliate_payouts_order_id_idx").on(table.orderId),
     index("affiliate_payouts_affiliate_id_idx").on(table.affiliateId),
     index("affiliate_payouts_status_idx").on(table.status),
+    index("affiliate_payouts_month_key_idx").on(table.commissionMonthKey),
+  ],
+);
+
+export const affiliateDiscountChanges = pgTable(
+  "affiliate_discount_changes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    affiliateId: uuid("affiliate_id")
+      .notNull()
+      .references(() => affiliates.id, { onDelete: "cascade" }),
+    affiliateCode: varchar("affiliate_code", { length: 64 }).notNull(),
+    swellCouponId: varchar("swell_coupon_id", { length: 128 }),
+    discountCode: varchar("discount_code", { length: 128 }),
+    oldDiscountPercent: varchar("old_discount_percent", { length: 16 }),
+    newDiscountPercent: varchar("new_discount_percent", { length: 16 }),
+    reason: text("reason"),
+    changedByUserId: text("changed_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    changeScope: varchar("change_scope", { length: 32 })
+      .default("single")
+      .notNull(),
+    batchId: varchar("batch_id", { length: 128 }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("affiliate_discount_changes_affiliate_id_idx").on(table.affiliateId),
+    index("affiliate_discount_changes_created_at_idx").on(table.createdAt),
+    index("affiliate_discount_changes_batch_id_idx").on(table.batchId),
+  ],
+);
+
+export const affiliateCommissionMonths = pgTable(
+  "affiliate_commission_months",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    affiliateId: uuid("affiliate_id")
+      .notNull()
+      .references(() => affiliates.id, { onDelete: "cascade" }),
+    monthKey: varchar("month_key", { length: 7 }).notNull(),
+    startingRate: varchar("starting_rate", { length: 16 }).notNull(),
+    carriedForwardFromMonthKey: varchar("carried_forward_from_month_key", {
+      length: 7,
+    }),
+    recognizedRevenue: varchar("recognized_revenue", { length: 32 })
+      .default("0.00")
+      .notNull(),
+    recognizedOrderCount: integer("recognized_order_count").default(0).notNull(),
+    tierKey: varchar("tier_key", { length: 32 }).notNull(),
+    tierLabel: varchar("tier_label", { length: 64 }).notNull(),
+    effectiveRate: varchar("effective_rate", { length: 16 }).notNull(),
+    overrideRate: varchar("override_rate", { length: 16 }),
+    overrideReason: text("override_reason"),
+    overrideByUserId: text("override_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("affiliate_commission_months_affiliate_month_idx").on(
+      table.affiliateId,
+      table.monthKey,
+    ),
+    index("affiliate_commission_months_month_key_idx").on(table.monthKey),
+    index("affiliate_commission_months_effective_rate_idx").on(
+      table.effectiveRate,
+    ),
+  ],
+);
+
+export const affiliateCommissionEvents = pgTable(
+  "affiliate_commission_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    affiliateId: uuid("affiliate_id")
+      .notNull()
+      .references(() => affiliates.id, { onDelete: "cascade" }),
+    monthKey: varchar("month_key", { length: 7 }).notNull(),
+    eventType: varchar("event_type", { length: 32 }).notNull(),
+    oldRate: varchar("old_rate", { length: 16 }),
+    newRate: varchar("new_rate", { length: 16 }),
+    revenueSnapshot: jsonb("revenue_snapshot"),
+    actorUserId: text("actor_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    notes: text("notes"),
+    batchId: varchar("batch_id", { length: 128 }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("affiliate_commission_events_affiliate_id_idx").on(table.affiliateId),
+    index("affiliate_commission_events_month_key_idx").on(table.monthKey),
+    index("affiliate_commission_events_created_at_idx").on(table.createdAt),
   ],
 );
 

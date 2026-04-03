@@ -16,6 +16,8 @@ type Combination = {
   [key: string]: string | boolean;
 };
 
+type BackorderTooltipAlign = 'left' | 'right';
+
 const variantOptionSelectorVariants = cva('flex items-start gap-4', {
   variants: {
     variant: {
@@ -35,6 +37,7 @@ function VariantValueButton({
   isActive,
   isBackordered,
   variant,
+  backorderTooltipAlign,
   onSelect,
 }: {
   name: string;
@@ -42,11 +45,13 @@ function VariantValueButton({
   isActive: boolean;
   isBackordered: boolean;
   variant: 'card' | 'condensed' | 'shop' | null | undefined;
+  backorderTooltipAlign?: BackorderTooltipAlign;
   onSelect: () => void;
 }) {
   const [showTooltip, setShowTooltip] = useState(false);
   const isCondensed = variant === 'condensed';
   const isLongCondensedLabel = isCondensed && name.length >= 5;
+  const tooltipAlign = backorderTooltipAlign ?? (variant === 'condensed' ? 'left' : 'right');
 
   return (
     <span
@@ -78,9 +83,13 @@ function VariantValueButton({
         {name}
       </Button>
       {showTooltip && (
-        <span className={`absolute bottom-full mb-2 whitespace-nowrap rounded bg-[#0B2E2F] px-2.5 py-1.5 text-[11px] font-medium text-[#F4F1EA] shadow-lg z-[100] pointer-events-none ${variant === 'condensed' ? 'left-0' : 'right-0'}`}>
+        <span
+          className={`absolute bottom-full z-[100] mb-2 whitespace-nowrap rounded bg-[#0B2E2F] px-2.5 py-1.5 text-[11px] font-medium text-[#F4F1EA] shadow-lg pointer-events-none ${tooltipAlign === 'left' ? 'left-0' : 'right-0'}`}
+        >
           Next shipment arriving soon
-          <span className={`absolute top-full border-4 border-transparent border-t-[#0B2E2F] ${variant === 'condensed' ? 'left-4' : 'right-4'}`} />
+          <span
+            className={`absolute top-full border-4 border-transparent border-t-[#0B2E2F] ${tooltipAlign === 'left' ? 'left-4' : 'right-4'}`}
+          />
         </span>
       )}
     </span>
@@ -93,6 +102,7 @@ interface VariantOptionSelectorComponentProps extends VariantProps<typeof varian
   selectedValue: string;
   selectedOptions: Record<string, string>;
   isTargetingProduct: boolean;
+  backorderTooltipAlign?: BackorderTooltipAlign;
   hideLabel?: boolean;
   onSelect?: (valueName: string) => void;
 }
@@ -104,6 +114,7 @@ export function VariantOptionSelectorComponent({
   selectedValue,
   selectedOptions,
   isTargetingProduct,
+  backorderTooltipAlign,
   hideLabel = false,
   onSelect,
 }: VariantOptionSelectorComponentProps) {
@@ -186,6 +197,7 @@ export function VariantOptionSelectorComponent({
               isActive={isActive}
               isBackordered={isBackordered}
               variant={variant}
+              backorderTooltipAlign={backorderTooltipAlign}
               onSelect={() => onSelect?.(value.name)}
             />
           );
@@ -198,10 +210,17 @@ export function VariantOptionSelectorComponent({
 interface VariantOptionSelectorProps extends VariantProps<typeof variantOptionSelectorVariants> {
   option: ProductOption;
   product: Product;
+  backorderTooltipAlign?: BackorderTooltipAlign;
   hideLabel?: boolean;
 }
 
-export function VariantOptionSelector({ option, variant, product, hideLabel = false }: VariantOptionSelectorProps) {
+export function VariantOptionSelector({
+  option,
+  variant,
+  product,
+  backorderTooltipAlign,
+  hideLabel = false,
+}: VariantOptionSelectorProps) {
   const pathname = useParams<{ handle?: string }>();
   const optionNameLowerCase = option.name.toLowerCase();
 
@@ -230,6 +249,7 @@ export function VariantOptionSelector({ option, variant, product, hideLabel = fa
       selectedValue={selectedValue}
       selectedOptions={selectedOptions}
       isTargetingProduct={isTargetingProduct}
+      backorderTooltipAlign={backorderTooltipAlign}
       hideLabel={hideLabel}
       onSelect={handleSelect}
     />

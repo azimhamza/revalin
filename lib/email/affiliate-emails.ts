@@ -1,10 +1,21 @@
 import { hasLoopsConfig, sendTransactionalEmail } from "@/lib/email/loops";
 
+const DEFAULT_AFFILIATE_APPROVAL_TRANSACTIONAL_ID = "cmnhzqj3z02jx0i31crzp740f";
+const DEFAULT_AFFILIATE_REMOVAL_TRANSACTIONAL_ID = "cmnj8xa4300eb0ivwkioll82w";
+const DEFAULT_AFFILIATE_REINSTATEMENT_TRANSACTIONAL_ID =
+  "cmnj9xaj2009e0i1dgya1lguq";
+
 function getSiteUrl() {
   const explicit =
     process.env.NEXT_PUBLIC_SITE_URL?.trim() || process.env.SITE_URL?.trim();
   if (!explicit) return "https://revalin.ca";
   return explicit.replace(/\/$/, "");
+}
+
+function getFirstName(name: string) {
+  const normalized = name.trim();
+  if (!normalized) return "there";
+  return normalized.split(/\s+/)[0] || normalized;
 }
 
 export async function sendAffiliateApprovalEmail(args: {
@@ -20,7 +31,8 @@ export async function sendAffiliateApprovalEmail(args: {
   }
 
   const transactionalId =
-    process.env.LOOPS_TRANSACTIONAL_AFFILIATE_APPROVED?.trim();
+    process.env.LOOPS_TRANSACTIONAL_AFFILIATE_APPROVED?.trim() ||
+    DEFAULT_AFFILIATE_APPROVAL_TRANSACTIONAL_ID;
   if (!transactionalId) {
     console.warn(
       "Skipping affiliate approval email: LOOPS_TRANSACTIONAL_AFFILIATE_APPROVED not set.",
@@ -37,6 +49,8 @@ export async function sendAffiliateApprovalEmail(args: {
     transactionalId,
     addToAudience: true,
     dataVariables: {
+      PARTNER_CODE: args.affiliateCode,
+      REFERRAL_LINK: referralLink,
       affiliateName: args.affiliateName,
       affiliateEmail: args.affiliateEmail,
       affiliateCode: args.affiliateCode,
@@ -44,6 +58,83 @@ export async function sendAffiliateApprovalEmail(args: {
       discountPercent: args.discountPercent,
       referralLink,
       checkoutLink,
+    },
+  });
+}
+
+export async function sendAffiliateRemovalEmail(args: {
+  affiliateName: string;
+  affiliateEmail: string;
+  removalReason?: string | null;
+  suspensionReason?: string | null;
+}) {
+  if (!hasLoopsConfig()) {
+    console.warn("Skipping affiliate removal email: Loops not configured.");
+    return null;
+  }
+
+  const transactionalId =
+    process.env.LOOPS_TRANSACTIONAL_AFFILIATE_REMOVED?.trim() ||
+    DEFAULT_AFFILIATE_REMOVAL_TRANSACTIONAL_ID;
+  if (!transactionalId) {
+    console.warn(
+      "Skipping affiliate removal email: LOOPS_TRANSACTIONAL_AFFILIATE_REMOVED not set.",
+    );
+    return null;
+  }
+
+  return sendTransactionalEmail({
+    email: args.affiliateEmail,
+    transactionalId,
+    addToAudience: true,
+    dataVariables: {
+      first_name: getFirstName(args.affiliateName),
+      removal_reason:
+        args.removalReason?.trim() || "Your Growth Partner access was removed.",
+      suspension_reason:
+        args.suspensionReason?.trim() ||
+        "Your Growth Partner access is currently suspended.",
+    },
+  });
+}
+
+export async function sendAffiliateReinstatementEmail(args: {
+  affiliateName: string;
+  affiliateEmail: string;
+  affiliateCode: string;
+  reinstatementReason?: string | null;
+}) {
+  if (!hasLoopsConfig()) {
+    console.warn(
+      "Skipping affiliate reinstatement email: Loops not configured.",
+    );
+    return null;
+  }
+
+  const transactionalId =
+    process.env.LOOPS_TRANSACTIONAL_AFFILIATE_REINSTATED?.trim() ||
+    DEFAULT_AFFILIATE_REINSTATEMENT_TRANSACTIONAL_ID;
+  if (!transactionalId) {
+    console.warn(
+      "Skipping affiliate reinstatement email: LOOPS_TRANSACTIONAL_AFFILIATE_REINSTATED not set.",
+    );
+    return null;
+  }
+
+  const siteUrl = getSiteUrl();
+  const referralLink = `${siteUrl}/${args.affiliateCode}`;
+
+  return sendTransactionalEmail({
+    email: args.affiliateEmail,
+    transactionalId,
+    addToAudience: true,
+    dataVariables: {
+      first_name: getFirstName(args.affiliateName),
+      reinstatement_reason:
+        args.reinstatementReason?.trim() ||
+        "Your Growth Partner access has been reinstated.",
+      PARTNER_CODE: args.affiliateCode,
+      REFERRAL_LINK: referralLink,
     },
   });
 }

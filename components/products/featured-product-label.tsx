@@ -67,6 +67,7 @@ export function FeaturedProductLabel({
                 option={option}
                 product={product}
                 variant="condensed"
+                backorderTooltipAlign="right"
                 hideLabel
               />
             ))}

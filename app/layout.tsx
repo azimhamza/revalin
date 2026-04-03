@@ -8,13 +8,11 @@ import { SessionProvider } from '@/components/auth/session-provider';
 import { DebugGrid } from '@/components/debug-grid';
 import { isDevelopment } from '@/lib/constants';
 import { getCollections } from '@/lib/swell';
-import { Header } from '../components/layout/header';
 import dynamic from 'next/dynamic';
 import { V0Provider } from '../lib/context';
 import { cn } from '../lib/utils';
-import { ResearchDisclaimerPopup } from './research/components/research-disclaimer-popup';
-import { WelcomePopup } from '@/components/home/welcome-popup';
 import Script from 'next/script';
+import { AppChrome } from '@/components/layout/app-chrome';
 
 const V0Setup = dynamic(() => import('@/components/v0-setup'));
 
@@ -32,7 +30,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Revalin',
+  title: {
+    default: 'Revalin',
+    template: '%s',
+  },
   description:
     'Revalin is a research peptide distributor for qualified buyers, offering lab-use peptide products for in-vitro and pre-clinical research.',
   keywords: [
@@ -43,6 +44,21 @@ export const metadata: Metadata = {
     'laboratory peptide supplier',
     'in-vitro research products',
   ],
+  applicationName: 'Revalin',
+  metadataBase: new URL('https://revalin.com'),
+  openGraph: {
+    type: 'website',
+    siteName: 'Revalin',
+    title: 'Revalin',
+    description:
+      'Revalin is a research peptide distributor for qualified buyers, offering lab-use peptide products for in-vitro and pre-clinical research.',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Revalin',
+    description:
+      'Revalin is a research peptide distributor for qualified buyers, offering lab-use peptide products for in-vitro and pre-clinical research.',
+  },
   generator: 'v0.app',
 };
 
@@ -78,9 +94,7 @@ export default async function RootLayout({
                   </>
                 ) : null}
                 <main data-vaul-drawer-wrapper="true">
-                  <ResearchDisclaimerPopup />
-                  <WelcomePopup />
-                  <Header collections={collections} />
+                  <AppChrome collections={collections} />
                   {children}
                 </main>
                 {isDevelopment && <DebugGrid />}

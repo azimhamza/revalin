@@ -47,7 +47,7 @@ const QUICK_FAQ = [
   {
     question: 'Where do you ship?',
     answer:
-      'We ship from Canada to addresses in Canada and the United States. Orders placed before the daily cutoff ship same day with full tracking.',
+      'We ship globally. Orders placed before the daily cutoff ship same day with full tracking.',
   },
 ] as const;
 

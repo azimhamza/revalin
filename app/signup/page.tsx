@@ -13,10 +13,10 @@ export default function SignupPage() {
     <>
       <div className="min-h-screen md:grid md:grid-cols-2">
         {/* ── Left panel — signup form on cream ── */}
-        <div className="flex min-h-screen flex-col justify-center bg-background px-sides py-16 md:px-10 lg:px-16">
+        <div className="flex min-h-screen flex-col justify-center bg-background px-sides py-16 md:justify-start md:px-10 md:pt-top-spacing lg:px-16">
           <div className="mx-auto w-full max-w-[400px]">
             {/* Mobile brand strip */}
-            <div className="mb-8 rounded-xl border border-[#0B2E2F]/12 bg-[#0B2E2F] px-4 py-3.5 md:hidden">
+            <div className="mt-10 mb-8 rounded-xl border border-[#0B2E2F]/12 bg-[#0B2E2F] px-4 py-3.5 md:hidden">
               <div className="flex items-center justify-between gap-4">
                 <p className="text-sm font-semibold text-[#F4F1EA]">Revalin Research</p>
                 <div className="flex gap-3">
@@ -65,7 +65,7 @@ export default function SignupPage() {
 
         {/* ── Right panel — dark teal brand panel ── */}
         <div className="relative hidden overflow-hidden bg-[#0B2E2F] md:flex md:flex-col md:justify-between">
-          <div className="relative z-10 flex flex-1 flex-col justify-center px-10 lg:px-16">
+          <div className="relative z-10 flex flex-1 flex-col justify-start px-10 pt-16 md:pt-[calc(var(--top-spacing)_+_3rem)] lg:px-16">
             <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#F4F1EA]/50">
               Revalin Research
             </p>

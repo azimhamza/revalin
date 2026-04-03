@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import { NextResponse } from 'next/server';
 import { getServerSession } from '@/lib/auth-server';
-import { approvePayout, rejectPayout, markPayoutPaid } from '@/lib/checkout/payout-service';
+import {
+  approvePayout,
+  getPayoutApprovalPreview,
+  markPayoutPaid,
+  rejectPayout,
+} from '@/lib/checkout/payout-service';
 
 const patchSchema = z.object({
   action: z.enum(['approve', 'reject', 'mark_paid']),
@@ -45,5 +50,31 @@ export async function PATCH(
     }
     console.error('[ADMIN-PAYOUT-PATCH]', error);
     return NextResponse.json({ error: 'Failed to update payout.' }, { status: 500 });
+  }
+}
+
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getServerSession();
+    if (!session?.user || (session.user as any).role !== 'admin') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const { id } = await params;
+    const preview = await getPayoutApprovalPreview(id);
+
+    return NextResponse.json({ preview });
+  } catch (error) {
+    console.error('[ADMIN-PAYOUT-GET]', error);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error ? error.message : 'Failed to load payout preview.',
+      },
+      { status: 500 }
+    );
   }
 }

@@ -17,6 +17,19 @@ function formatCurrency(amount: string | number, currencyCode: string) {
   }).format(Number(amount));
 }
 
+function getShippingLabelRecipients() {
+  const multiRecipientValue = process.env.SHIPPING_LABEL_EMAILS?.trim();
+  if (multiRecipientValue) {
+    return multiRecipientValue
+      .split(',')
+      .map(email => email.trim())
+      .filter(Boolean);
+  }
+
+  const singleRecipient = process.env.SHIPPING_LABEL_EMAIL?.trim();
+  return singleRecipient ? [singleRecipient] : [];
+}
+
 export function buildOrderStatusUrl(order: CheckoutOrderRecord) {
   return `${getSiteUrl()}/order/${order.orderId}?key=${order.accessKey}`;
 }
@@ -177,9 +190,9 @@ export async function sendShippingLabelEmail(args: {
     return null;
   }
 
-  const labelEmail = process.env.SHIPPING_LABEL_EMAIL?.trim();
-  if (!labelEmail) {
-    console.warn('Skipping shipping label email: SHIPPING_LABEL_EMAIL not set.');
+  const labelRecipients = getShippingLabelRecipients();
+  if (labelRecipients.length === 0) {
+    console.warn('Skipping shipping label email: SHIPPING_LABEL_EMAIL or SHIPPING_LABEL_EMAILS not set.');
     return null;
   }
 
@@ -197,26 +210,30 @@ export async function sendShippingLabelEmail(args: {
 
   const itemsSummary = order.lines.map(line => `${line.productTitle} x${line.quantity}`).join(', ');
 
-  return sendTransactionalEmail({
-    email: labelEmail,
-    transactionalId,
-    dataVariables: {
-      orderId: order.orderId,
-      orderNumber: order.swell.orderNumber || order.orderId,
-      carrier: labelResult.carrier || 'N/A',
-      service: labelResult.service || 'N/A',
-      trackingCode: labelResult.trackingCode || 'N/A',
-      trackingUrl: labelResult.publicTrackingUrl || '',
-      addressBlock,
-      itemsSummary,
-      total: formatCurrency(order.totals.totalAmount.amount, order.currencyCode),
-    },
-    attachments: [
-      {
-        filename: `label-${order.orderId}.pdf`,
-        data: args.labelPdfBase64,
-        contentType: 'application/pdf',
-      },
-    ],
-  });
+  return Promise.all(
+    labelRecipients.map(email =>
+      sendTransactionalEmail({
+        email,
+        transactionalId,
+        dataVariables: {
+          orderId: order.orderId,
+          orderNumber: order.swell.orderNumber || order.orderId,
+          carrier: labelResult.carrier || 'N/A',
+          service: labelResult.service || 'N/A',
+          trackingCode: labelResult.trackingCode || 'N/A',
+          trackingUrl: labelResult.publicTrackingUrl || '',
+          addressBlock,
+          itemsSummary,
+          total: formatCurrency(order.totals.totalAmount.amount, order.currencyCode),
+        },
+        attachments: [
+          {
+            filename: `label-${order.orderId}.pdf`,
+            data: args.labelPdfBase64,
+            contentType: 'application/pdf',
+          },
+        ],
+      })
+    )
+  );
 }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { MoreHorizontal } from "lucide-react";
+import { Loader2, MoreHorizontal } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { authClient } from "@/lib/auth-client";
@@ -26,6 +26,7 @@ import {
 
 import {
   adminFieldClass,
+  AdminFilterTabs,
   AdminPanel,
   AdminSectionHeader,
   AdminStatCard,
@@ -38,11 +39,17 @@ type UserRow = {
   role: string | null;
   banned: boolean | null;
   createdAt: Date;
+  affiliate: {
+    id: string;
+    code: string;
+    status: "pending" | "approved" | "rejected" | "suspended";
+    userId: string | null;
+  } | null;
 };
 
 type UserFilter = "all" | "customer" | "affiliate" | "admin" | "banned";
 
-const ROLES = ["customer", "affiliate", "admin"] as const;
+const ROLES = ["customer", "admin"] as const;
 
 function roleBadgeVariant(
   role: string | null,
@@ -58,11 +65,79 @@ function formatRoleLabel(role: string | null) {
   return role || "customer";
 }
 
+function getAffiliateActionLabel(entry: UserRow) {
+  if (!entry.affiliate) {
+    return entry.role === "affiliate"
+      ? "Open Growth Partner setup"
+      : "Convert to Growth Partner";
+  }
+  if (entry.affiliate.status === "approved") return "Manage Growth Partner";
+  return "Open Growth Partner setup";
+}
+
+function sanitizePartnerCode(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildSuggestedPartnerCode(entry: Pick<UserRow, "name" | "email">) {
+  const candidate =
+    sanitizePartnerCode(entry.name || "") ||
+    sanitizePartnerCode(entry.email.split("@")[0] || "");
+
+  return candidate.length >= 3 ? candidate : "partner";
+}
+
 export function UserManagement({ users }: { users: UserRow[] }) {
   const router = useRouter();
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<UserFilter>("all");
+
+  async function handleOpenAffiliateSetup(entry: UserRow) {
+    if (entry.affiliate) {
+      router.push(`/admin/affiliates?openAffiliate=${entry.affiliate.id}`);
+      return;
+    }
+
+    const suggestedCode = buildSuggestedPartnerCode(entry);
+
+    setLoadingId(entry.id);
+    try {
+      const res = await fetch(`/api/admin/users/${entry.id}/affiliate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ affiliateCode: suggestedCode }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          data.error || "Failed to prepare Growth Partner setup.",
+        );
+      }
+
+      const affiliateId = data?.setup?.affiliate?.id;
+      if (!affiliateId) {
+        throw new Error("Growth Partner setup is missing an affiliate record.");
+      }
+
+      router.push(`/admin/affiliates?openAffiliate=${affiliateId}`);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare Growth Partner setup.";
+
+      console.error("Failed to prepare Growth Partner setup:", error);
+      window.alert(message);
+    } finally {
+      setLoadingId(null);
+    }
+  }
 
   async function handleSetRole(userId: string, role: string) {
     setLoadingId(userId);
@@ -138,19 +213,31 @@ export function UserManagement({ users }: { users: UserRow[] }) {
   ];
 
   return (
-    <div className="space-y-6">
-      <AdminSectionHeader title="User management" />
+    <div className="space-y-4">
+      <AdminSectionHeader
+        title="User management"
+        description="Start Growth Partner setup from the roster, then finish code assignment in the affiliate approval flow so partner codes, Swell coupons, and account roles stay in sync."
+      />
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <AdminStatCard label="Accounts" value={counts.all} />
-        <AdminStatCard label="Customers" value={counts.customer} />
-        <AdminStatCard label="Growth Partners" value={counts.affiliate} />
-        <AdminStatCard label="Restricted" value={counts.banned} tone="muted" />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <AdminStatCard label="Accounts" value={counts.all} size="compact" />
+        <AdminStatCard label="Customers" value={counts.customer} size="compact" />
+        <AdminStatCard
+          label="Growth Partners"
+          value={counts.affiliate}
+          size="compact"
+        />
+        <AdminStatCard
+          label="Restricted"
+          value={counts.banned}
+          tone="muted"
+          size="compact"
+        />
       </div>
 
-      <AdminPanel className="space-y-4">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="grid gap-3 xl:w-full xl:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
+      <AdminPanel className="space-y-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="grid gap-2 xl:w-full xl:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -158,36 +245,16 @@ export function UserManagement({ users }: { users: UserRow[] }) {
               className={adminFieldClass}
             />
 
-            <div className="grid gap-2 sm:grid-cols-5">
-              {filterOptions.map((option) => {
-                const active = filter === option.key;
-
-                return (
-                  <button
-                    key={option.key}
-                    type="button"
-                    onClick={() => setFilter(option.key)}
-                    className={`flex h-10 items-center justify-between border px-3 text-left text-sm transition-colors ${
-                      active
-                        ? "border-[#0B2E2F] bg-[#0B2E2F] text-[#F4F1EA]"
-                        : "border-[#0B2E2F]/12 bg-[#FCFAF6] text-[#0B2E2F] hover:bg-[#F1EADB]"
-                    }`}
-                  >
-                    <span className="font-semibold">{option.label}</span>
-                    <span
-                      className={`text-xs ${active ? "text-[#F4F1EA]/62" : "text-[#0B2E2F]/48"}`}
-                    >
-                      {option.count}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+            <AdminFilterTabs
+              options={filterOptions}
+              value={filter}
+              onChange={setFilter}
+            />
           </div>
 
-          <div className="shrink-0 text-sm text-[#0B2E2F]/56">
+          <div className="shrink-0 text-xs text-muted-foreground">
             Showing{" "}
-            <span className="font-semibold text-[#0B2E2F]">
+            <span className="font-semibold text-foreground">
               {filteredUsers.length}
             </span>{" "}
             of {users.length}
@@ -196,107 +263,117 @@ export function UserManagement({ users }: { users: UserRow[] }) {
       </AdminPanel>
 
       <AdminPanel className="overflow-hidden p-0">
-        <div className="flex flex-col gap-2 border-b border-[#0B2E2F]/12 px-5 py-4 md:flex-row md:items-end md:justify-between">
-          <h3 className="text-xl font-semibold tracking-[-0.05em] text-[#0B2E2F]">
+        <div className="flex flex-col gap-2 border-b border-border/70 px-3 py-2.5 md:flex-row md:items-end md:justify-between">
+          <h3 className="text-sm font-semibold tracking-[-0.03em] text-foreground">
             Account roster
           </h3>
         </div>
 
         <Table>
-          <TableHeader className="bg-[#EFE7D8]">
-            <TableRow className="border-b-[#0B2E2F]/10 hover:bg-transparent">
-              <TableHead className="h-11 px-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0B2E2F]/48">
+          <TableHeader className="bg-muted/60">
+            <TableRow className="border-b-border hover:bg-transparent">
+              <TableHead className="h-9 px-3 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 User
               </TableHead>
-              <TableHead className="h-11 px-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0B2E2F]/48">
+              <TableHead className="h-9 px-3 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 Role
               </TableHead>
-              <TableHead className="h-11 px-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0B2E2F]/48">
+              <TableHead className="h-9 px-3 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 Status
               </TableHead>
-              <TableHead className="h-11 px-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0B2E2F]/48">
+              <TableHead className="h-9 px-3 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 Joined
               </TableHead>
-              <TableHead className="w-16 px-5" />
+              <TableHead className="w-12 px-3" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredUsers.map((entry) => (
               <TableRow
                 key={entry.id}
-                className="border-b-[#0B2E2F]/10 bg-[#FCFAF6] transition-colors hover:bg-[#F1EADB]"
+                className="border-b-border bg-background transition-colors hover:bg-muted/40"
               >
-                <TableCell className="px-5 py-4 align-top">
+                <TableCell className="px-3 py-2.5 align-top">
                   <div className="space-y-1">
-                    <p className="font-semibold text-[#0B2E2F]">
+                    <p className="text-sm font-semibold text-foreground">
                       {entry.name || "Unnamed user"}
                     </p>
-                    <p className="text-sm text-[#0B2E2F]/60">{entry.email}</p>
-                    <p className="font-mono text-[11px] uppercase tracking-[0.12em] text-[#0B2E2F]/34">
+                    <p className="text-xs text-muted-foreground">{entry.email}</p>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground/80">
                       {entry.id}
                     </p>
                   </div>
                 </TableCell>
-                <TableCell className="px-5 py-4 align-top">
+                <TableCell className="px-3 py-2.5 align-top">
                   <Badge
                     variant={roleBadgeVariant(entry.role)}
-                    className="rounded-none capitalize"
+                    className="capitalize"
                   >
                     {formatRoleLabel(entry.role)}
                   </Badge>
                 </TableCell>
-                <TableCell className="px-5 py-4 align-top">
+                <TableCell className="px-3 py-2.5 align-top">
                   {entry.banned ? (
-                    <Badge variant="destructive" className="rounded-none">
+                    <Badge variant="destructive">
                       Banned
                     </Badge>
                   ) : (
-                    <span className="text-sm font-medium text-[#0B2E2F]/56">
+                    <span className="text-xs font-medium text-muted-foreground">
                       Active
                     </span>
                   )}
                 </TableCell>
-                <TableCell className="px-5 py-4 align-top text-sm text-[#0B2E2F]/56">
+                <TableCell className="px-3 py-2.5 align-top text-xs text-muted-foreground">
                   {new Date(entry.createdAt).toLocaleDateString()}
                 </TableCell>
-                <TableCell className="px-5 py-4 align-top">
+                <TableCell className="px-3 py-2.5 align-top">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
                         variant="ghost"
                         size="icon-sm"
                         disabled={loadingId === entry.id}
-                        className="rounded-none border border-[#0B2E2F]/12 text-[#0B2E2F]/56 hover:bg-[#EFE7D8] hover:text-[#0B2E2F]"
+                        className="h-7 w-7 rounded-none border border-border text-muted-foreground hover:bg-accent hover:text-foreground"
                       >
                         <MoreHorizontal className="size-4" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
                       align="end"
-                      className="rounded-none border-[#0B2E2F]/14 bg-[#FCFAF6] p-1"
+                      className="rounded-none border-border bg-popover p-0.5"
                     >
-                      {ROLES.filter((role) => role !== entry.role).map(
-                        (role) => (
-                          <DropdownMenuItem
-                            key={role}
-                            onClick={() => handleSetRole(entry.id, role)}
-                            className="rounded-none px-3 py-2 focus:bg-[#EFE7D8]"
-                          >
-                            Set as {formatRoleLabel(role)}
-                          </DropdownMenuItem>
-                        ),
-                      )}
+                      {entry.role !== "admin" ? (
+                        <DropdownMenuItem
+                          onClick={() => handleOpenAffiliateSetup(entry)}
+                          className="rounded-none px-2.5 py-1.5 text-xs focus:bg-accent"
+                        >
+                          {getAffiliateActionLabel(entry)}
+                        </DropdownMenuItem>
+                      ) : null}
+                      {entry.role !== "affiliate"
+                        ? ROLES.filter((role) => role !== entry.role).map(
+                            (role) => (
+                              <DropdownMenuItem
+                                key={role}
+                                onClick={() => handleSetRole(entry.id, role)}
+                                className="rounded-none px-2.5 py-1.5 text-xs focus:bg-accent"
+                              >
+                                Set as {formatRoleLabel(role)}
+                              </DropdownMenuItem>
+                            ),
+                          )
+                        : null}
                       {entry.banned ? (
                         <DropdownMenuItem
                           onClick={() => handleUnban(entry.id)}
-                          className="rounded-none px-3 py-2 focus:bg-[#EFE7D8]"
+                          className="rounded-none px-2.5 py-1.5 text-xs focus:bg-accent"
                         >
                           Unban user
                         </DropdownMenuItem>
                       ) : (
                         <DropdownMenuItem
                           onClick={() => handleBan(entry.id)}
-                          className="rounded-none px-3 py-2 text-red-600 focus:bg-[#F6DDD8] focus:text-red-700"
+                          className="rounded-none px-2.5 py-1.5 text-xs text-red-600 focus:bg-red-50 focus:text-red-700"
                         >
                           Ban user
                         </DropdownMenuItem>
@@ -308,10 +385,10 @@ export function UserManagement({ users }: { users: UserRow[] }) {
             ))}
 
             {filteredUsers.length === 0 ? (
-              <TableRow className="border-b-0 bg-[#FCFAF6] hover:bg-[#FCFAF6]">
+              <TableRow className="border-b-0 bg-background hover:bg-background">
                 <TableCell
                   colSpan={5}
-                  className="px-5 py-10 text-center text-sm text-[#0B2E2F]/52"
+                  className="px-3 py-8 text-center text-xs text-muted-foreground"
                 >
                   No users match the current search and filter combination.
                 </TableCell>

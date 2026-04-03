@@ -13,6 +13,10 @@ import { AFFILIATE_COOKIE_NAME } from '@/lib/checkout/affiliate-constants';
 import { createAndStoreWallet, updateWalletShieldClimbData } from '@/lib/checkout/wallet-service';
 import { saveCheckoutOrder, findCheckoutOrderByCartId } from '@/lib/checkout/order-store';
 import {
+  getAffiliateCommissionSnapshot,
+  getCommissionMonthKey,
+} from '@/lib/checkout/commission-service';
+import {
   cancelSwellOrder,
   convertSwellCartToOrder,
   createSwellCheckoutCart,
@@ -408,13 +412,32 @@ export async function POST(request: Request) {
       if (resolvedAffiliate) affiliateSource = 'url';
     }
 
+    const commissionSnapshot = resolvedAffiliate
+      ? await getAffiliateCommissionSnapshot({ affiliateId: resolvedAffiliate.id })
+      : null;
+
     if (resolvedAffiliate) {
       console.log('[CREATE-PAYMENT] affiliate resolved:', resolvedAffiliate.code, 'source:', affiliateSource, 'rate:', resolvedAffiliate.commissionRate);
     }
 
     const affiliateData = resolvedAffiliate
-      ? { id: resolvedAffiliate.id, code: resolvedAffiliate.code,
-          commissionRate: resolvedAffiliate.commissionRate, source: affiliateSource }
+      ? {
+          id: resolvedAffiliate.id,
+          code: resolvedAffiliate.code,
+          commissionRate:
+            commissionSnapshot?.effectiveRate || resolvedAffiliate.commissionRate,
+          commissionRateAtPurchase:
+            commissionSnapshot?.effectiveRate || resolvedAffiliate.commissionRate,
+          commissionTierAtPurchase: commissionSnapshot
+            ? commissionSnapshot.hasOverride
+              ? `${commissionSnapshot.tierLabel} override`
+              : commissionSnapshot.tierLabel
+            : null,
+          commissionMonthKey: commissionSnapshot?.monthKey ?? getCommissionMonthKey(new Date()),
+          discountCode: resolvedAffiliate.discountCode,
+          discountPercentAtPurchase: resolvedAffiliate.discountPercent,
+          source: affiliateSource,
+        }
       : null;
 
     // Idempotency: prevent duplicate orders from the same cart
@@ -563,6 +586,21 @@ export async function POST(request: Request) {
 
     // Fetch auth session once for both card/crypto paths (non-blocking on failure)
     const authSession = await auth.api.getSession({ headers: await headers() }).catch(() => null);
+    const trackedUserRole =
+      typeof (authSession?.user as any)?.role === 'string'
+        ? (authSession?.user as any).role
+        : null;
+    const openPanelAuthProperties = authSession?.user?.id
+      ? {
+          profileId: authSession.user.id,
+          auth_state: 'authenticated' as const,
+          email_verified: Boolean(authSession.user.emailVerified),
+          user_id: authSession.user.id,
+          ...(trackedUserRole ? { user_role: trackedUserRole } : {}),
+        }
+      : {
+          auth_state: 'anonymous' as const,
+        };
 
     // ── Card path: ShieldClimb ──
     if (body.paymentMethod === 'card') {
@@ -662,7 +700,21 @@ export async function POST(request: Request) {
             ? {
                 id: resolvedAffiliate.id,
                 code: resolvedAffiliate.code,
-                commissionRate: resolvedAffiliate.commissionRate,
+                commissionRate:
+                  commissionSnapshot?.effectiveRate ||
+                  resolvedAffiliate.commissionRate,
+                commissionRateAtPurchase:
+                  commissionSnapshot?.effectiveRate ||
+                  resolvedAffiliate.commissionRate,
+                commissionTierAtPurchase: commissionSnapshot
+                  ? commissionSnapshot.hasOverride
+                    ? `${commissionSnapshot.tierLabel} override`
+                    : commissionSnapshot.tierLabel
+                  : null,
+                commissionMonthKey:
+                  commissionSnapshot?.monthKey ?? getCommissionMonthKey(new Date()),
+                discountCode: resolvedAffiliate.discountCode,
+                discountPercentAtPurchase: resolvedAffiliate.discountPercent,
                 source: affiliateSource,
                 paymentProvider: 'shieldclimb',
                 status: 'pending',
@@ -718,6 +770,7 @@ export async function POST(request: Request) {
       }
 
       op.track('purchase', {
+        ...openPanelAuthProperties,
         orderId,
         orderTotal: orderTotal.toFixed(2),
         currencyCode,
@@ -809,8 +862,28 @@ export async function POST(request: Request) {
           ? {
               id: resolvedAffiliate.id,
               code: resolvedAffiliate.code,
-              commissionRate: resolvedAffiliate.commissionRate,
-              commissionOwed: (orderTotal * Number(resolvedAffiliate.commissionRate)).toFixed(2),
+              commissionRate:
+                commissionSnapshot?.effectiveRate ||
+                resolvedAffiliate.commissionRate,
+              commissionRateAtPurchase:
+                commissionSnapshot?.effectiveRate ||
+                resolvedAffiliate.commissionRate,
+              commissionTierAtPurchase: commissionSnapshot
+                ? commissionSnapshot.hasOverride
+                  ? `${commissionSnapshot.tierLabel} override`
+                  : commissionSnapshot.tierLabel
+                : null,
+              commissionMonthKey:
+                commissionSnapshot?.monthKey ?? getCommissionMonthKey(new Date()),
+              discountCode: resolvedAffiliate.discountCode,
+              discountPercentAtPurchase: resolvedAffiliate.discountPercent,
+              commissionOwed: (
+                orderTotal *
+                Number(
+                  commissionSnapshot?.effectiveRate ||
+                    resolvedAffiliate.commissionRate,
+                )
+              ).toFixed(2),
               currencyCode: fiatCurrency.toUpperCase(),
               source: affiliateSource,
               paymentProvider: 'nowpayments',
@@ -866,6 +939,7 @@ export async function POST(request: Request) {
     }
 
     op.track('purchase', {
+      ...openPanelAuthProperties,
       orderId,
       orderTotal: orderTotal.toFixed(2),
       currencyCode,

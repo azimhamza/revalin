@@ -3,6 +3,15 @@ import { RESERVED_SLUGS } from '@/lib/checkout/affiliate-constants';
 import { getAffiliateByCode } from '@/lib/checkout/affiliate-service';
 import { AffiliateRedirect } from './affiliate-redirect';
 
+export const metadata = {
+  title: 'Affiliate Redirect | Revalin',
+  description: 'Redirecting to the Revalin storefront with affiliate attribution applied.',
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
+
 type Props = {
   params: Promise<{ slug: string }>;
 };

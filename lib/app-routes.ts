@@ -45,6 +45,6 @@ export const ADMIN_NAV_ROUTES: NavItem[] = [
 
 export const AFFILIATE_NAV_ROUTES: NavItem[] = [
   { href: "/affiliate/dashboard", label: "Overview" },
-  { href: "/affiliate/dashboard/wallet", label: "Wallet" },
+  { href: "/affiliate/dashboard/analytics", label: "Analytics" },
   { href: "/affiliate/dashboard/payouts", label: "Payouts" },
 ];

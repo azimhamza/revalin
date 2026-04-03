@@ -1,10 +1,11 @@
-import { db } from '@/lib/db';
-import { user } from '@/lib/db/schema';
-import { desc } from 'drizzle-orm';
-import { UserManagement } from './user-management';
+import { desc, inArray, or } from "drizzle-orm";
+
+import { UserManagement } from "./user-management";
+import { db } from "@/lib/db";
+import { affiliates, user } from "@/lib/db/schema";
 
 export const metadata = {
-  title: 'User Management | Revalin Admin',
+  title: "User Management | Revalin Admin",
 };
 
 export default async function UsersPage() {
@@ -21,5 +22,58 @@ export default async function UsersPage() {
     .orderBy(desc(user.createdAt))
     .limit(200);
 
-  return <UserManagement users={users} />;
+  const normalizedEmails = users.map((entry) => entry.email.toLowerCase());
+  const userIds = users.map((entry) => entry.id);
+
+  const affiliateRows =
+    users.length > 0
+      ? await db
+          .select({
+            id: affiliates.id,
+            code: affiliates.code,
+            email: affiliates.email,
+            userId: affiliates.userId,
+            status: affiliates.status,
+          })
+          .from(affiliates)
+          .where(
+            or(
+              inArray(affiliates.userId, userIds),
+              inArray(affiliates.email, normalizedEmails),
+            ),
+          )
+      : [];
+
+  const affiliatesByUserId = new Map(
+    affiliateRows
+      .filter((entry) => Boolean(entry.userId))
+      .map((entry) => [entry.userId!, entry]),
+  );
+
+  const affiliatesByEmail = new Map(
+    affiliateRows
+      .filter((entry) => !entry.userId)
+      .map((entry) => [entry.email.toLowerCase(), entry]),
+  );
+
+  const usersWithAffiliates = users.map((entry) => {
+    const affiliateMatch =
+      affiliatesByUserId.get(entry.id) ||
+      affiliatesByEmail.get(entry.email.toLowerCase()) ||
+      null;
+
+    return {
+      ...entry,
+      affiliate: affiliateMatch
+        ? {
+            id: affiliateMatch.id,
+            code: affiliateMatch.code,
+            status: affiliateMatch.status,
+            userId: affiliateMatch.userId,
+          }
+        : null,
+    };
+  });
+
+  return <UserManagement users={usersWithAffiliates} />;
 }

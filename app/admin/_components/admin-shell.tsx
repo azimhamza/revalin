@@ -6,18 +6,24 @@ import { cn } from "@/lib/utils";
 export const adminNavItems = ADMIN_NAV_ROUTES;
 
 export const adminFieldClass =
-  "h-10 rounded-none border-[#0B2E2F]/14 bg-[#FCFAF6] shadow-none placeholder:text-[#0B2E2F]/35 focus-visible:border-[#0B2E2F]/38 focus-visible:ring-0";
+  "h-7 rounded-none border-border bg-background text-xs shadow-sm placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:ring-offset-0";
 
 export const adminPrimaryButtonClass =
-  "rounded-none border border-[#0B2E2F] bg-[#0B2E2F] text-[#F4F1EA] hover:bg-[#173d3e]";
+  "h-7 rounded-none border border-transparent bg-primary px-2.5 text-[10px] uppercase tracking-[0.14em] text-primary-foreground shadow-sm hover:bg-primary/92";
 
 export const adminSecondaryButtonClass =
-  "rounded-none border border-[#0B2E2F]/16 bg-[#FCFAF6] text-[#0B2E2F] hover:bg-[#EFE7D9]";
+  "h-7 rounded-none border border-border bg-background px-2.5 text-[10px] uppercase tracking-[0.14em] text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground";
 
 type AdminPanelProps = {
   children: ReactNode;
   className?: string;
   tone?: "default" | "muted" | "inverse";
+};
+
+type AdminFilterOption<T extends string> = {
+  key: T;
+  label: string;
+  count: number;
 };
 
 export function AdminPanel({
@@ -28,15 +34,67 @@ export function AdminPanel({
   return (
     <section
       className={cn(
-        "border p-5 md:p-6",
-        tone === "default" && "border-[#0B2E2F]/12 bg-[#F7F4EC]",
-        tone === "muted" && "border-[#0B2E2F]/10 bg-[#EFE7D8]",
-        tone === "inverse" && "border-[#0B2E2F] bg-[#0B2E2F] text-[#F4F1EA]",
+        "overflow-hidden rounded-none border p-2.5 shadow-[0_8px_22px_rgba(15,23,42,0.06)] md:p-3",
+        tone === "default" && "border-border/70 bg-card",
+        tone === "muted" && "border-border/70 bg-muted/40",
+        tone === "inverse" &&
+          "border-sidebar-border bg-sidebar text-sidebar-foreground shadow-[0_18px_48px_rgba(15,23,42,0.16)]",
         className,
       )}
     >
       {children}
     </section>
+  );
+}
+
+type AdminFilterTabsProps<T extends string> = {
+  options: AdminFilterOption<T>[];
+  value: T;
+  onChange: (value: T) => void;
+  className?: string;
+};
+
+export function AdminFilterTabs<T extends string>({
+  options,
+  value,
+  onChange,
+  className,
+}: AdminFilterTabsProps<T>) {
+  return (
+    <div className={cn("flex flex-wrap gap-1", className)}>
+      {options.map((option) => {
+        const active = value === option.key;
+
+        return (
+          <button
+            key={option.key}
+            type="button"
+            onClick={() => onChange(option.key)}
+            aria-pressed={active}
+            className={cn(
+              "inline-flex min-h-7 shrink-0 items-center gap-1.5 rounded-none border px-2.5 py-1 text-left text-[11px] shadow-sm transition-colors",
+              active
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+            )}
+          >
+            <span className="whitespace-nowrap font-semibold leading-none">
+              {option.label}
+            </span>
+            <span
+              className={cn(
+                "text-xs leading-none tabular-nums",
+                active
+                  ? "text-primary-foreground/70"
+                  : "text-muted-foreground/80",
+              )}
+            >
+              {option.count}
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -58,22 +116,22 @@ export function AdminSectionHeader({
   return (
     <div
       className={cn(
-        "flex flex-col gap-4 md:flex-row md:items-end md:justify-between",
+        "flex flex-col gap-2 md:flex-row md:items-end md:justify-between",
         className,
       )}
     >
-      <div className="space-y-2">
+      <div className="space-y-1">
         {eyebrow ? (
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#0B2E2F]/48">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             {eyebrow}
           </p>
         ) : null}
-        <div className="space-y-2">
-          <h2 className="text-[1.9rem] font-semibold tracking-[-0.05em] text-[#0B2E2F]">
+        <div className="space-y-0.5">
+          <h2 className="text-[1.15rem] font-semibold tracking-[-0.04em] text-foreground md:text-[1.3rem]">
             {title}
           </h2>
           {description ? (
-            <p className="max-w-2xl text-sm leading-5 text-[#0B2E2F]/62">
+            <p className="max-w-3xl text-[11px] leading-4 text-muted-foreground">
               {description}
             </p>
           ) : null}
@@ -89,6 +147,7 @@ type AdminStatCardProps = {
   value: string | number;
   detail?: string;
   tone?: "default" | "muted" | "inverse";
+  size?: "default" | "compact";
   className?: string;
 };
 
@@ -97,32 +156,47 @@ export function AdminStatCard({
   value,
   detail,
   tone = "default",
+  size = "default",
   className,
 }: AdminStatCardProps) {
   return (
     <AdminPanel
       tone={tone}
       className={cn(
-        "flex min-h-[152px] flex-col justify-between gap-6",
+        "flex flex-col justify-between",
+        size === "default" && "min-h-[92px] gap-3",
+        size === "compact" && "min-h-[64px] gap-1.5 p-2.5 md:p-2.5",
         className,
       )}
     >
-      <div className="space-y-3">
+      <div className={cn(size === "compact" ? "space-y-1" : "space-y-1.5")}>
         <p
           className={cn(
-            "text-[10px] font-semibold uppercase tracking-[0.2em]",
-            tone === "inverse" ? "text-[#F4F1EA]/58" : "text-[#0B2E2F]/46",
+            "font-semibold uppercase tracking-[0.2em]",
+            size === "compact" ? "text-[8px]" : "text-[9px]",
+            tone === "inverse"
+              ? "text-sidebar-foreground/60"
+              : "text-muted-foreground",
           )}
         >
           {label}
         </p>
-        <p className="text-3xl font-semibold tracking-[-0.06em]">{value}</p>
+        <p
+          className={cn(
+            "font-semibold tracking-[-0.06em]",
+            size === "compact" ? "text-base" : "text-[1.35rem]",
+          )}
+        >
+          {value}
+        </p>
       </div>
       {detail ? (
         <p
           className={cn(
-            "text-sm leading-5",
-            tone === "inverse" ? "text-[#F4F1EA]/74" : "text-[#0B2E2F]/58",
+            size === "compact" ? "text-[10px] leading-4" : "text-[11px] leading-4",
+            tone === "inverse"
+              ? "text-sidebar-foreground/78"
+              : "text-muted-foreground",
           )}
         >
           {detail}

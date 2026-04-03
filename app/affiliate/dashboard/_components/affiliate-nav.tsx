@@ -28,21 +28,23 @@ export function AffiliateNav() {
             key={item.href}
             href={item.href}
             className={cn(
-              "grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 border-l-2 bg-[#FCFAF6] px-4 py-4 transition-colors",
+              "flex items-center justify-between gap-2.5 border-l-2 bg-[#FCFAF6] px-3.5 py-2.5 transition-colors",
               active
                 ? "border-l-[#0B2E2F] bg-[#0B2E2F] text-[#F4F1EA]"
                 : "border-l-transparent hover:bg-white",
             )}
           >
+            <p className="text-[12px] font-semibold tracking-tight">
+              {item.label}
+            </p>
             <span
               className={cn(
-                "text-[10px] font-semibold uppercase tracking-[0.16em]",
+                "text-[10px] font-semibold uppercase tracking-[0.14em]",
                 active ? "text-[#F4F1EA]/45" : "text-[#0B2E2F]/34",
               )}
             >
               {String(index + 1).padStart(2, "0")}
             </span>
-            <p className="text-sm font-semibold tracking-tight">{item.label}</p>
           </Link>
         );
       })}
