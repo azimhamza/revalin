@@ -10,6 +10,7 @@ import {
   index,
   boolean,
 } from "drizzle-orm/pg-core";
+import type { AffiliateSocialProfile } from "../checkout/affiliate-social-profiles";
 
 export const walletStatusEnum = pgEnum("wallet_status", [
   "unused",
@@ -193,6 +194,10 @@ export const affiliates = pgTable(
     swellCouponId: varchar("swell_coupon_id", { length: 128 }),
     discountCode: varchar("discount_code", { length: 128 }),
     discountPercent: varchar("discount_percent", { length: 16 }),
+    socialProfiles: jsonb("social_profiles")
+      .$type<AffiliateSocialProfile[]>()
+      .default([])
+      .notNull(),
     commissionRate: varchar("commission_rate", { length: 16 })
       .default("0.05")
       .notNull(),
