@@ -1,3 +1,4 @@
+import { use } from 'react';
 import { LogoSvg } from './header/logo-svg';
 import { ShopLinks } from './shop-links';
 import { EmailCapture } from '../home/email-capture';
@@ -5,8 +6,8 @@ import { getCollections } from '@/lib/swell';
 import Link from 'next/link';
 import { SITE_LEGAL_ROUTES, SITE_PRIMARY_ROUTES, SITE_SECONDARY_ROUTES } from '@/lib/app-routes';
 
-export async function Footer() {
-  const collections = await getCollections();
+export function Footer() {
+  const collections = use(getCollections());
   const footerLinks = [...SITE_PRIMARY_ROUTES.slice(2), ...SITE_SECONDARY_ROUTES, ...SITE_LEGAL_ROUTES];
   const disclaimer = (
     <>

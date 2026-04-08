@@ -6,6 +6,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { ArrowRight, CheckCircle2, Copy, CreditCard, Landmark, Loader2, RefreshCw, ShieldCheck, Tag, Truck, Wallet, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { ReactNode } from 'react';
+import { toast } from 'sonner';
 import { CartItemCard } from '@/components/cart/cart-item';
 import { useCart } from '@/components/cart/cart-context';
 import { AddToCartButton } from '@/components/cart/add-to-cart';
@@ -13,14 +14,21 @@ import { VariantOptionSelectorComponent, useProductImages } from '@/components/p
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { QUICK_PAYMENT_CURRENCIES, SHIPPING_COUNTRIES, isTerminalPaymentStatus } from '@/lib/checkout/constants';
+import {
+  QUICK_PAYMENT_CURRENCIES,
+  SHIELDCLIMB_PUBLIC_POLLING_ID,
+  SHIPPING_COUNTRIES,
+  isTerminalPaymentStatus,
+} from '@/lib/checkout/constants';
 import type {
+  CheckoutAppliedDiscount,
   CheckoutOrderPublic,
   CheckoutShippingAddress,
   CheckoutShippingService,
-  ShieldClimbPaymentData,
+  ShieldClimbPublicPaymentData,
   NowPaymentsPaymentData,
 } from '@/lib/checkout/types';
+import { calculateCheckoutPricing, getCheckoutDiscounts } from '@/lib/checkout/pricing';
 import { cn } from '@/lib/utils';
 import type { Product } from '@/lib/swell/types';
 import { formatPrice, getDiscountPercentage, getDisplayCompareAtPrice, getDisplayPrice } from '@/lib/swell/utils';
@@ -47,6 +55,8 @@ type CheckoutQuote = {
     currencyCode: string;
   };
   discountCode?: string;
+  discounts?: CheckoutAppliedDiscount[];
+  paymentMethod?: 'card' | 'crypto';
   services: CheckoutShippingService[];
   selectedServiceId: string;
 };
@@ -216,7 +226,7 @@ function PaymentBrandIcons({ className }: { className?: string }) {
   );
 }
 
-function isShieldClimbOrder(payment: CheckoutOrderPublic['payment']): payment is ShieldClimbPaymentData {
+function isShieldClimbOrder(payment: CheckoutOrderPublic['payment']): payment is ShieldClimbPublicPaymentData {
   return payment.provider === 'shieldclimb';
 }
 
@@ -225,7 +235,7 @@ function isNowPaymentsOrder(payment: CheckoutOrderPublic['payment']): payment is
 }
 
 function getPollingId(payment: CheckoutOrderPublic['payment']): string | undefined {
-  if (isShieldClimbOrder(payment)) return payment.ipnToken;
+  if (isShieldClimbOrder(payment)) return SHIELDCLIMB_PUBLIC_POLLING_ID;
   if (isNowPaymentsOrder(payment)) return payment.paymentId;
   return undefined;
 }
@@ -326,6 +336,32 @@ function paymentStatusTone(status: string) {
   }
 
   return 'bg-[#0B2E2F]/10 text-[#0B2E2F]';
+}
+
+const NOWPAYMENTS_FAILURE_STATUSES = new Set([
+  'failed',
+  'expired',
+  'refunded',
+  'cancelled',
+  'replaced',
+]);
+
+function describeNowPaymentsFailure(status: string) {
+  const normalized = status.toLowerCase();
+
+  if (normalized === 'expired') {
+    return 'This crypto payment window expired before the transfer completed. Start a new checkout to generate a fresh payment request.';
+  }
+
+  if (normalized === 'refunded') {
+    return 'This payment was refunded by the processor. Start a new checkout if you still want to place the order.';
+  }
+
+  if (normalized === 'cancelled' || normalized === 'replaced') {
+    return 'This crypto payment request is no longer active. Start a new checkout to continue with a fresh payment session.';
+  }
+
+  return 'The crypto payment could not be completed. Start a new checkout or choose a different payment method to continue.';
 }
 
 function isShippingAddressReady(address: CheckoutShippingAddress) {
@@ -572,6 +608,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const previousCartSignature = useRef<string | null>(null);
   const lastQuoteRequestSignature = useRef<string | null>(null);
   const quoteAbortController = useRef<AbortController | null>(null);
+  const previousPaymentSnapshot = useRef<{ orderId: string; status: string } | null>(null);
 
   const orderId = searchParams.get('order');
   const accessKey = searchParams.get('key');
@@ -599,10 +636,80 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const summarySubtotal = activeOrder
     ? activeOrder.totals.subtotalAmount.amount
     : quote?.subtotalAmount.amount || cart?.cost.subtotalAmount.amount || '0.00';
-  const summaryDiscount = activeOrder?.totals.discountAmount?.amount || quote?.discountAmount?.amount || appliedDiscount?.amount || '0.00';
   const summaryShipping = activeOrder?.totals.shippingAmount?.amount || selectedQuoteService?.price.amount || '0.00';
   const summaryShippingOriginal = selectedQuoteService?.originalPrice?.amount;
   const summaryTax = activeOrder?.totals.taxAmount?.amount || selectedQuoteService?.taxAmount?.amount || '0.00';
+  const summaryPricing = useMemo(() => {
+    if (activeOrder) {
+      const discounts = getCheckoutDiscounts({
+        currencyCode: activeOrder.currencyCode,
+        discounts: activeOrder.totals.discounts,
+        discountAmount: activeOrder.totals.discountAmount?.amount,
+        discountCode: activeOrder.totals.discountCode,
+      });
+
+      return {
+        discounts,
+        totalAmount: activeOrder.totals.totalAmount,
+        cryptoDiscountAmount: discounts.find(discount => discount.kind === 'crypto')?.amount,
+      };
+    }
+
+    if (quote?.paymentMethod === paymentMethod) {
+      const discounts = getCheckoutDiscounts({
+        currencyCode: quote.currencyCode,
+        discounts: quote.discounts,
+        discountAmount: quote.discountAmount?.amount,
+        discountCode: quote.discountCode,
+      });
+      const totalValue = (
+        Number(summarySubtotal) -
+        Number(quote.discountAmount?.amount || 0) +
+        Number(summaryShipping) +
+        Number(summaryTax)
+      ).toFixed(2);
+
+      return {
+        discounts,
+        totalAmount: {
+          amount: totalValue,
+          currencyCode: quote.currencyCode,
+        },
+        cryptoDiscountAmount: discounts.find(discount => discount.kind === 'crypto')?.amount,
+      };
+    }
+
+    const pricing = calculateCheckoutPricing({
+      currencyCode: summaryCurrencyCode,
+      subtotalAmount: summarySubtotal,
+      couponDiscountAmount: appliedDiscount?.amount || '0.00',
+      couponCode: appliedDiscount?.code,
+      shippingAmount: summaryShipping,
+      taxAmount: summaryTax,
+      paymentMethod,
+    });
+
+    return {
+      discounts: pricing.discounts,
+      totalAmount: pricing.totalAmount,
+      cryptoDiscountAmount: pricing.cryptoDiscountAmount,
+    };
+  }, [
+    activeOrder,
+    appliedDiscount?.amount,
+    appliedDiscount?.code,
+    paymentMethod,
+    quote?.currencyCode,
+    quote?.discountAmount?.amount,
+    quote?.discountCode,
+    quote?.discounts,
+    quote?.paymentMethod,
+    summaryCurrencyCode,
+    summaryShipping,
+    summarySubtotal,
+    summaryTax,
+  ]);
+  const summaryDiscountLines = summaryPricing.discounts;
   const hasResolvedShippingPrice = Boolean(activeOrder?.shippingService || selectedQuoteService);
   const summaryShippingValue = hasResolvedShippingPrice
     ? renderShippingPrice(summaryShipping, summaryCurrencyCode, summaryShippingOriginal)
@@ -617,9 +724,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     : isShippingAddressReady(shippingAddress)
       ? (isLoadingQuote ? 'Calculating...' : 'Select a method')
       : 'Enter address';
-  const summaryTotal = activeOrder
-    ? activeOrder.totals.totalAmount.amount
-    : (Number(summarySubtotal) - Number(summaryDiscount) + Number(summaryShipping) + Number(summaryTax)).toFixed(2);
+  const summaryCryptoDiscountAmount = summaryPricing.cryptoDiscountAmount?.amount;
+  const summaryTotal = summaryPricing.totalAmount.amount;
   const isCartHydrating = !activeOrder && cart === undefined;
 
   const quickAddCatalog = useMemo(() => {
@@ -851,42 +957,6 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     }
   }, [appliedDiscount, discountCode, isDraftHydrated, paymentCurrency, paymentMethod, shippingAddress, sourceWalletAddress]);
 
-  // Save checkout draft for cart abandonment tracking
-  useEffect(() => {
-    if (activeOrder || !isDraftHydrated || !cartSnapshot) return;
-    const emailValue = shippingAddress.email?.trim();
-    if (!emailValue || !/\S+@\S+\.\S+/.test(emailValue)) return;
-
-    const timeout = setTimeout(() => {
-      fetch('/api/checkout/save-draft', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: emailValue,
-          cartSnapshot,
-          shippingAddress: shippingAddress.address1
-            ? {
-                firstName: shippingAddress.firstName,
-                lastName: shippingAddress.lastName,
-                city: shippingAddress.city,
-                province: shippingAddress.province,
-                country: shippingAddress.country,
-              }
-            : undefined,
-          totalsEstimate: {
-            subtotal: cartSnapshot.lines.reduce((sum, l) => sum + Number(l.lineTotal.amount), 0).toFixed(2),
-            total: cartSnapshot.lines.reduce((sum, l) => sum + Number(l.lineTotal.amount), 0).toFixed(2),
-            currencyCode: cartSnapshot.currencyCode,
-          },
-        }),
-      }).catch(() => {
-        // Silent fail — non-critical
-      });
-    }, 3000);
-
-    return () => clearTimeout(timeout);
-  }, [activeOrder, isDraftHydrated, cartSnapshot, shippingAddress.email, shippingAddress.firstName, shippingAddress.lastName, shippingAddress.address1, shippingAddress.city, shippingAddress.province, shippingAddress.country]);
-
   useEffect(() => {
     if (previousCartSignature.current === null) {
       previousCartSignature.current = cartSignature;
@@ -1042,6 +1112,14 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     window.history.replaceState(window.history.state, '', nextUrl);
   };
 
+  const resetCheckoutSession = useCallback(() => {
+    resetQuoteState();
+    setCheckoutSession(null);
+    setError(null);
+    previousPaymentSnapshot.current = null;
+    updateCheckoutUrl();
+  }, [resetQuoteState, updateCheckoutUrl]);
+
   const handleShippingChange = (name: keyof CheckoutShippingAddress, value: string) => {
     setShippingAddress(current => ({ ...current, [name]: value }));
     if (!activeOrder) {
@@ -1192,6 +1270,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
             ...nextShippingAddress,
             cartSnapshot,
             discountCode: appliedDiscount?.code || undefined,
+            paymentMethod,
           }),
         });
 
@@ -1225,7 +1304,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         }
       }
     },
-    [cartSnapshot, appliedDiscount]
+    [cartSnapshot, appliedDiscount, paymentMethod]
   );
 
   const handleFetchQuote = async () => {
@@ -1343,6 +1422,58 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     }
   };
 
+  useEffect(() => {
+    if (!activeOrder) {
+      previousPaymentSnapshot.current = null;
+      return;
+    }
+
+    const nextSnapshot = {
+      orderId: activeOrder.orderId,
+      status: activeOrder.payment.status.toLowerCase(),
+    };
+    const previousSnapshot = previousPaymentSnapshot.current;
+
+    previousPaymentSnapshot.current = nextSnapshot;
+
+    if (
+      !previousSnapshot ||
+      previousSnapshot.orderId !== nextSnapshot.orderId ||
+      previousSnapshot.status === nextSnapshot.status ||
+      !isNowPaymentsOrder(activeOrder.payment) ||
+      !NOWPAYMENTS_FAILURE_STATUSES.has(nextSnapshot.status)
+    ) {
+      return;
+    }
+
+    toast('Crypto payment not completed', {
+      id: `checkout-payment-failure-${activeOrder.orderId}-${nextSnapshot.status}`,
+      description: describeNowPaymentsFailure(nextSnapshot.status),
+      duration: 9000,
+      icon: <X className="size-4 text-[#B42318]" />,
+      action: {
+        label: 'Start new checkout',
+        onClick: () => resetCheckoutSession(),
+      },
+      style: {
+        background: '#F4F1EA',
+        border: '1px solid rgba(11, 46, 47, 0.12)',
+        color: '#0B2E2F',
+        boxShadow: '0 20px 48px rgba(11, 46, 47, 0.12)',
+      },
+      classNames: {
+        toast: 'rounded-[22px]',
+        title: 'text-sm font-semibold tracking-[-0.015em]',
+        description: 'text-xs leading-5 text-[#0B2E2F]/70',
+        actionButton: '!rounded-full !border-0 !px-3.5 !py-2 !text-xs !font-semibold !shadow-none',
+      },
+      actionButtonStyle: {
+        background: '#0B2E2F',
+        color: '#F4F1EA',
+      },
+    });
+  }, [activeOrder, resetCheckoutSession]);
+
   const copyText = async (label: string, value?: string | null) => {
     if (!value) return;
 
@@ -1355,13 +1486,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   };
 
   const clearCheckoutSession = () => {
-    quoteAbortController.current?.abort();
-    setCheckoutSession(null);
-    setQuote(null);
-    setSelectedShippingServiceId('');
-    setError(null);
-    lastQuoteRequestSignature.current = null;
-    updateCheckoutUrl();
+    resetCheckoutSession();
   };
 
   const releaseActiveOrder = useCallback(
@@ -1465,12 +1590,13 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
               <div className="border-t border-border/70 px-4 py-4 md:px-5">
                 <div className="space-y-2">
                   <SummaryBlock label="Subtotal" value={formatPrice(summarySubtotal, summaryCurrencyCode)} />
-                  {Number(summaryDiscount) > 0 ? (
+                  {summaryDiscountLines.map(discount => (
                     <SummaryBlock
-                      label={`Discount${activeOrder?.totals.discountCode || quote?.discountCode || appliedDiscount?.code ? ` (${activeOrder?.totals.discountCode || quote?.discountCode || appliedDiscount?.code})` : ''}`}
-                      value={`-${formatPrice(summaryDiscount, summaryCurrencyCode)}`}
+                      key={`${discount.kind}:${discount.code || discount.label}`}
+                      label={discount.label}
+                      value={`-${formatPrice(discount.amount.amount, discount.amount.currencyCode)}`}
                     />
-                  ) : null}
+                  ))}
                   <SummaryBlock
                     label={activeOrder?.shippingService?.name || selectedQuoteService?.name || 'Shipping'}
                     value={summaryShippingValue}
@@ -1873,7 +1999,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                     <p className="mt-3 text-center text-xs text-foreground/50">
                       {paymentMethod === 'card'
                         ? 'You\u2019ll complete your card payment on a secure checkout page in the next step.'
-                        : `You\u2019ll receive a ${formatTicker(paymentCurrency)} deposit address in the next step. 5% discount applied automatically.`}
+                        : `You\u2019ll receive a ${formatTicker(paymentCurrency)} deposit address in the next step.${summaryCryptoDiscountAmount ? ` Direct crypto savings of ${formatPrice(summaryCryptoDiscountAmount, summaryCurrencyCode)} applied automatically.` : ' 5% discount applied automatically.'}`}
                     </p>
                   </div>
                 </div>

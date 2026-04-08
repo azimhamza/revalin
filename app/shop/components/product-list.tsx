@@ -1,3 +1,4 @@
+import { use } from 'react';
 import { getCollectionProducts, getCollections, getProducts } from '@/lib/swell';
 import type { Product, ProductCollectionSortKey, ProductSortKey } from '@/lib/swell/types';
 import { ProductListContent } from './product-list-content';
@@ -15,7 +16,10 @@ interface ProductListProps {
 // filtering operates on the full product set rather than a partial first page.
 const SHOP_FETCH_LIMIT = 1000;
 
-export default async function ProductList({ collection, searchParams }: ProductListProps) {
+async function getProductListData({
+  collection,
+  searchParams,
+}: ProductListProps) {
   const currencyCode = await resolveRequestCurrencyCode();
   const query = typeof searchParams?.q === 'string' ? searchParams.q : undefined;
   const sort = typeof searchParams?.sort === 'string' ? searchParams.sort : undefined;
@@ -58,6 +62,17 @@ export default async function ProductList({ collection, searchParams }: ProductL
   });
 
   const collections = await getCollections();
+
+  return {
+    products,
+    collections,
+  };
+}
+
+export default function ProductList({ collection, searchParams }: ProductListProps) {
+  const { products, collections } = use(
+    getProductListData({ collection, searchParams })
+  );
 
   return <ProductListContent products={products} collections={collections} />;
 }

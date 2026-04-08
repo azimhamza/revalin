@@ -17,9 +17,16 @@ export function ProductInventoryPanel({ product }: { product: Product }) {
   const [subscribed, setSubscribed] = useState(false);
 
   const hasSelectableVariants = product.variants.length > 1;
+  const requiresVariantSelection = hasSelectableVariants && !selectedVariant;
+  const itemLabel = product.variants.length > 0 ? 'this dosage' : 'this product';
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (requiresVariantSelection) {
+      setFeedback('Select a dosage before joining the restock list.');
+      return;
+    }
 
     if (!email.trim()) {
       setFeedback('Enter your email address.');
@@ -48,7 +55,7 @@ export function ProductInventoryPanel({ product }: { product: Product }) {
 
       setEmail('');
       setSubscribed(true);
-      setFeedback(payload.message || "We'll notify you when this is back.");
+      setFeedback(payload.message || `We'll notify you when ${itemLabel} is back.`);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : 'Something went wrong. Try again.');
     } finally {
@@ -83,7 +90,7 @@ export function ProductInventoryPanel({ product }: { product: Product }) {
           </p>
         </div>
         <p className="mt-2.5 text-sm leading-relaxed text-foreground/65">
-          You&apos;re on the list &mdash; we&apos;ll email you when this is back in stock.
+          You&apos;re on the list &mdash; we&apos;ll email you when {itemLabel} is back in stock.
         </p>
       </div>
     );
@@ -99,12 +106,12 @@ export function ProductInventoryPanel({ product }: { product: Product }) {
       </div>
 
       <p className="mt-2 text-sm leading-relaxed text-foreground/65">
-        Next batch is on the way. Drop your email to lock in early pricing &mdash; 20% off, first 48 hours.
+        Next batch is on the way. Drop your email to get notified when {itemLabel} is back &mdash; 20% off for the first 48 hours.
       </p>
 
       {hasSelectableVariants && !selectedVariant ? (
         <p className="mt-1 text-xs text-foreground/40">
-          Select a dosage above to tie the alert to a specific option.
+          Select a dosage above to tie the alert to the exact option you want.
         </p>
       ) : null}
 
@@ -123,7 +130,7 @@ export function ProductInventoryPanel({ product }: { product: Product }) {
           />
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={isSubmitting || requiresVariantSelection}
             className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded bg-[#0B2E2F] px-3.5 text-xs font-medium text-[#F4F1EA] transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {isSubmitting ? (

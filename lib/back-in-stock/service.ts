@@ -1,98 +1,167 @@
-import crypto from 'crypto';
-import { getLiveProduct } from '@/lib/swell';
-import { getInventoryState } from '@/lib/inventory';
-import { createSwellCoupon } from '@/lib/checkout/swell-order-management';
-import { hasLoopsConfig, sendTransactionalEmail } from '@/lib/email/loops';
+import crypto from "crypto";
+import { getProducts, getLiveProduct } from "@/lib/swell";
+import { createSwellCoupon } from "@/lib/checkout/swell-order-management";
+import { hasLoopsConfig, sendTransactionalEmail } from "@/lib/email/loops";
+import type { Product } from "@/lib/swell/types";
+import type {
+  ProductNotificationAdminData,
+  ProductNotificationAdminProduct,
+  ProductNotificationSelection,
+  ProductNotificationSendResult,
+} from "./types";
 import {
-  findBackInStockSubscription,
-  listBackInStockSubscriptions,
-  saveBackInStockSubscription,
-  updateBackInStockSubscription,
-} from './store';
-import type { BackInStockSubscription } from './types';
-
-const DEFAULT_ALERT_EMAIL = 'support@revalin.ca';
-const DISCOUNT_PERCENT = 20;
-const DISCOUNT_WINDOW_HOURS = 48;
-
-function getAlertRecipient() {
-  return process.env.BACKORDER_ALERT_EMAIL_TO?.trim() || DEFAULT_ALERT_EMAIL;
-}
+  buildProductNotificationSelectionKey,
+  buildProductNotificationVariantKey,
+  normalizeProductNotificationEmail,
+  ProductNotificationError,
+  PRODUCT_NOTIFICATION_DISCOUNT_PERCENT,
+  PRODUCT_NOTIFICATION_DISCOUNT_WINDOW_HOURS,
+  resolveProductNotificationTarget,
+} from "./utils";
+import {
+  createProductNotificationDispatch,
+  createProductNotificationDispatchProducts,
+  createProductNotificationSubscription,
+  findPendingProductNotificationSubscription,
+  getProductNotificationAdminAnalytics,
+  getProductNotificationAdminStats,
+  getProductNotificationTargetMetricsByHandles,
+  listPendingProductNotificationSubscriptionsForTarget,
+  updateProductNotificationDispatch,
+  updateProductNotificationDispatchProduct,
+  updateProductNotificationSubscription,
+  type ProductNotificationSubscriptionRecord,
+} from "./store";
 
 function getSiteUrl() {
-  const explicit = process.env.NEXT_PUBLIC_SITE_URL?.trim() || process.env.SITE_URL?.trim();
+  const explicit =
+    process.env.NEXT_PUBLIC_SITE_URL?.trim() || process.env.SITE_URL?.trim();
   if (explicit) {
-    return explicit.replace(/\/$/, '');
+    return explicit.replace(/\/$/, "");
   }
 
   const vercelUrl = process.env.VERCEL_URL?.trim();
   if (vercelUrl) {
-    return `https://${vercelUrl.replace(/\/$/, '')}`;
+    return `https://${vercelUrl.replace(/\/$/, "")}`;
   }
 
-  return 'http://localhost:3000';
+  return "http://localhost:3000";
 }
 
-function createCouponCode() {
-  return `READY20-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+function createProductNotificationCouponCode() {
+  return `READY20-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
 }
 
-function createSubscriptionId() {
-  return `bis_${crypto.randomBytes(8).toString('hex')}`;
+function isUniqueViolation(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "23505"
+  );
 }
 
-async function sendAdminBackorderAlert(subscription: BackInStockSubscription) {
+function getErrorMessage(
+  error: unknown,
+  fallback: string,
+): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function getCustomerSignupTransactionalId() {
+  return process.env.LOOPS_TRANSACTIONAL_PRODUCT_NOTIFICATION_SIGNUP?.trim();
+}
+
+function getCustomerReadyTransactionalId() {
+  return process.env.LOOPS_TRANSACTIONAL_BACK_IN_STOCK?.trim();
+}
+
+function assertCustomerSignupEmailConfig() {
   if (!hasLoopsConfig()) {
-    return;
+    throw new ProductNotificationError(
+      "loops_not_configured",
+      "Loops is not configured for customer signup emails.",
+      500,
+    );
   }
 
-  const transactionalId = process.env.LOOPS_TRANSACTIONAL_ADMIN_BACKORDER?.trim();
+  if (!getCustomerSignupTransactionalId()) {
+    throw new ProductNotificationError(
+      "missing_signup_template",
+      "LOOPS_TRANSACTIONAL_PRODUCT_NOTIFICATION_SIGNUP is not configured.",
+      500,
+    );
+  }
+}
+
+function assertCustomerReadyEmailConfig() {
+  if (!hasLoopsConfig()) {
+    throw new ProductNotificationError(
+      "loops_not_configured",
+      "Loops is not configured for customer restock emails.",
+      500,
+    );
+  }
+
+  if (!getCustomerReadyTransactionalId()) {
+    throw new ProductNotificationError(
+      "missing_customer_template",
+      "LOOPS_TRANSACTIONAL_BACK_IN_STOCK is not configured.",
+      500,
+    );
+  }
+}
+
+async function sendCustomerSignupEmail(args: {
+  email: string;
+  productHandle: string;
+  productName: string;
+}) {
+  assertCustomerSignupEmailConfig();
+
+  const transactionalId = getCustomerSignupTransactionalId();
   if (!transactionalId) {
-    console.warn('Skipping admin backorder alert: LOOPS_TRANSACTIONAL_ADMIN_BACKORDER not set.');
-    return;
+    throw new Error("Missing customer signup template.");
   }
 
-  const productUrl = `${getSiteUrl()}/product/${subscription.productHandle}`;
+  const siteUrl = getSiteUrl();
+  const productUrl = `${siteUrl}/product/${args.productHandle}`;
 
   await sendTransactionalEmail({
-    email: getAlertRecipient(),
+    email: args.email,
     transactionalId,
     dataVariables: {
-      productTitle: subscription.productTitle,
-      variantTitle: subscription.variantTitle || '',
-      customerEmail: subscription.email,
-      productUrl,
+      product_name: args.productName,
+      product_url: productUrl,
     },
   });
 }
 
-async function sendCustomerReadyEmail(subscription: BackInStockSubscription) {
-  if (!subscription.couponCode || !subscription.couponExpiresAt) {
-    throw new Error('Missing coupon details for notification email.');
-  }
+async function sendCustomerReadyEmail(args: {
+  subscription: ProductNotificationSubscriptionRecord;
+  discountCode: string;
+  discountExpiresAt: string;
+}) {
+  assertCustomerReadyEmailConfig();
 
-  if (!hasLoopsConfig()) {
-    throw new Error('Loops not configured — cannot send back-in-stock email.');
-  }
-
-  const transactionalId = process.env.LOOPS_TRANSACTIONAL_BACK_IN_STOCK?.trim();
+  const transactionalId = getCustomerReadyTransactionalId();
   if (!transactionalId) {
-    throw new Error('LOOPS_TRANSACTIONAL_BACK_IN_STOCK not set.');
+    throw new Error("Missing customer restock template.");
   }
 
   const siteUrl = getSiteUrl();
-  const productUrl = `${siteUrl}/product/${subscription.productHandle}`;
-  const checkoutUrl = `${siteUrl}/checkout?discount=${encodeURIComponent(subscription.couponCode)}`;
+  const productUrl = `${siteUrl}/product/${args.subscription.productHandle}`;
+  const checkoutUrl = `${siteUrl}/checkout?discount=${encodeURIComponent(args.discountCode)}`;
 
   await sendTransactionalEmail({
-    email: subscription.email,
+    email: args.subscription.email,
     transactionalId,
     dataVariables: {
-      productTitle: subscription.productTitle,
-      variantTitle: subscription.variantTitle || '',
-      discountPercent: DISCOUNT_PERCENT,
-      discountCode: subscription.couponCode,
-      discountExpiresAt: subscription.couponExpiresAt,
+      productTitle: args.subscription.productTitle,
+      variantTitle: args.subscription.variantTitle || "",
+      discountPercent: PRODUCT_NOTIFICATION_DISCOUNT_PERCENT,
+      discountCode: args.discountCode,
+      discountExpiresAt: args.discountExpiresAt,
       productUrl,
       checkoutUrl,
     },
@@ -101,16 +170,24 @@ async function sendCustomerReadyEmail(subscription: BackInStockSubscription) {
 
 export async function subscribeToBackInStock(args: {
   email: string;
-  productId: string;
-  productHandle: string;
-  productTitle: string;
-  variantId?: string;
-  variantTitle?: string;
+  product: Product;
+  variantId?: string | null;
 }) {
-  const existing = await findBackInStockSubscription({
-    email: args.email,
-    productHandle: args.productHandle,
-    variantId: args.variantId,
+  const normalizedEmail = normalizeProductNotificationEmail(args.email);
+  const target = resolveProductNotificationTarget(args.product, args.variantId);
+
+  if (!target.inventory.isBackorder) {
+    throw new ProductNotificationError(
+      "already_in_stock",
+      "This product is already ready to order.",
+      409,
+    );
+  }
+
+  const existing = await findPendingProductNotificationSubscription({
+    normalizedEmail,
+    productHandle: target.productHandle,
+    variantKey: target.variantKey,
   });
 
   if (existing) {
@@ -120,35 +197,63 @@ export async function subscribeToBackInStock(args: {
     };
   }
 
-  const now = new Date().toISOString();
-  const subscription: BackInStockSubscription = {
-    id: createSubscriptionId(),
-    email: args.email.trim().toLowerCase(),
-    productId: args.productId,
-    productHandle: args.productHandle,
-    productTitle: args.productTitle,
-    variantId: args.variantId,
-    variantTitle: args.variantTitle,
-    status: 'pending',
-    createdAt: now,
-    updatedAt: now,
-    lastError: null,
-  };
-
-  await saveBackInStockSubscription(subscription);
+  let subscription: ProductNotificationSubscriptionRecord | null = null;
 
   try {
-    await sendAdminBackorderAlert(subscription);
-    await updateBackInStockSubscription(subscription.id, current => ({
-      ...current,
-      adminNotificationSentAt: new Date().toISOString(),
+    subscription = await createProductNotificationSubscription({
+      email: args.email.trim(),
+      normalizedEmail,
+      productId: target.productId,
+      productHandle: target.productHandle,
+      productTitle: target.productTitle,
+      variantId: target.variantId,
+      variantTitle: target.variantTitle,
+      variantKey: target.variantKey,
+      status: "pending",
       lastError: null,
-    }));
+    });
   } catch (error) {
-    await updateBackInStockSubscription(subscription.id, current => ({
-      ...current,
-      lastError: error instanceof Error ? error.message : 'Unable to send admin backorder email.',
-    }));
+    if (isUniqueViolation(error)) {
+      const duplicate = await findPendingProductNotificationSubscription({
+        normalizedEmail,
+        productHandle: target.productHandle,
+        variantKey: target.variantKey,
+      });
+
+      if (duplicate) {
+        return {
+          created: false,
+          subscription: duplicate,
+        };
+      }
+    }
+
+    throw error;
+  }
+
+  if (!subscription) {
+    throw new Error("Failed to create the product notification subscription.");
+  }
+
+  try {
+    await sendCustomerSignupEmail({
+      email: subscription.email,
+      productHandle: target.productHandle,
+      productName: target.productName,
+    });
+    subscription =
+      (await updateProductNotificationSubscription(subscription.id, {
+        signupEmailSentAt: new Date(),
+        signupEmailError: null,
+      })) || subscription;
+  } catch (error) {
+    subscription =
+      (await updateProductNotificationSubscription(subscription.id, {
+        signupEmailError: getErrorMessage(
+          error,
+          "Unable to send the signup confirmation email.",
+        ),
+      })) || subscription;
   }
 
   return {
@@ -157,104 +262,345 @@ export async function subscribeToBackInStock(args: {
   };
 }
 
-export async function processBackInStockSubscriptions(args: {
-  handles?: string[];
-  limit?: number;
-} = {}) {
-  const handles = new Set((args.handles || []).map(handle => handle.trim()).filter(Boolean));
-  const subscriptions = await listBackInStockSubscriptions();
-  const pending = subscriptions.filter(subscription => {
-    if (subscription.status !== 'pending') return false;
-    if (handles.size === 0) return true;
-    return handles.has(subscription.productHandle);
-  });
+type PreparedNotificationTarget = ReturnType<
+  typeof resolveProductNotificationTarget
+> & {
+  pendingSubscriptions: ProductNotificationSubscriptionRecord[];
+};
 
-  const selected = typeof args.limit === 'number' ? pending.slice(0, args.limit) : pending;
-  const productCache = new Map<string, Awaited<ReturnType<typeof getLiveProduct>>>();
+export async function sendProductNotificationsBatch(args: {
+  createdByUserId: string;
+  selections: ProductNotificationSelection[];
+}): Promise<ProductNotificationSendResult> {
+  const normalizedSelections = Array.from(
+    new Map(
+      args.selections
+        .map((selection) => ({
+          productHandle: selection.productHandle.trim(),
+          variantId: selection.variantId?.trim() || null,
+        }))
+        .filter((selection) => selection.productHandle.length > 0)
+        .map((selection) => [
+          buildProductNotificationSelectionKey({
+            productHandle: selection.productHandle,
+            variantKey: buildProductNotificationVariantKey(selection.variantId),
+          }),
+          selection,
+        ]),
+    ).values(),
+  );
 
-  let inspected = 0;
-  let ready = 0;
-  let notified = 0;
-  let failed = 0;
+  if (normalizedSelections.length === 0) {
+    throw new ProductNotificationError(
+      "empty_selection",
+      "Select at least one variant to send.",
+      400,
+    );
+  }
 
-  for (const subscription of selected) {
-    inspected += 1;
+  assertCustomerReadyEmailConfig();
 
-    if (!productCache.has(subscription.productHandle)) {
-      productCache.set(subscription.productHandle, await getLiveProduct(subscription.productHandle));
-    }
+  const productCache = new Map<string, Product | null>();
+  await Promise.all(
+    Array.from(
+      new Set(normalizedSelections.map((selection) => selection.productHandle)),
+    ).map(async (productHandle) => {
+      productCache.set(productHandle, await getLiveProduct(productHandle));
+    }),
+  );
 
-    const product = productCache.get(subscription.productHandle);
+  const preparedTargets: PreparedNotificationTarget[] = [];
+  let skippedTargetCount = 0;
 
+  for (const selection of normalizedSelections) {
+    const product = productCache.get(selection.productHandle);
     if (!product) {
-      failed += 1;
-      await updateBackInStockSubscription(subscription.id, current => ({
-        ...current,
-        lastError: 'Product could not be loaded while processing back-in-stock notifications.',
-      }));
+      skippedTargetCount += 1;
       continue;
-    }
-
-    const variant = subscription.variantId
-      ? product.variants.find(candidate => candidate.id === subscription.variantId) || null
-      : null;
-    const inventory = getInventoryState(product, variant);
-
-    if (inventory.isBackorder) {
-      continue;
-    }
-
-    ready += 1;
-
-    let current = subscription;
-
-    if (!current.couponCode || !current.couponId || !current.couponExpiresAt) {
-      const expiresAt = new Date(Date.now() + DISCOUNT_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
-      const couponCode = createCouponCode();
-      const coupon = await createSwellCoupon({
-        code: couponCode,
-        name: `Back in stock - ${current.productTitle}`,
-        percentOff: DISCOUNT_PERCENT,
-        expiresAt,
-        description: `Auto-issued for ${current.email}`,
-      });
-
-      const saved = await updateBackInStockSubscription(current.id, active => ({
-        ...active,
-        couponId: coupon.id,
-        couponCode,
-        couponExpiresAt: expiresAt,
-        lastError: null,
-      }));
-
-      if (saved) {
-        current = saved;
-      }
     }
 
     try {
-      await sendCustomerReadyEmail(current);
-      notified += 1;
-      await updateBackInStockSubscription(current.id, active => ({
-        ...active,
-        status: 'notified',
-        notifiedAt: new Date().toISOString(),
-        lastError: null,
-      }));
-    } catch (error) {
-      failed += 1;
-      await updateBackInStockSubscription(current.id, active => ({
-        ...active,
-        lastError: error instanceof Error ? error.message : 'Unable to send ready email.',
-      }));
+      const target = resolveProductNotificationTarget(product, selection.variantId);
+      const pendingSubscriptions =
+        await listPendingProductNotificationSubscriptionsForTarget({
+          productHandle: target.productHandle,
+          variantKey: target.variantKey,
+        });
+
+      preparedTargets.push({
+        ...target,
+        pendingSubscriptions,
+      });
+    } catch {
+      skippedTargetCount += 1;
     }
   }
 
+  const eligibleTargets = preparedTargets.filter(
+    (target) =>
+      !target.inventory.isBackorder && target.pendingSubscriptions.length > 0,
+  );
+  skippedTargetCount += preparedTargets.length - eligibleTargets.length;
+
+  if (eligibleTargets.length === 0) {
+    throw new ProductNotificationError(
+      "nothing_to_send",
+      "No selected variants are back in stock with pending subscribers.",
+      400,
+    );
+  }
+
+  const discountCode = createProductNotificationCouponCode();
+  const discountExpiresAt = new Date(
+    Date.now() +
+      PRODUCT_NOTIFICATION_DISCOUNT_WINDOW_HOURS * 60 * 60 * 1000,
+  ).toISOString();
+  const swellCoupon = await createSwellCoupon({
+    code: discountCode,
+    name: `Restock batch ${new Date().toISOString().slice(0, 10)}`,
+    percentOff: PRODUCT_NOTIFICATION_DISCOUNT_PERCENT,
+    expiresAt: discountExpiresAt,
+    description: `Auto-issued restock notification coupon for ${eligibleTargets.length} target(s).`,
+  });
+
+  const dispatch = await createProductNotificationDispatch({
+    swellCouponId: swellCoupon.id,
+    discountCode,
+    discountExpiresAt: new Date(discountExpiresAt),
+    createdByUserId: args.createdByUserId,
+    selectedTargetCount: normalizedSelections.length,
+    eligibleTargetCount: eligibleTargets.length,
+    skippedTargetCount,
+    subscriptionCount: eligibleTargets.reduce(
+      (sum, target) => sum + target.pendingSubscriptions.length,
+      0,
+    ),
+    status: "pending",
+  });
+
+  if (!dispatch) {
+    throw new Error("Failed to create the notification dispatch record.");
+  }
+
+  const dispatchProducts = await createProductNotificationDispatchProducts(
+    eligibleTargets.map((target) => ({
+      dispatchId: dispatch.id,
+      productId: target.productId,
+      productHandle: target.productHandle,
+      productTitle: target.productTitle,
+      variantId: target.variantId,
+      variantTitle: target.variantTitle,
+      variantKey: target.variantKey,
+      subscriberCount: target.pendingSubscriptions.length,
+      notifiedCount: 0,
+      failedCount: 0,
+    })),
+  );
+
+  const dispatchProductByKey = new Map(
+    dispatchProducts.map((dispatchProduct) => [
+      buildProductNotificationSelectionKey({
+        productHandle: dispatchProduct.productHandle,
+        variantKey: dispatchProduct.variantKey,
+      }),
+      dispatchProduct,
+    ]),
+  );
+
+  let notifiedCount = 0;
+  let failedCount = 0;
+
+  for (const target of eligibleTargets) {
+    const dispatchProduct = dispatchProductByKey.get(
+      buildProductNotificationSelectionKey({
+        productHandle: target.productHandle,
+        variantKey: target.variantKey,
+      }),
+    );
+
+    if (!dispatchProduct) {
+      continue;
+    }
+
+    let targetNotifiedCount = 0;
+    let targetFailedCount = 0;
+
+    for (const subscription of target.pendingSubscriptions) {
+      try {
+        await sendCustomerReadyEmail({
+          subscription,
+          discountCode,
+          discountExpiresAt,
+        });
+
+        targetNotifiedCount += 1;
+        notifiedCount += 1;
+        await updateProductNotificationSubscription(subscription.id, {
+          status: "notified",
+          lastDispatchId: dispatch.id,
+          lastAttemptedAt: new Date(),
+          notifiedAt: new Date(),
+          lastError: null,
+        });
+      } catch (error) {
+        targetFailedCount += 1;
+        failedCount += 1;
+        await updateProductNotificationSubscription(subscription.id, {
+          lastDispatchId: dispatch.id,
+          lastAttemptedAt: new Date(),
+          lastError: getErrorMessage(
+            error,
+            "Unable to send the restock email.",
+          ),
+        });
+      }
+    }
+
+    await updateProductNotificationDispatchProduct(dispatchProduct.id, {
+      notifiedCount: targetNotifiedCount,
+      failedCount: targetFailedCount,
+    });
+  }
+
+  const status =
+    failedCount === 0
+      ? "completed"
+      : notifiedCount > 0
+        ? "partial_failure"
+        : "failed";
+
+  await updateProductNotificationDispatch(dispatch.id, {
+    notifiedCount,
+    failedCount,
+    status,
+    completedAt: new Date(),
+  });
+
   return {
-    inspected,
-    ready,
-    notified,
-    failed,
-    pending: pending.length,
+    dispatchId: dispatch.id,
+    discountCode,
+    discountExpiresAt,
+    selectedTargetCount: normalizedSelections.length,
+    eligibleTargetCount: eligibleTargets.length,
+    skippedTargetCount,
+    subscriptionCount: dispatch.subscriptionCount,
+    notifiedCount,
+    failedCount,
+    status,
+  };
+}
+
+function buildAdminTargetsForProduct(
+  product: Product,
+  metrics: Map<
+    string,
+    {
+      totalSignupCount: number;
+      pendingSignupCount: number;
+      lastDispatchAt: string | null;
+    }
+  >,
+) {
+  const targets =
+    product.variants.length > 0
+      ? product.variants.map((variant) =>
+          resolveProductNotificationTarget(product, variant.id),
+        )
+      : [resolveProductNotificationTarget(product)];
+
+  return targets.map((target) => {
+    const selectionKey = buildProductNotificationSelectionKey({
+      productHandle: target.productHandle,
+      variantKey: target.variantKey,
+    });
+    const targetMetrics = metrics.get(selectionKey);
+
+    return {
+      productId: target.productId,
+      productHandle: target.productHandle,
+      productTitle: target.productTitle,
+      variantId: target.variantId,
+      variantTitle: target.variantTitle,
+      variantKey: target.variantKey,
+      displayName: target.variantTitle || "Base product",
+      totalSignupCount: targetMetrics?.totalSignupCount ?? 0,
+      pendingSignupCount: targetMetrics?.pendingSignupCount ?? 0,
+      lastDispatchAt: targetMetrics?.lastDispatchAt ?? null,
+      isBackorder: target.inventory.isBackorder,
+      isLowStock: target.inventory.isLowStock,
+      stockLabel: target.inventory.label,
+      stockMessage: target.inventory.message,
+      isReadyToSend:
+        !target.inventory.isBackorder &&
+        (targetMetrics?.pendingSignupCount ?? 0) > 0,
+    };
+  });
+}
+
+function getMostRecentTimestamp(values: Array<string | null>) {
+  return values
+    .filter((value): value is string => Boolean(value))
+    .sort((left, right) => right.localeCompare(left))[0] || null;
+}
+
+export async function getProductNotificationAdminData(args: {
+  query?: string;
+} = {}): Promise<ProductNotificationAdminData> {
+  const query = args.query?.trim();
+  const products = await getProducts({
+    limit: query ? 60 : 24,
+    sortKey: "UPDATED_AT",
+    reverse: true,
+    query: query || undefined,
+  });
+
+  const metrics = await getProductNotificationTargetMetricsByHandles(
+    products.map((product) => product.handle),
+  );
+  const metricsBySelection = new Map(
+    metrics.map((metric) => [
+      buildProductNotificationSelectionKey({
+        productHandle: metric.productHandle,
+        variantKey: metric.variantKey,
+      }),
+      metric,
+    ]),
+  );
+
+  const adminProducts: ProductNotificationAdminProduct[] = products.map(
+    (product) => {
+      const targets = buildAdminTargetsForProduct(product, metricsBySelection);
+
+      return {
+        productId: product.id,
+        productHandle: product.handle,
+        productTitle: product.title,
+        totalSignupCount: targets.reduce(
+          (sum, target) => sum + target.totalSignupCount,
+          0,
+        ),
+        pendingSignupCount: targets.reduce(
+          (sum, target) => sum + target.pendingSignupCount,
+          0,
+        ),
+        readyTargetCount: targets.filter((target) => target.isReadyToSend).length,
+        totalTargetCount: targets.length,
+        lastDispatchAt: getMostRecentTimestamp(
+          targets.map((target) => target.lastDispatchAt),
+        ),
+        targets,
+      };
+    },
+  );
+
+  const [stats, analytics] = await Promise.all([
+    getProductNotificationAdminStats(),
+    getProductNotificationAdminAnalytics(),
+  ]);
+
+  return {
+    products: adminProducts,
+    stats,
+    analytics,
   };
 }

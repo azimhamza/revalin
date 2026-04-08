@@ -8,9 +8,7 @@ export const metadata = {
   description: 'Reset your Revalin account password with a verification code.',
 };
 
-export default async function ForgotPasswordPage() {
-  const footer = await Footer();
-
+export default function ForgotPasswordPage() {
   return (
     <>
       <div className="min-h-screen md:grid md:grid-cols-2">
@@ -101,7 +99,7 @@ export default async function ForgotPasswordPage() {
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.03] via-transparent to-black/10" />
         </div>
       </div>
-      {footer}
+      <Footer />
     </>
   );
 }

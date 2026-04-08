@@ -1,5 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  BellRing,
+  BookOpen,
   Handshake,
   LayoutDashboard,
   Users,
@@ -25,6 +27,18 @@ export const ADMIN_NAVIGATION_ITEMS: AdminNavigationItem[] = [
     href: "/admin/users",
     description: "Manage access, roles, and account state.",
     icon: Users,
+  },
+  {
+    title: "Restock Alerts",
+    href: "/admin/product-notifications",
+    description: "Review variant demand, charts, and send restock emails.",
+    icon: BellRing,
+  },
+  {
+    title: "Research",
+    href: "/admin/research",
+    description: "Author, publish, and manage peptides and research papers.",
+    icon: BookOpen,
   },
   {
     title: "Growth Partners",

@@ -7,6 +7,7 @@ export const SHIELDCLIMB_API_BASE_URL =
   process.env.SHIELDCLIMB_API_BASE_URL || 'https://api.shieldclimb.com';
 export const SHIELDCLIMB_PAYMENT_BASE_URL =
   process.env.SHIELDCLIMB_PAYMENT_BASE_URL || 'https://payment.shieldclimb.com';
+export const SHIELDCLIMB_PUBLIC_POLLING_ID = 'shieldclimb';
 
 export const DEFAULT_PAYMENT_CURRENCIES = ['btc', 'eth', 'sol', 'ltc', 'usdttrc20', 'trx'] as const;
 

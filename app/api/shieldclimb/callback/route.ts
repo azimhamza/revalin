@@ -1,16 +1,13 @@
 import { NextResponse } from 'next/server';
-import { getCheckoutOrder, updateCheckoutOrder } from '@/lib/checkout/order-store';
-import { getWalletByOrderId, markWalletPaid } from '@/lib/checkout/wallet-service';
-import { syncShieldClimbOrderToSwell } from '@/lib/checkout/swell-payment-sync';
-import { sendOrderConfirmationEmail } from '@/lib/email/order-emails';
+import { getCheckoutOrder } from '@/lib/checkout/order-store';
+import { verifyAndFinalizeShieldClimbPayment } from '@/lib/checkout/shieldclimb-payment-verification';
 import { isShieldClimbPayment } from '@/lib/checkout/types';
-import { createPayoutFromOrder } from '@/lib/checkout/payout-service';
-import { markWelcomeDiscountUsed } from '@/lib/email/welcome-discount';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   // Our callback URL has ?orderId=... and ShieldClimb appends its own params including `number`
   const orderId = url.searchParams.get('orderId') || url.searchParams.get('number');
+  const callbackToken = url.searchParams.get('callbackToken');
   const valueCoin = url.searchParams.get('value_coin');
   const txidIn = url.searchParams.get('txid_in');
   const txidOut = url.searchParams.get('txid_out');
@@ -32,66 +29,20 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Order is not a ShieldClimb payment.' }, { status: 400 });
     }
 
-    const wallet = await getWalletByOrderId(orderId);
-
-    if (!wallet) {
-      return NextResponse.json({ error: 'Wallet not found for order.' }, { status: 404 });
+    if (order.payment.callbackToken && order.payment.callbackToken !== callbackToken) {
+      return NextResponse.json({ error: 'Callback verification failed.' }, { status: 403 });
     }
 
-    // Anti-spoofing: address_in from callback MUST match our stored polygon_address_in
-    if (!addressIn || !wallet.shieldclimbPolygonAddressIn || addressIn !== wallet.shieldclimbPolygonAddressIn) {
-      console.error(
-        `ShieldClimb callback address mismatch for ${orderId}: got ${addressIn || '(missing)'}, expected ${wallet.shieldclimbPolygonAddressIn || '(not set)'}`
-      );
-      return NextResponse.json({ error: 'Address verification failed.' }, { status: 403 });
-    }
-
-    // Mark wallet as paid
-    await markWalletPaid(wallet.id, {
-      valueCoinReceived: valueCoin ?? undefined,
-      txidIn: txidIn ?? undefined,
-      txidOut: txidOut ?? undefined,
-    });
-
-    // Update order payment status
-    const updatedOrder = await updateCheckoutOrder(orderId, current => ({
-      ...current,
-      payment: {
-        ...current.payment,
-        status: 'paid',
-        valueCoinReceived: valueCoin,
+    await verifyAndFinalizeShieldClimbPayment({
+      orderId,
+      callbackData: {
+        addressIn,
+        coin,
         txidIn,
         txidOut,
-        updatedAt: new Date().toISOString(),
+        valueCoin,
       },
-    }));
-
-    if (updatedOrder) {
-      markWelcomeDiscountUsed({
-        email: updatedOrder.shippingAddress.email,
-        discountCode: updatedOrder.totals.discountCode,
-      }).catch(err =>
-        console.error('Welcome discount usage update failed:', err)
-      );
-    }
-
-    // Create affiliate payout record (non-blocking)
-    createPayoutFromOrder(orderId, 'shieldclimb').catch(err =>
-      console.error('Affiliate payout creation failed:', err)
-    );
-
-    // Fire background tasks (non-blocking)
-    const refreshedOrder = await getCheckoutOrder(orderId);
-
-    if (refreshedOrder) {
-      syncShieldClimbOrderToSwell(refreshedOrder).catch(err =>
-        console.error('ShieldClimb Swell sync failed:', err)
-      );
-
-      sendOrderConfirmationEmail(refreshedOrder).catch(err =>
-        console.error('Order confirmation email failed:', err)
-      );
-    }
+    });
 
     // Return 200 for ShieldClimb's bot (the frontend detects payment via polling)
     return NextResponse.json({ ok: true }, { status: 200 });

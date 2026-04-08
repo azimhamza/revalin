@@ -1,5 +1,9 @@
 import type { CheckoutOrderRecord } from '@/lib/checkout/types';
 import { hasLoopsConfig, sendTransactionalEmail } from '@/lib/email/loops';
+import {
+  buildOrderConfirmationDataVariables,
+  buildOrderShippedDataVariables,
+} from '@/lib/email/order-email-payloads';
 
 function getSiteUrl() {
   const explicit = process.env.NEXT_PUBLIC_SITE_URL?.trim() || process.env.SITE_URL?.trim();
@@ -32,68 +36,6 @@ function getShippingLabelRecipients() {
 
 export function buildOrderStatusUrl(order: CheckoutOrderRecord) {
   return `${getSiteUrl()}/order/${order.orderId}?key=${order.accessKey}`;
-}
-
-function formatRegionName(regionCode: string) {
-  const normalized = regionCode.trim().toUpperCase();
-  if (!normalized) return '';
-
-  try {
-    const formatter = new Intl.DisplayNames(['en'], { type: 'region' });
-    return formatter.of(normalized) || normalized;
-  } catch {
-    return normalized;
-  }
-}
-
-function buildOrderConfirmationProductName(order: CheckoutOrderRecord['lines'][number]) {
-  const variantTitle = order.variantTitle.trim();
-  if (!variantTitle || variantTitle.toLowerCase() === 'default' || variantTitle === order.productTitle) {
-    return order.productTitle;
-  }
-
-  return `${order.productTitle} - ${variantTitle}`;
-}
-
-function buildOrderConfirmationItems(order: CheckoutOrderRecord) {
-  return order.lines.map(line => ({
-    product_name: buildOrderConfirmationProductName(line),
-    sku_number: line.skuNumber || '',
-    quantity: line.quantity,
-    unit_price: formatCurrency(line.unitPrice.amount, order.currencyCode),
-    subtotal: formatCurrency(line.lineTotal.amount, order.currencyCode),
-  })) satisfies Array<Record<string, string | number>>;
-}
-
-function buildOrderConfirmationDataVariables(order: CheckoutOrderRecord) {
-  const shippingAmount = order.totals.shippingAmount
-    ? formatCurrency(order.totals.shippingAmount.amount, order.currencyCode)
-    : 'Free';
-  const taxAmount = order.totals.taxAmount
-    ? formatCurrency(order.totals.taxAmount.amount, order.currencyCode)
-    : '$0.00';
-
-  const vars: Record<string, string | number | Array<Record<string, string | number>>> = {
-    items: buildOrderConfirmationItems(order),
-    subtotal: formatCurrency(order.totals.subtotalAmount.amount, order.currencyCode),
-    shipping: shippingAmount,
-    tax: taxAmount,
-    discount: '',
-    total_paid: formatCurrency(order.totals.totalAmount.amount, order.currencyCode),
-    customer_name: `${order.shippingAddress.firstName} ${order.shippingAddress.lastName}`.trim(),
-    street_address: [order.shippingAddress.address1, order.shippingAddress.address2].filter(Boolean).join(', '),
-    city: order.shippingAddress.city,
-    state: order.shippingAddress.province,
-    postal_code: order.shippingAddress.postalCode,
-    country: formatRegionName(order.shippingAddress.country),
-    order_number: order.swell.orderNumber || order.orderId,
-  };
-
-  if (order.totals.discountAmount && Number(order.totals.discountAmount.amount) > 0) {
-    vars.discount = `-${formatCurrency(order.totals.discountAmount.amount, order.currencyCode)}`;
-  }
-
-  return vars;
 }
 
 export function buildOrderDataVariables(order: CheckoutOrderRecord) {
@@ -224,19 +166,16 @@ export async function sendOrderShippedEmail(order: CheckoutOrderRecord) {
   return sendTransactionalEmail({
     email: customerEmail,
     transactionalId,
-    dataVariables: {
-      ...buildOrderDataVariables(order),
-      trackingCode: order.shipengine?.trackingCode || '',
-      carrier: order.shipengine?.carrier || '',
-      service: order.shipengine?.service || '',
-      trackingUrl: order.shipengine?.publicTrackingUrl || '',
+    dataVariables: buildOrderShippedDataVariables(order),
+    headers: {
+      'Idempotency-Key': `order-shipped-${order.orderId}-${order.shipengine?.trackingCode || 'pending'}`,
     },
   });
 }
 
 export async function sendShippingLabelEmail(args: {
   order: CheckoutOrderRecord;
-  labelPdfBase64: string;
+  labelUrl: string;
   labelResult: {
     carrier?: string;
     service?: string;
@@ -287,17 +226,11 @@ export async function sendShippingLabelEmail(args: {
           service: labelResult.service || 'N/A',
           trackingCode: labelResult.trackingCode || 'N/A',
           trackingUrl: labelResult.publicTrackingUrl || '',
+          labelUrl: args.labelUrl,
           addressBlock,
           itemsSummary,
           total: formatCurrency(order.totals.totalAmount.amount, order.currencyCode),
         },
-        attachments: [
-          {
-            filename: `label-${order.orderId}.pdf`,
-            data: args.labelPdfBase64,
-            contentType: 'application/pdf',
-          },
-        ],
       })
     )
   );

@@ -9,6 +9,9 @@ export interface Peptide {
   sequence: string;
   description: string;
   tags: string[];
+  heroImageUrl?: string | null;
+  heroImageAlt?: string | null;
+  paperCount?: number;
 }
 
 interface ResearchContextType {

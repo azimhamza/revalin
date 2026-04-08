@@ -1,10 +1,17 @@
+import type { Metadata } from 'next';
+
 import { PageLayout } from '@/components/layout/page-layout';
-import { ResearchProvider, Peptide } from './providers/research-provider';
+import { listPeptides, listPublishedPapers } from '@/lib/research/queries';
+
+import { ResearchProvider, type Peptide } from './providers/research-provider';
 import { ResearchDesktopFilters } from './components/research-filters';
 import { ResearchMobileFilters } from './components/research-mobile-filters';
 import { ResearchListContent } from './components/research-list-content';
+import { LatestPapersStrip } from './components/latest-papers-strip';
 
-export const metadata = {
+export const revalidate = 300;
+
+export const metadata: Metadata = {
   title: 'Research Library - Peptide Profiles & Protocols',
   description:
     'Comprehensive research peptide profiles with storage protocols, reconstitution guidelines, and study references.',
@@ -13,65 +20,24 @@ export const metadata = {
   },
 };
 
-// Mock data - replace with actual database/CMS
-const peptides: Peptide[] = [
-  {
-    id: '1',
-    slug: 'bpc-157',
-    name: 'BPC-157',
-    sequence: 'Gly-Glu-Pro-Pro-Pro-Gly-Lys-Pro-Ala-Asp-Asp-Ala-Gly-Leu-Val',
-    description:
-      'A pentadecapeptide derived from body protection compound, studied for its potential in tissue repair and healing research.',
-    tags: ['Healing', 'Recovery', 'Tissue Repair'],
-  },
-  {
-    id: '2',
-    slug: 'tb-500',
-    name: 'TB-500',
-    sequence: 'Ac-Ser-Asp-Lys-Pro-Asp-Met-Ala-Glu-Ile-Glu-Lys...',
-    description:
-      'A synthetic peptide fragment of Thymosin Beta-4, researched for cellular migration and differentiation studies.',
-    tags: ['Recovery', 'Cellular', 'Migration'],
-  },
-  {
-    id: '3',
-    slug: 'ghk-cu',
-    name: 'GHK-Cu',
-    sequence: 'Gly-His-Lys',
-    description:
-      'A copper-binding tripeptide naturally present in human plasma, studied for its role in wound healing and tissue remodeling.',
-    tags: ['Copper', 'Healing', 'Remodeling'],
-  },
-  {
-    id: '4',
-    slug: 'cjc-1295',
-    name: 'CJC-1295',
-    sequence: 'Tyr-D-Ala-Asp-Ala-Ile-Phe-Thr-Gln-Ser-Tyr-Arg-Lys...',
-    description:
-      'A growth hormone-releasing hormone analog studied for its extended half-life and sustained release properties.',
-    tags: ['GHRH', 'Growth Factor', 'Analog'],
-  },
-  {
-    id: '5',
-    slug: 'ipamorelin',
-    name: 'Ipamorelin',
-    sequence: 'Aib-His-D-2-Nal-D-Phe-Lys-NH2',
-    description:
-      'A selective growth hormone secretagogue receptor agonist researched for its specificity and minimal side effects.',
-    tags: ['GHSR', 'Selective', 'Secretagogue'],
-  },
-  {
-    id: '6',
-    slug: 'selank',
-    name: 'Selank',
-    sequence: 'Thr-Lys-Pro-Arg-Pro-Gly-Pro',
-    description:
-      'A synthetic analog of tuftsin with anxiolytic properties, studied for its cognitive and neuroprotective effects.',
-    tags: ['Cognitive', 'Neuroprotective', 'Anxiolytic'],
-  },
-];
+export default async function ResearchPage() {
+  const [peptideRows, latestPapers] = await Promise.all([
+    listPeptides(),
+    listPublishedPapers({ limit: 6 }),
+  ]);
 
-export default function ResearchPage() {
+  const peptides: Peptide[] = peptideRows.map((row) => ({
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    sequence: row.sequence ?? '',
+    description: row.description ?? '',
+    tags: (row.tags as string[]) ?? [],
+    heroImageUrl: row.heroImageUrl,
+    heroImageAlt: row.heroImageAlt,
+    paperCount: row.paperCount,
+  }));
+
   return (
     <PageLayout>
       <ResearchProvider peptides={peptides}>
@@ -79,7 +45,25 @@ export default function ResearchPage() {
           <ResearchDesktopFilters className="col-span-3 max-md:hidden" />
           <ResearchMobileFilters />
           <div className="col-span-9 flex flex-col md:h-full md:pt-top-spacing">
-            <ResearchListContent />
+            <header className="space-y-4 px-sides pt-10 text-[#0B2E2F] md:px-0 md:pt-0 md:pr-sides">
+              <p className="text-[10px] uppercase tracking-[0.24em] text-[#0B2E2F]/55">
+                Research library
+              </p>
+              <h1 className="max-w-3xl text-balance text-3xl tracking-[-0.05em] md:text-[3.1rem] md:leading-[0.95]">
+                Peptides, protocols, and published papers.
+              </h1>
+              <p className="max-w-xl text-sm leading-relaxed text-[#0B2E2F]/72 md:text-base">
+                A curated library of peptide profiles and peer-reviewed
+                literature. For qualified researchers — no marketing claims,
+                just the work.
+              </p>
+            </header>
+            <div className="md:pr-sides md:pt-10">
+              <LatestPapersStrip papers={latestPapers} />
+            </div>
+            <div className="mt-10 border-t border-[#0B2E2F]/12 md:mt-12">
+              <ResearchListContent />
+            </div>
           </div>
         </div>
       </ResearchProvider>

@@ -10,8 +10,16 @@ import {
   index,
   boolean,
   integer,
+  primaryKey,
 } from "drizzle-orm/pg-core";
+import { relations, sql } from "drizzle-orm";
 import type { AffiliateSocialProfile } from "../checkout/affiliate-social-profiles";
+
+export type ResearchPaperAuthor = {
+  name: string;
+  affiliation?: string;
+  orcid?: string;
+};
 
 export const walletStatusEnum = pgEnum("wallet_status", [
   "unused",
@@ -32,6 +40,22 @@ export const payoutStatusEnum = pgEnum("payout_status", [
   "approved",
   "paid",
   "rejected",
+]);
+
+export const productNotificationSubscriptionStatusEnum = pgEnum(
+  "product_notification_subscription_status",
+  ["pending", "notified"],
+);
+
+export const productNotificationDispatchStatusEnum = pgEnum(
+  "product_notification_dispatch_status",
+  ["pending", "completed", "partial_failure", "failed"],
+);
+
+export const researchPaperStatusEnum = pgEnum("research_paper_status", [
+  "draft",
+  "published",
+  "archived",
 ]);
 
 // ── better-auth tables ──
@@ -512,4 +536,278 @@ export const checkoutDrafts = pgTable(
     index("checkout_drafts_email_idx").on(table.email),
     index("checkout_drafts_updated_at_idx").on(table.updatedAt),
   ],
+);
+
+export const productNotificationDispatches = pgTable(
+  "product_notification_dispatches",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    swellCouponId: varchar("swell_coupon_id", { length: 128 }).notNull(),
+    discountCode: varchar("discount_code", { length: 128 }).notNull(),
+    discountExpiresAt: timestamp("discount_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    selectedTargetCount: integer("selected_target_count").default(0).notNull(),
+    eligibleTargetCount: integer("eligible_target_count").default(0).notNull(),
+    skippedTargetCount: integer("skipped_target_count").default(0).notNull(),
+    subscriptionCount: integer("subscription_count").default(0).notNull(),
+    notifiedCount: integer("notified_count").default(0).notNull(),
+    failedCount: integer("failed_count").default(0).notNull(),
+    status: productNotificationDispatchStatusEnum("status")
+      .default("pending")
+      .notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("product_notification_dispatches_status_idx").on(table.status),
+    index("product_notification_dispatches_started_at_idx").on(table.startedAt),
+    index("product_notification_dispatches_created_by_user_id_idx").on(
+      table.createdByUserId,
+    ),
+  ],
+);
+
+export const productNotificationSubscriptions = pgTable(
+  "product_notification_subscriptions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    email: varchar("email", { length: 256 }).notNull(),
+    normalizedEmail: varchar("normalized_email", { length: 256 }).notNull(),
+    productId: varchar("product_id", { length: 128 }).notNull(),
+    productHandle: varchar("product_handle", { length: 256 }).notNull(),
+    productTitle: text("product_title").notNull(),
+    variantId: varchar("variant_id", { length: 128 }),
+    variantTitle: text("variant_title"),
+    variantKey: varchar("variant_key", { length: 128 }).notNull(),
+    status: productNotificationSubscriptionStatusEnum("status")
+      .default("pending")
+      .notNull(),
+    signupEmailSentAt: timestamp("signup_email_sent_at", {
+      withTimezone: true,
+    }),
+    signupEmailError: text("signup_email_error"),
+    lastDispatchId: uuid("last_dispatch_id").references(
+      () => productNotificationDispatches.id,
+      { onDelete: "set null" },
+    ),
+    lastAttemptedAt: timestamp("last_attempted_at", { withTimezone: true }),
+    notifiedAt: timestamp("notified_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex(
+      "product_notification_subscriptions_pending_email_variant_idx",
+    )
+      .on(table.normalizedEmail, table.productHandle, table.variantKey)
+      .where(sql`${table.status} = 'pending'`),
+    index("product_notification_subscriptions_status_idx").on(table.status),
+    index("product_notification_subscriptions_product_handle_idx").on(
+      table.productHandle,
+    ),
+    index("product_notification_subscriptions_variant_key_idx").on(
+      table.variantKey,
+    ),
+    index("product_notification_subscriptions_created_at_idx").on(
+      table.createdAt,
+    ),
+    index("product_notification_subscriptions_last_dispatch_id_idx").on(
+      table.lastDispatchId,
+    ),
+  ],
+);
+
+export const productNotificationDispatchProducts = pgTable(
+  "product_notification_dispatch_products",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    dispatchId: uuid("dispatch_id")
+      .notNull()
+      .references(() => productNotificationDispatches.id, {
+        onDelete: "cascade",
+      }),
+    productId: varchar("product_id", { length: 128 }).notNull(),
+    productHandle: varchar("product_handle", { length: 256 }).notNull(),
+    productTitle: text("product_title").notNull(),
+    variantId: varchar("variant_id", { length: 128 }),
+    variantTitle: text("variant_title"),
+    variantKey: varchar("variant_key", { length: 128 }).notNull(),
+    subscriberCount: integer("subscriber_count").default(0).notNull(),
+    notifiedCount: integer("notified_count").default(0).notNull(),
+    failedCount: integer("failed_count").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("product_notification_dispatch_products_dispatch_id_idx").on(
+      table.dispatchId,
+    ),
+    index("product_notification_dispatch_products_product_handle_idx").on(
+      table.productHandle,
+    ),
+    index("product_notification_dispatch_products_variant_key_idx").on(
+      table.variantKey,
+    ),
+    uniqueIndex("product_notification_dispatch_products_dispatch_target_idx").on(
+      table.dispatchId,
+      table.productHandle,
+      table.variantKey,
+    ),
+  ],
+);
+
+// ── Research: peptides & papers ──
+
+export const researchPeptides = pgTable(
+  "research_peptides",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    slug: varchar("slug", { length: 128 }).notNull(),
+    name: varchar("name", { length: 128 }).notNull(),
+    fullName: varchar("full_name", { length: 256 }),
+    sequence: text("sequence"),
+    description: text("description"),
+    molecularWeight: varchar("molecular_weight", { length: 64 }),
+    cas: varchar("cas", { length: 64 }),
+    productSlug: varchar("product_slug", { length: 128 }),
+    heroImageUrl: text("hero_image_url"),
+    heroImageAlt: text("hero_image_alt"),
+    tags: jsonb("tags").$type<string[]>().default([]).notNull(),
+    sortOrder: integer("sort_order").default(0).notNull(),
+    status: researchPaperStatusEnum("status").default("published").notNull(),
+    seoTitle: text("seo_title"),
+    seoDescription: text("seo_description"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("research_peptides_slug_idx").on(table.slug),
+    index("research_peptides_status_idx").on(table.status),
+    index("research_peptides_sort_order_idx").on(table.sortOrder),
+  ],
+);
+
+export const researchPapers = pgTable(
+  "research_papers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    slug: varchar("slug", { length: 256 }).notNull(),
+    title: text("title").notNull(),
+    subtitle: text("subtitle"),
+    excerpt: text("excerpt"),
+    heroImageUrl: text("hero_image_url"),
+    heroImageAlt: text("hero_image_alt"),
+    authors: jsonb("authors")
+      .$type<ResearchPaperAuthor[]>()
+      .default([])
+      .notNull(),
+    publicationDate: timestamp("publication_date", { withTimezone: true }),
+    doi: varchar("doi", { length: 256 }),
+    externalUrl: text("external_url"),
+    mdxContent: text("mdx_content").default("").notNull(),
+    readingTimeMinutes: integer("reading_time_minutes").default(0).notNull(),
+    topics: jsonb("topics").$type<string[]>().default([]).notNull(),
+    status: researchPaperStatusEnum("status").default("draft").notNull(),
+    seoTitle: text("seo_title"),
+    seoDescription: text("seo_description"),
+    ogImageUrl: text("og_image_url"),
+    canonicalUrl: text("canonical_url"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdBy: text("created_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("research_papers_slug_idx").on(table.slug),
+    index("research_papers_status_idx").on(table.status),
+    index("research_papers_published_at_idx").on(table.publishedAt),
+    index("research_papers_status_published_idx").on(
+      table.status,
+      table.publishedAt,
+    ),
+  ],
+);
+
+export const researchPaperPeptides = pgTable(
+  "research_paper_peptides",
+  {
+    paperId: uuid("paper_id")
+      .notNull()
+      .references(() => researchPapers.id, { onDelete: "cascade" }),
+    peptideId: uuid("peptide_id")
+      .notNull()
+      .references(() => researchPeptides.id, { onDelete: "cascade" }),
+    sortOrder: integer("sort_order").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.paperId, table.peptideId] }),
+    index("research_paper_peptides_paper_id_idx").on(table.paperId),
+    index("research_paper_peptides_peptide_id_idx").on(table.peptideId),
+  ],
+);
+
+export const researchPeptidesRelations = relations(
+  researchPeptides,
+  ({ many }) => ({
+    paperLinks: many(researchPaperPeptides),
+  }),
+);
+
+export const researchPapersRelations = relations(
+  researchPapers,
+  ({ many, one }) => ({
+    peptideLinks: many(researchPaperPeptides),
+    author: one(user, {
+      fields: [researchPapers.createdBy],
+      references: [user.id],
+    }),
+  }),
+);
+
+export const researchPaperPeptidesRelations = relations(
+  researchPaperPeptides,
+  ({ one }) => ({
+    paper: one(researchPapers, {
+      fields: [researchPaperPeptides.paperId],
+      references: [researchPapers.id],
+    }),
+    peptide: one(researchPeptides, {
+      fields: [researchPaperPeptides.peptideId],
+      references: [researchPeptides.id],
+    }),
+  }),
 );

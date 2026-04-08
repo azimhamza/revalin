@@ -12,11 +12,35 @@ const insightsClientSecret =
   serverClientSecret;
 const insightsProjectId = process.env.OPENPANEL_PROJECT_ID?.trim();
 
-// Server-side OpenPanel client for tracking from API routes and server components
-export const op = new OpenPanel({
-  clientId: publicClientId!,
-  clientSecret: serverClientSecret!,
-});
+let trackingClient: OpenPanel | null = null;
+
+export function hasOpenPanelTrackingConfig() {
+  return Boolean(publicClientId && serverClientSecret);
+}
+
+function getOpenPanelTrackingClient() {
+  if (!hasOpenPanelTrackingConfig()) {
+    throw new Error(
+      "Missing OpenPanel tracking configuration: NEXT_PUBLIC_OPENPANEL_CLIENT_ID and OPENPANEL_CLIENT_SECRET are required.",
+    );
+  }
+
+  if (!trackingClient) {
+    trackingClient = new OpenPanel({
+      clientId: publicClientId!,
+      clientSecret: serverClientSecret!,
+    });
+  }
+
+  return trackingClient;
+}
+
+export async function trackOpenPanelServerEvent(
+  eventName: string,
+  properties?: Record<string, unknown>,
+) {
+  return getOpenPanelTrackingClient().track(eventName, properties ?? {});
+}
 
 const EXPORT_BASE = "https://api.openpanel.dev/export";
 const INSIGHTS_BASE = "https://api.openpanel.dev/insights";

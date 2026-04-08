@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { NextResponse } from 'next/server';
 import { getLiveProduct } from '@/lib/swell';
-import { getInventoryState } from '@/lib/inventory';
 import { subscribeToBackInStock } from '@/lib/back-in-stock/service';
+import { ProductNotificationError } from '@/lib/back-in-stock/utils';
 
 const subscribeSchema = z.object({
   email: z.string().trim().email(),
@@ -19,35 +19,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Product not found.' }, { status: 404 });
     }
 
-    const variant = body.variantId ? product.variants.find(candidate => candidate.id === body.variantId) || null : null;
-    const inventory = getInventoryState(product, variant);
-
-    if (!inventory.isBackorder) {
-      return NextResponse.json(
-        {
-          error: 'This product is already ready to order.',
-        },
-        { status: 409 }
-      );
-    }
-
     const result = await subscribeToBackInStock({
       email: body.email,
-      productId: product.id,
-      productHandle: product.handle,
-      productTitle: product.title,
-      variantId: variant?.id,
-      variantTitle: variant?.title,
+      product,
+      variantId: body.variantId,
     });
 
     return NextResponse.json({
       ok: true,
       created: result.created,
       message: result.created
-        ? 'You are on the list. We will email you when this batch is ready again.'
-        : 'You are already on the list for this product.',
+        ? 'You are on the list. We will email you when this selection is back in stock.'
+        : 'You are already on the list for this selection.',
     });
   } catch (error) {
+    if (error instanceof ProductNotificationError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Enter a valid email address.' }, { status: 400 });
     }

@@ -1,6 +1,6 @@
 import { COMPLIMENTARY_SHIPPING_ENABLED, FREE_SHIPPING_THRESHOLD } from '@/lib/checkout/constants';
 import { quoteShipEngineRates, type ShipEngineCheckoutRate } from '@/lib/checkout/shipengine';
-import type { CheckoutShippingAddress } from '@/lib/checkout/types';
+import type { CheckoutAppliedDiscount, CheckoutShippingAddress } from '@/lib/checkout/types';
 import type { StorefrontCartSnapshot, SwellShipmentService } from '@/lib/checkout/swell-order-management';
 
 export type CheckoutRatedService = {
@@ -8,6 +8,9 @@ export type CheckoutRatedService = {
   name: string;
   quoteCategory?: 'cheapest' | 'best_value' | 'fastest';
   carrier?: string;
+  carrierCode?: string;
+  serviceCode?: string;
+  shipengineRateId?: string;
   pickup?: boolean;
   estimatedDays?: number | null;
   source: 'shipengine' | 'swell';
@@ -153,6 +156,8 @@ export function buildQuoteResponse(args: {
   subtotalAmount: number;
   discountAmount?: number;
   discountCode?: string;
+  discounts?: CheckoutAppliedDiscount[];
+  paymentMethod?: 'card' | 'crypto';
   services: CheckoutRatedService[];
 }) {
   const services = applyFreeShipping(
@@ -172,6 +177,8 @@ export function buildQuoteResponse(args: {
       currencyCode: args.currencyCode,
     },
     discountCode: args.discountCode,
+    discounts: args.discounts,
+    paymentMethod: args.paymentMethod,
     services,
     selectedServiceId: selectCheckoutShippingService(services)?.id || '',
   };
@@ -196,6 +203,9 @@ function mapShipEngineRatedServices(services: ShipEngineCheckoutRate[]): Checkou
     id: service.id,
     name: service.name,
     carrier: service.carrier,
+    carrierCode: service.carrierCode,
+    serviceCode: service.serviceCode,
+    shipengineRateId: service.shipengineRateId,
     estimatedDays: service.estimatedDays,
     source: 'shipengine',
     price: {

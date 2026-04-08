@@ -1,20 +1,55 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { checkoutOrders } from '@/lib/db/schema';
-import type { CheckoutOrderRecord } from '@/lib/checkout/types';
-import { isTerminalPaymentStatus } from '@/lib/checkout/constants';
+import type { CheckoutOrderPayment, CheckoutOrderProcessing, CheckoutOrderRecord } from '@/lib/checkout/types';
+import { isReusableCheckoutOrder } from '@/lib/checkout/order-recovery';
+
+type StoredCheckoutOrderPayment = CheckoutOrderPayment & {
+  __processing?: CheckoutOrderProcessing;
+};
+
+function serializeCheckoutOrderPayment(order: CheckoutOrderRecord): StoredCheckoutOrderPayment {
+  const payment = {
+    ...order.payment,
+  } as StoredCheckoutOrderPayment;
+
+  if (order.processing) {
+    payment.__processing = order.processing;
+  } else {
+    delete payment.__processing;
+  }
+
+  return payment;
+}
+
+function deserializeCheckoutOrderPayment(
+  payment: StoredCheckoutOrderPayment | CheckoutOrderPayment
+): {
+  payment: CheckoutOrderPayment;
+  processing?: CheckoutOrderProcessing;
+} {
+  const storedPayment = { ...(payment as StoredCheckoutOrderPayment) };
+  const processing = storedPayment.__processing;
+  delete storedPayment.__processing;
+
+  return {
+    payment: storedPayment as CheckoutOrderPayment,
+    processing,
+  };
+}
 
 function recordToRow(order: CheckoutOrderRecord) {
   return {
     orderId: order.orderId,
     accessKey: order.accessKey,
     cartId: order.cartId,
+    userId: order.userId ?? null,
     currencyCode: order.currencyCode,
     shippingAddress: order.shippingAddress,
     shippingService: order.shippingService ?? null,
     lines: order.lines,
     totals: order.totals,
-    payment: order.payment,
+    payment: serializeCheckoutOrderPayment(order),
     swell: order.swell,
     shipengine: order.shipengine ?? null,
     affiliate: order.affiliate ?? null,
@@ -26,24 +61,52 @@ function recordToRow(order: CheckoutOrderRecord) {
 }
 
 function rowToRecord(row: typeof checkoutOrders.$inferSelect): CheckoutOrderRecord {
+  const { payment, processing } = deserializeCheckoutOrderPayment(
+    row.payment as StoredCheckoutOrderPayment
+  );
+
   return {
     orderId: row.orderId,
     accessKey: row.accessKey,
     cartId: row.cartId || '',
+    userId: row.userId ?? null,
     currencyCode: row.currencyCode,
     shippingAddress: row.shippingAddress as CheckoutOrderRecord['shippingAddress'],
     shippingService: (row.shippingService as CheckoutOrderRecord['shippingService']) ?? undefined,
     lines: row.lines as CheckoutOrderRecord['lines'],
     totals: row.totals as CheckoutOrderRecord['totals'],
-    payment: row.payment as CheckoutOrderRecord['payment'],
+    payment,
     swell: row.swell as CheckoutOrderRecord['swell'],
     shipengine: (row.shipengine as CheckoutOrderRecord['shipengine']) ?? undefined,
     affiliate: (row.affiliate as CheckoutOrderRecord['affiliate']) ?? undefined,
+    processing,
     ipnEvents: (row.ipnEvents as CheckoutOrderRecord['ipnEvents']) ?? undefined,
     latestError: row.latestError ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function stripOrderForEquality(order: CheckoutOrderRecord) {
+  return JSON.stringify({
+    orderId: order.orderId,
+    accessKey: order.accessKey,
+    cartId: order.cartId,
+    userId: order.userId ?? null,
+    currencyCode: order.currencyCode,
+    shippingAddress: order.shippingAddress,
+    shippingService: order.shippingService ?? null,
+    lines: order.lines,
+    totals: order.totals,
+    payment: serializeCheckoutOrderPayment(order),
+    swell: order.swell,
+    shipengine: order.shipengine ?? null,
+    affiliate: order.affiliate ?? null,
+    processing: order.processing ?? null,
+    ipnEvents: order.ipnEvents ?? null,
+    latestError: order.latestError ?? null,
+    createdAt: order.createdAt,
+  });
 }
 
 export async function getCheckoutOrder(orderId: string): Promise<CheckoutOrderRecord | null> {
@@ -67,6 +130,7 @@ export async function saveCheckoutOrder(order: CheckoutOrderRecord): Promise<Che
       set: {
         accessKey: row.accessKey,
         cartId: row.cartId,
+        userId: row.userId,
         currencyCode: row.currencyCode,
         shippingAddress: row.shippingAddress,
         shippingService: row.shippingService,
@@ -97,6 +161,10 @@ export async function updateCheckoutOrder(
     if (!current) return null;
 
     const next = updater(current);
+    if (stripOrderForEquality(current) === stripOrderForEquality(next)) {
+      return current;
+    }
+
     const now = new Date();
     next.updatedAt = now.toISOString();
     const row = recordToRow(next);
@@ -107,6 +175,7 @@ export async function updateCheckoutOrder(
       .set({
         accessKey: row.accessKey,
         cartId: row.cartId,
+        userId: row.userId,
         currencyCode: row.currencyCode,
         shippingAddress: row.shippingAddress,
         shippingService: row.shippingService,
@@ -153,8 +222,11 @@ export async function findCheckoutOrderByCartId(cartId: string): Promise<Checkou
     .where(eq(checkoutOrders.cartId, cartId))
     .orderBy(desc(checkoutOrders.updatedAt));
 
-  const activeRow = rows.find(row => !isTerminalPaymentStatus((row.payment as CheckoutOrderRecord['payment'])?.status));
-  return activeRow ? rowToRecord(activeRow) : null;
+  const reusableOrder = rows
+    .map(rowToRecord)
+    .find(order => isReusableCheckoutOrder(order));
+
+  return reusableOrder || null;
 }
 
 export async function findCheckoutOrderByPaymentId(paymentId: string): Promise<CheckoutOrderRecord | null> {

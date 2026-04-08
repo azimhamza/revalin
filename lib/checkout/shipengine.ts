@@ -1,4 +1,4 @@
-import type { CheckoutShippingAddress } from '@/lib/checkout/types';
+import type { CheckoutShippingAddress, CheckoutShippingService } from '@/lib/checkout/types';
 
 const SHIPENGINE_API_KEY = (process.env.SHIPENGINE_API_KEY || '').trim();
 const SHIPENGINE_API_BASE = (process.env.SHIPENGINE_API_BASE || 'https://api.shipengine.com').trim().replace(/\/$/, '');
@@ -61,6 +61,10 @@ type ShipEngineRateApiResponse = {
   errors?: ShipEngineApiError[];
 };
 
+export type ShipEnginePurchasableRate = NonNullable<
+  NonNullable<ShipEngineRateApiResponse['rate_response']>['rates']
+>[number];
+
 type ShipEngineLabelResponse = {
   tracking_number?: string;
   carrier_code?: string;
@@ -76,6 +80,8 @@ export type ShipEngineCheckoutRate = {
   id: string;
   name: string;
   carrier?: string;
+  carrierCode?: string;
+  serviceCode?: string;
   estimatedDays?: number | null;
   price: number;
   currencyCode: string;
@@ -101,6 +107,55 @@ function buildShipEngineErrorMessage(errors: ShipEngineApiError[] | undefined, f
     .filter((message): message is string => Boolean(message));
 
   return messages[0] || fallback;
+}
+
+function selectLowestPricedRate<
+  T extends {
+    shipping_amount?: {
+      amount?: number;
+    };
+  },
+>(rates: T[]) {
+  return rates.reduce((lowest, current) => {
+    const currentPrice = Number(current.shipping_amount?.amount ?? Infinity);
+    const lowestPrice = Number(lowest.shipping_amount?.amount ?? Infinity);
+    return currentPrice < lowestPrice ? current : lowest;
+  }, rates[0]!);
+}
+
+export function selectShipEngineRateForService(args: {
+  rates: ShipEnginePurchasableRate[];
+  selectedShippingService: CheckoutShippingService;
+}) {
+  if (args.selectedShippingService.source !== 'shipengine') {
+    throw new Error(
+      'Manual review required: the selected checkout shipping service was not sourced from ShipEngine.'
+    );
+  }
+
+  if (
+    !args.selectedShippingService.carrierCode ||
+    !args.selectedShippingService.serviceCode
+  ) {
+    throw new Error(
+      'Manual review required: the selected ShipEngine checkout service is missing carrier/service identity.'
+    );
+  }
+
+  const matchingRates = args.rates.filter(
+    rate =>
+      rate.rate_id &&
+      rate.carrier_code === args.selectedShippingService.carrierCode &&
+      rate.service_code === args.selectedShippingService.serviceCode
+  );
+
+  if (matchingRates.length === 0) {
+    throw new Error(
+      `Manual review required: the selected shipping service (${args.selectedShippingService.carrier || 'ShipEngine'} ${args.selectedShippingService.name}) is no longer available for label purchase.`
+    );
+  }
+
+  return selectLowestPricedRate(matchingRates);
 }
 
 function buildShipmentPayload(args: {
@@ -275,6 +330,8 @@ export async function quoteShipEngineRates(args: {
         id: `shipengine:${normalizeRateToken(carrier)}:${normalizeRateToken(service)}`,
         name: service,
         carrier,
+        carrierCode: rate.carrier_code || undefined,
+        serviceCode: rate.service_code || undefined,
         estimatedDays: rate.delivery_days ?? null,
         price,
         currencyCode: (rate.shipping_amount?.currency || args.currencyCode).toUpperCase(),
@@ -292,6 +349,7 @@ export async function quoteShipEngineRates(args: {
 export async function purchaseShipEngineLabel(args: {
   shippingAddress: CheckoutShippingAddress;
   itemCount: number;
+  selectedShippingService: CheckoutShippingService;
 }) {
   const carrierIds = await getShipEngineCarrierIds();
   if (!isShipEngineConfigured() || carrierIds.length === 0) {
@@ -317,17 +375,16 @@ export async function purchaseShipEngineLabel(args: {
     throw new Error(buildShipEngineErrorMessage(rateResult.rate_response?.errors, 'ShipEngine returned no rates for label purchase.'));
   }
 
-  const lowestRate = allRates.reduce((lowest, current) => {
-    const currentPrice = Number(current.shipping_amount?.amount ?? Infinity);
-    const lowestPrice = Number(lowest.shipping_amount?.amount ?? Infinity);
-    return currentPrice < lowestPrice ? current : lowest;
-  }, allRates[0]!);
+  const selectedRate = selectShipEngineRateForService({
+    rates: allRates,
+    selectedShippingService: args.selectedShippingService,
+  });
 
-  if (!lowestRate.rate_id) {
+  if (!selectedRate.rate_id) {
     throw new Error('ShipEngine returned a rate without a rate_id.');
   }
 
-  const label = await shipEngineRequest<ShipEngineLabelResponse>(`/v2/labels/rates/${lowestRate.rate_id}`, {
+  const label = await shipEngineRequest<ShipEngineLabelResponse>(`/v2/labels/rates/${selectedRate.rate_id}`, {
     method: 'POST',
     body: JSON.stringify({
       validate_address: 'validate_and_clean',
@@ -345,8 +402,8 @@ export async function purchaseShipEngineLabel(args: {
   return {
     trackingCode: label.tracking_number || null,
     labelUrl: label.label_download?.pdf || label.label_download?.href || null,
-    carrier: lowestRate.carrier_friendly_name || lowestRate.carrier_code || null,
-    service: lowestRate.service_type || lowestRate.service_code || null,
+    carrier: selectedRate.carrier_friendly_name || selectedRate.carrier_code || null,
+    service: selectedRate.service_type || selectedRate.service_code || null,
     publicTrackingUrl: trackingUrl,
   };
 }

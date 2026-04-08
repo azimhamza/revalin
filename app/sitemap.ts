@@ -2,11 +2,11 @@ import type { MetadataRoute } from 'next';
 
 import { getCollections, getProducts } from '@/lib/swell';
 import { HIDDEN_PRODUCT_TAG } from '@/lib/constants';
+import { listPeptides, listPublishedPapers } from '@/lib/research/queries';
 
 const SITE_URL = 'https://revalin.com';
 
-// Research slugs with actual detail pages (see app/research/[slug]/page.tsx peptidesData).
-const RESEARCH_SLUGS = ['bpc-157', 'tb-500'];
+export const revalidate = 3600;
 
 const STATIC_ROUTES: Array<{
   path: string;
@@ -16,6 +16,7 @@ const STATIC_ROUTES: Array<{
   { path: '/', changeFrequency: 'daily', priority: 1 },
   { path: '/shop', changeFrequency: 'daily', priority: 0.9 },
   { path: '/research', changeFrequency: 'weekly', priority: 0.7 },
+  { path: '/research/papers', changeFrequency: 'weekly', priority: 0.7 },
   { path: '/coa', changeFrequency: 'weekly', priority: 0.6 },
   { path: '/about', changeFrequency: 'monthly', priority: 0.5 },
   { path: '/contact', changeFrequency: 'monthly', priority: 0.5 },
@@ -35,12 +36,31 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: route.priority,
   }));
 
-  const researchEntries: MetadataRoute.Sitemap = RESEARCH_SLUGS.map(slug => ({
-    url: `${SITE_URL}/research/${slug}`,
-    lastModified: now,
-    changeFrequency: 'monthly',
-    priority: 0.5,
-  }));
+  let peptideEntries: MetadataRoute.Sitemap = [];
+  try {
+    const peptides = await listPeptides();
+    peptideEntries = peptides.map(peptide => ({
+      url: `${SITE_URL}/research/${peptide.slug}`,
+      lastModified: peptide.updatedAt ?? now,
+      changeFrequency: 'weekly' as const,
+      priority: 0.6,
+    }));
+  } catch (error) {
+    console.error('Sitemap: failed to load research peptides', error);
+  }
+
+  let paperEntries: MetadataRoute.Sitemap = [];
+  try {
+    const papers = await listPublishedPapers({ limit: 500 });
+    paperEntries = papers.map(paper => ({
+      url: `${SITE_URL}/research/papers/${paper.slug}`,
+      lastModified: paper.publishedAt ?? now,
+      changeFrequency: 'weekly' as const,
+      priority: 0.6,
+    }));
+  } catch (error) {
+    console.error('Sitemap: failed to load research papers', error);
+  }
 
   let collectionEntries: MetadataRoute.Sitemap = [];
   try {
@@ -72,5 +92,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     console.error('Sitemap: failed to load products', error);
   }
 
-  return [...staticEntries, ...collectionEntries, ...productEntries, ...researchEntries];
+  return [
+    ...staticEntries,
+    ...collectionEntries,
+    ...productEntries,
+    ...peptideEntries,
+    ...paperEntries,
+  ];
 }

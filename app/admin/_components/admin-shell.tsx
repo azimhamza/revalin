@@ -9,10 +9,10 @@ export const adminFieldClass =
   "h-7 rounded-none border-border bg-background text-xs shadow-sm placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:ring-offset-0";
 
 export const adminPrimaryButtonClass =
-  "h-7 rounded-none border border-transparent bg-primary px-2.5 text-[10px] uppercase tracking-[0.14em] text-primary-foreground shadow-sm hover:bg-primary/92";
+  "inline-flex h-7 items-center justify-center gap-1.5 whitespace-nowrap rounded-none border border-transparent bg-primary px-2.5 text-[10px] uppercase tracking-[0.14em] leading-none text-primary-foreground shadow-sm hover:bg-primary/92";
 
 export const adminSecondaryButtonClass =
-  "h-7 rounded-none border border-border bg-background px-2.5 text-[10px] uppercase tracking-[0.14em] text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground";
+  "inline-flex h-7 items-center justify-center gap-1.5 whitespace-nowrap rounded-none border border-border bg-background px-2.5 text-[10px] uppercase tracking-[0.14em] leading-none text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground";
 
 type AdminPanelProps = {
   children: ReactNode;
@@ -122,16 +122,16 @@ export function AdminSectionHeader({
     >
       <div className="space-y-1">
         {eyebrow ? (
-          <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-current opacity-60">
             {eyebrow}
           </p>
         ) : null}
         <div className="space-y-0.5">
-          <h2 className="text-[1.15rem] font-semibold tracking-[-0.04em] text-foreground md:text-[1.3rem]">
+          <h2 className="text-[1.15rem] font-semibold tracking-[-0.04em] text-current md:text-[1.3rem]">
             {title}
           </h2>
           {description ? (
-            <p className="max-w-3xl text-[11px] leading-4 text-muted-foreground">
+            <p className="max-w-3xl text-[11px] leading-4 text-current opacity-70">
               {description}
             </p>
           ) : null}

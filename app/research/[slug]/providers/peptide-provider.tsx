@@ -2,23 +2,17 @@
 
 import { createContext, useContext, useState, useMemo, ReactNode } from 'react';
 
-export interface Study {
-  title: string;
-  authors: string;
-  year: string;
-  pmid: string;
-  url: string;
-}
-
 export interface Article {
   id: string;
+  slug: string;
   title: string;
   excerpt: string;
   topic: string;
   date: string;
   readTime: string;
-  content: string;
-  studies: Study[];
+  heroImageUrl?: string | null;
+  heroImageAlt?: string | null;
+  peptides: Array<{ slug: string; name: string }>;
 }
 
 export interface PeptideData {
@@ -30,6 +24,8 @@ export interface PeptideData {
   molecularWeight: string;
   cas: string;
   productSlug: string;
+  heroImageUrl?: string | null;
+  heroImageAlt?: string | null;
 }
 
 interface PeptideContextType {

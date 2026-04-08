@@ -46,7 +46,7 @@ export function PeptideMobileFilters() {
             <DrawerTitle>
               Filters{' '}
               {filterCount > 0 && (
-                <span className="text-muted-foreground">({filterCount})</span>
+                <span className="text-foreground/50">({filterCount})</span>
               )}
             </DrawerTitle>
             <Button

@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getNowPaymentsPayment } from '@/lib/checkout/nowpayments';
-import { checkShieldClimbPaymentStatus } from '@/lib/checkout/shieldclimb';
-import { getCheckoutOrder, updateCheckoutOrder } from '@/lib/checkout/order-store';
+import { SHIELDCLIMB_PUBLIC_POLLING_ID } from '@/lib/checkout/constants';
+import { getCheckoutOrder } from '@/lib/checkout/order-store';
+import { applyVerifiedPaymentStatus } from '@/lib/checkout/payment-lifecycle';
 import { isShieldClimbPayment, isNowPaymentsPayment, toPublicCheckoutOrder } from '@/lib/checkout/types';
-import { syncCheckoutOrderToSwell, syncShieldClimbOrderToSwell } from '@/lib/checkout/swell-payment-sync';
-import { sendOrderConfirmationEmail } from '@/lib/email/order-emails';
+import { verifyAndFinalizeShieldClimbPayment } from '@/lib/checkout/shieldclimb-payment-verification';
 import { sendPaymentFailedEvent } from '@/lib/email/marketing-events';
-import { isSuccessfulPaymentStatus, markWelcomeDiscountUsed } from '@/lib/email/welcome-discount';
 
 export async function GET(
   request: Request,
@@ -30,44 +29,16 @@ export async function GET(
   try {
     // ── ShieldClimb path ──
     if (isShieldClimbPayment(order.payment)) {
-      if (order.payment.ipnToken !== params.paymentId) {
+      if (
+        params.paymentId !== SHIELDCLIMB_PUBLIC_POLLING_ID &&
+        params.paymentId !== order.payment.ipnToken
+      ) {
         return NextResponse.json({ error: 'Checkout session not found.' }, { status: 404 });
       }
 
-      const scStatus = await checkShieldClimbPaymentStatus(order.payment.ipnToken);
-
-      if (scStatus.status === 'paid' && order.payment.status !== 'paid') {
-        // Sync to Swell + send confirmation email (non-blocking)
-        const updatedOrder = await updateCheckoutOrder(orderId, current => ({
-          ...current,
-          payment: {
-            ...current.payment,
-            status: 'paid',
-            valueCoinReceived: scStatus.value_coin ?? null,
-            txidOut: scStatus.txid_out ?? null,
-            updatedAt: new Date().toISOString(),
-          },
-        }));
-
-        if (updatedOrder) {
-          syncShieldClimbOrderToSwell(updatedOrder).catch(err =>
-            console.error('ShieldClimb Swell sync failed:', err)
-          );
-          sendOrderConfirmationEmail(updatedOrder).catch(err =>
-            console.error('Order confirmation email failed:', err)
-          );
-          markWelcomeDiscountUsed({
-            email: updatedOrder.shippingAddress.email,
-            discountCode: updatedOrder.totals.discountCode,
-          }).catch(err =>
-            console.error('Welcome discount usage update failed:', err)
-          );
-        }
-
-        return NextResponse.json({ order: updatedOrder ? toPublicCheckoutOrder(updatedOrder) : toPublicCheckoutOrder(order) });
-      }
-
-      return NextResponse.json({ order: toPublicCheckoutOrder(order) });
+      const verification = await verifyAndFinalizeShieldClimbPayment({ orderId });
+      const orderForResponse = verification.order ?? order;
+      return NextResponse.json({ order: toPublicCheckoutOrder(orderForResponse) });
     }
 
     // ── NOWPayments path ──
@@ -77,19 +48,25 @@ export async function GET(
       }
 
       const payment = await getNowPaymentsPayment(params.paymentId);
-      const syncedPayment = await syncCheckoutOrderToSwell(order, payment);
-      const updated = await updateCheckoutOrder(orderId, current => {
-        if (!isNowPaymentsPayment(current.payment)) return current;
-        return {
-          ...current,
-          payment: {
+      const result = await applyVerifiedPaymentStatus({
+        orderId,
+        provider: 'nowpayments',
+        targetStatus: payment.payment_status,
+        source: 'nowpayments_poll',
+        paymentUpdater: current => {
+          if (!isNowPaymentsPayment(current.payment)) {
+            return current.payment;
+          }
+
+          return {
             ...current.payment,
-            swellPaymentId: syncedPayment?.id || current.payment.swellPaymentId,
+            paymentId: String(payment.payment_id),
             status: payment.payment_status,
             payAddress: payment.pay_address,
             payAmount: String(payment.pay_amount),
             amountReceived:
-              payment.amount_received === undefined || payment.amount_received === null
+              payment.amount_received === undefined ||
+              payment.amount_received === null
                 ? null
                 : String(payment.amount_received),
             payinExtraId: payment.payin_extra_id ?? null,
@@ -98,39 +75,27 @@ export async function GET(
             timeLimit: payment.time_limit ?? null,
             expirationEstimateDate: payment.expiration_estimate_date ?? null,
             validUntil: payment.valid_until ?? null,
+            purchaseId: payment.purchase_id,
+            paymentCurrency: payment.pay_currency,
             createdAt: payment.created_at,
             updatedAt: payment.updated_at,
-          },
-          latestError: null,
-        };
+          };
+        },
       });
 
       if (
-        updated &&
-        isSuccessfulPaymentStatus(payment.payment_status) &&
-        !isSuccessfulPaymentStatus(order.payment.status)
+        result.order &&
+        result.transitionedToFailure &&
+        ['expired', 'failed', 'refunded'].includes(result.order.payment.status)
       ) {
-        markWelcomeDiscountUsed({
-          email: updated.shippingAddress.email,
-          discountCode: updated.totals.discountCode,
-        }).catch(err =>
-          console.error('Welcome discount usage update failed:', err)
-        );
-      }
-
-      // Fire payment failed event if status transitioned to expired/failed
-      const failedStatuses = ['expired', 'failed', 'refunded'];
-      if (
-        failedStatuses.includes(payment.payment_status) &&
-        !failedStatuses.includes(order.payment.status)
-      ) {
-        const orderForEvent = updated || order;
-        sendPaymentFailedEvent(orderForEvent).catch(err =>
+        sendPaymentFailedEvent(result.order).catch(err =>
           console.error('Payment failed event error:', err)
         );
       }
 
-      return NextResponse.json({ order: updated ? toPublicCheckoutOrder(updated) : toPublicCheckoutOrder(order) });
+      return NextResponse.json({
+        order: toPublicCheckoutOrder(result.order || order),
+      });
     }
 
     return NextResponse.json({ error: 'Unknown payment provider.' }, { status: 400 });

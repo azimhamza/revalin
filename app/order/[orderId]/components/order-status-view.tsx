@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Clock, ExternalLink, Package, Truck } from 'lucide-react';
 import type { CheckoutOrderPublic } from '@/lib/checkout/types';
+import { getCheckoutDiscounts } from '@/lib/checkout/pricing';
 import { cn } from '@/lib/utils';
 
 type Props = {
@@ -99,6 +100,12 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
   const [order, setOrder] = useState<CheckoutOrderPublic>(initialOrder);
   const status = deriveStatus(order);
   const isPaid = order.payment.status === 'finished' || order.payment.status === 'paid';
+  const orderDiscounts = getCheckoutDiscounts({
+    currencyCode: order.currencyCode,
+    discounts: order.totals.discounts,
+    discountAmount: order.totals.discountAmount?.amount,
+    discountCode: order.totals.discountCode,
+  });
 
   // Live polling every 15 seconds
   useEffect(() => {
@@ -225,16 +232,14 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
               {formatCurrency(order.totals.subtotalAmount.amount, order.currencyCode)}
             </span>
           </div>
-          {order.totals.discountAmount && Number(order.totals.discountAmount.amount) > 0 ? (
-            <div className="flex justify-between text-sm">
-              <span className="text-[#0B2E2F]/60">
-                Discount{order.totals.discountCode ? ` (${order.totals.discountCode})` : ''}
-              </span>
+          {orderDiscounts.map(discount => (
+            <div key={`${discount.kind}:${discount.code || discount.label}`} className="flex justify-between text-sm">
+              <span className="text-[#0B2E2F]/60">{discount.label}</span>
               <span className="font-medium text-[#0B2E2F]">
-                -{formatCurrency(order.totals.discountAmount.amount, order.currencyCode)}
+                -{formatCurrency(discount.amount.amount, order.currencyCode)}
               </span>
             </div>
-          ) : null}
+          ))}
           {order.totals.shippingAmount ? (
             <div className="flex justify-between text-sm">
               <span className="text-[#0B2E2F]/60">Shipping</span>

@@ -63,7 +63,6 @@ export default async function AffiliateSignupPage() {
     );
   }
 
-  const footer = await Footer();
   const existingApplicationTitle = "Application on file";
 
   return (
@@ -260,7 +259,7 @@ export default async function AffiliateSignupPage() {
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.03] via-transparent to-black/10" />
         </div>
       </div>
-      {footer}
+      <Footer />
     </>
   );
 }

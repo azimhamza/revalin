@@ -1,8 +1,9 @@
+import { use } from 'react';
 import { getRelatedProducts } from '@/lib/swell';
 import { Product } from '@/lib/swell/types';
 import { ProductCard } from '@/app/shop/components/product-card';
 
-export async function RelatedProducts({
+export function RelatedProducts({
   product,
   currencyCode,
   className,
@@ -11,7 +12,7 @@ export async function RelatedProducts({
   currencyCode?: string;
   className?: string;
 }) {
-  const related = await getRelatedProducts(product, 4, currencyCode);
+  const related = use(getRelatedProducts(product, 4, currencyCode));
 
   if (related.length === 0) return null;
 

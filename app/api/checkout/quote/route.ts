@@ -22,6 +22,7 @@ import {
   mapSwellRatedServices,
   type CheckoutRatedService,
 } from '@/lib/checkout/shipping-rates';
+import { calculateCheckoutPricing } from '@/lib/checkout/pricing';
 
 const countryCodeSchema = z.string().trim().toUpperCase().regex(/^[A-Z]{2}$/, 'Invalid country code');
 
@@ -72,6 +73,7 @@ const cartSnapshotSchema = z.object({
 const quoteRequestSchema = shippingSchema.extend({
   cartSnapshot: cartSnapshotSchema.optional(),
   discountCode: z.string().trim().min(1).optional(),
+  paymentMethod: z.enum(['card', 'crypto']).optional(),
 });
 
 async function estimateTaxForSelectedService(args: {
@@ -199,7 +201,14 @@ export async function POST(request: Request) {
       comments: body.notes,
       couponCode: body.discountCode,
     });
-    const discountAmount = Number(swellCart.discount_total ?? swellCart.item_discount ?? 0);
+    const couponDiscountAmount = Number(swellCart.discount_total ?? swellCart.item_discount ?? 0);
+    const pricing = calculateCheckoutPricing({
+      currencyCode: swellCart.currency || resolvedCurrencyCode,
+      subtotalAmount,
+      couponDiscountAmount,
+      couponCode: body.discountCode || swellCart.coupon_code,
+      paymentMethod: body.paymentMethod === 'crypto' ? 'crypto' : 'card',
+    });
 
     const fallbackServices = mapSwellRatedServices(
       swellCart.shipment_rating?.services || [],
@@ -209,8 +218,10 @@ export async function POST(request: Request) {
     const quote = buildQuoteResponse({
       currencyCode: swellCart.currency || resolvedCurrencyCode,
       subtotalAmount,
-      discountAmount,
+      discountAmount: pricing.discountTotalValue,
       discountCode: body.discountCode || swellCart.coupon_code,
+      discounts: pricing.discounts,
+      paymentMethod: body.paymentMethod === 'crypto' ? 'crypto' : 'card',
       services: preferredServices.length > 0 ? preferredServices : fallbackServices,
     });
 

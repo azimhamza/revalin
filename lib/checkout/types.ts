@@ -28,10 +28,18 @@ export type CheckoutOrderLine = {
   lineTotal: Money;
 };
 
+export type CheckoutAppliedDiscount = {
+  kind: 'coupon' | 'crypto' | 'manual';
+  label: string;
+  amount: Money;
+  code?: string;
+};
+
 export type CheckoutOrderTotals = {
   subtotalAmount: Money;
   discountAmount?: Money;
   discountCode?: string;
+  discounts?: CheckoutAppliedDiscount[];
   taxAmount?: Money;
   totalAmount: Money;
   shippingAmount?: Money;
@@ -45,6 +53,9 @@ export type CheckoutShippingService = {
   quoteCategory?: 'cheapest' | 'best_value' | 'fastest';
   source?: 'shipengine' | 'swell';
   carrier?: string;
+  carrierCode?: string;
+  serviceCode?: string;
+  shipengineRateId?: string;
   estimatedDays?: number | null;
   price: Money;
   originalPrice?: Money;
@@ -80,6 +91,7 @@ export type ShieldClimbPaymentData = {
   addressIn: string;
   polygonAddressIn: string;
   ipnToken: string;
+  callbackToken?: string;
   status: string;
   redirectUrl: string;
   swellPaymentId?: string;
@@ -91,6 +103,20 @@ export type ShieldClimbPaymentData = {
 };
 
 export type CheckoutOrderPayment = NowPaymentsPaymentData | ShieldClimbPaymentData;
+
+export type ShieldClimbPublicPaymentData = {
+  provider: 'shieldclimb';
+  status: string;
+  redirectUrl: string;
+  swellPaymentId?: string;
+  valueCoinReceived?: string | null;
+  txidIn?: string | null;
+  txidOut?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type CheckoutOrderPublicPayment = NowPaymentsPaymentData | ShieldClimbPublicPaymentData;
 
 export function isShieldClimbPayment(payment: CheckoutOrderPayment): payment is ShieldClimbPaymentData {
   return payment.provider === 'shieldclimb';
@@ -124,6 +150,34 @@ export type CheckoutOrderShipEngine = {
   labelError?: string;
 };
 
+export type CheckoutProcessingStepStatus =
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'skipped';
+
+export type CheckoutProcessingStepState = {
+  status: CheckoutProcessingStepStatus;
+  startedAt?: string;
+  completedAt?: string;
+  attempts: number;
+  lastError?: string | null;
+  claimId?: string | null;
+};
+
+export type CheckoutOrderProcessing = {
+  swellPayment: CheckoutProcessingStepState;
+  paymentCompletedEvent: CheckoutProcessingStepState;
+  purchaseTelemetry: CheckoutProcessingStepState;
+  welcomeDiscount: CheckoutProcessingStepState;
+  affiliatePayout: CheckoutProcessingStepState;
+  confirmationEmail: CheckoutProcessingStepState;
+  labelPurchase: CheckoutProcessingStepState;
+  shippingLabelEmail: CheckoutProcessingStepState;
+  shippedEmail: CheckoutProcessingStepState;
+};
+
 export type CheckoutOrderAffiliate = {
   id: string;
   code: string;
@@ -140,6 +194,7 @@ export type CheckoutOrderRecord = {
   orderId: string;
   accessKey: string;
   cartId: string;
+  userId?: string | null;
   createdAt: string;
   updatedAt: string;
   currencyCode: string;
@@ -151,13 +206,43 @@ export type CheckoutOrderRecord = {
   swell: CheckoutOrderSwell;
   shipengine?: CheckoutOrderShipEngine;
   affiliate?: CheckoutOrderAffiliate | null;
+  processing?: CheckoutOrderProcessing;
   latestError?: string | null;
   ipnEvents?: CheckoutIpnEvent[];
 };
 
-export type CheckoutOrderPublic = Omit<CheckoutOrderRecord, 'accessKey'>;
+export type CheckoutOrderPublic = Omit<CheckoutOrderRecord, 'accessKey' | 'payment' | 'processing' | 'userId'> & {
+  payment: CheckoutOrderPublicPayment;
+};
+
+function toPublicCheckoutPayment(payment: CheckoutOrderPayment): CheckoutOrderPublicPayment {
+  if (!isShieldClimbPayment(payment)) {
+    return payment;
+  }
+
+  return {
+    provider: payment.provider,
+    status: payment.status,
+    redirectUrl: payment.redirectUrl,
+    swellPaymentId: payment.swellPaymentId,
+    valueCoinReceived: payment.valueCoinReceived,
+    txidIn: payment.txidIn,
+    txidOut: payment.txidOut,
+    createdAt: payment.createdAt,
+    updatedAt: payment.updatedAt,
+  };
+}
 
 export function toPublicCheckoutOrder(order: CheckoutOrderRecord): CheckoutOrderPublic {
-  const { accessKey: _accessKey, ...publicOrder } = order;
-  return publicOrder;
+  const {
+    accessKey: _accessKey,
+    userId: _userId,
+    processing: _processing,
+    payment,
+    ...publicOrder
+  } = order;
+  return {
+    ...publicOrder,
+    payment: toPublicCheckoutPayment(payment),
+  };
 }

@@ -3,7 +3,6 @@
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { SidebarLinks } from '@/components/layout/sidebar/product-sidebar-links';
-import { PeptideInfo } from './peptide-info';
 import { TopicFilter } from './topic-filter';
 import { usePeptide } from '../providers/peptide-provider';
 
@@ -40,7 +39,6 @@ export function PeptideDesktopFilters({ className }: { className?: string }) {
             Clear
           </Button>
         </div>
-        <PeptideInfo />
         <TopicFilter />
       </div>
 

@@ -994,6 +994,8 @@ function sortProducts(
       case 'CREATED':
       case 'CREATED_AT':
         return new Date(product.date_created || 0).getTime();
+      case 'UPDATED_AT':
+        return new Date(product.date_updated || product.date_created || 0).getTime();
       default:
         return 0;
     }

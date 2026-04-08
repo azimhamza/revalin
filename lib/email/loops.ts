@@ -22,7 +22,6 @@ export async function sendTransactionalEmail(args: {
   transactionalId: string;
   dataVariables?: TransactionalVariables;
   addToAudience?: boolean;
-  attachments?: Array<{ filename: string; data: string; contentType: string }>;
   headers?: Record<string, string>;
 }) {
   const apiKey = process.env.LOOPS_API_KEY?.trim();
@@ -39,7 +38,6 @@ export async function sendTransactionalEmail(args: {
     email: args.email,
     addToAudience: args.addToAudience,
     dataVariables: args.dataVariables,
-    attachments: args.attachments,
     headers: args.headers,
   });
 
