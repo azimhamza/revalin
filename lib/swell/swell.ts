@@ -546,40 +546,6 @@ function getImageUrl(image?: SwellApiImage): string {
   return direct;
 }
 
-function toImageCacheVersionToken(value?: string): string | undefined {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-
-  const parsed = Date.parse(trimmed);
-  if (Number.isFinite(parsed) && parsed > 0) {
-    return String(parsed);
-  }
-
-  return trimmed;
-}
-
-function getImageCacheVersion(product: SwellApiProduct, image?: SwellApiImage): string | undefined {
-  const token =
-    toImageCacheVersionToken(image?.date_updated) ||
-    toImageCacheVersionToken(image?.file?.date_updated) ||
-    toImageCacheVersionToken(product.date_updated) ||
-    toImageCacheVersionToken(product.date_created);
-
-  return token;
-}
-
-function toCachedImageUrl(url: string, version?: string): string {
-  if (!url || !/^https?:\/\//i.test(url)) return url;
-
-  const params = new URLSearchParams({ src: url });
-  if (version) {
-    params.set('v', version);
-  }
-
-  return `/api/image-cache?${params.toString()}`;
-}
-
 function getImageAltText(image: SwellApiImage | undefined, fallback = ''): string {
   const explicitAlt = image?.alt || image?.caption || image?.name;
   if (explicitAlt) return explicitAlt;
@@ -845,39 +811,29 @@ function mapSwellProduct(product: SwellApiProduct, fallbackCurrencyCode = DEFAUL
 
   const imageCandidates = [product.image, ...(product.images || [])].filter(Boolean) as SwellApiImage[];
   const productImageNodes = imageCandidates
-    .map(image => {
-      const sourceUrl = getImageUrl(image);
-      const version = getImageCacheVersion(product, image);
-
-      return {
-        node: {
-          url: toCachedImageUrl(sourceUrl, version),
-          altText: getImageAltText(image, product.name || ''),
-          thumbhash: undefined,
-          selectedOptions: undefined,
-        },
-      };
-    })
+    .map(image => ({
+      node: {
+        url: getImageUrl(image),
+        altText: getImageAltText(image, product.name || ''),
+        thumbhash: undefined,
+        selectedOptions: undefined,
+      },
+    }))
     .filter(image => Boolean(image.node.url));
 
   const variantImageNodes = normalizedVariants.flatMap(variant =>
     (variant.images || [])
-      .map(image => {
-        const sourceUrl = getImageUrl(image);
-        const version = getImageCacheVersion(product, image);
-
-        return {
-          node: {
-            url: toCachedImageUrl(sourceUrl, version),
-            altText: getImageAltText(image, `${product.name || 'Product'} ${variant.title}`),
-            thumbhash: undefined,
-            selectedOptions: variant.selectedOptions.map(option => ({
-              name: option.name.toLowerCase(),
-              value: option.value.toLowerCase(),
-            })),
-          },
-        };
-      })
+      .map(image => ({
+        node: {
+          url: getImageUrl(image),
+          altText: getImageAltText(image, `${product.name || 'Product'} ${variant.title}`),
+          thumbhash: undefined,
+          selectedOptions: variant.selectedOptions.map(option => ({
+            name: option.name.toLowerCase(),
+            value: option.value.toLowerCase(),
+          })),
+        },
+      }))
       .filter(image => Boolean(image.node.url))
   );
 

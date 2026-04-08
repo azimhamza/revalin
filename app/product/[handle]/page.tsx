@@ -33,17 +33,6 @@ import { ProductInventoryPanel } from './components/product-inventory-panel';
 import { ProductViewTracker } from './components/product-view-tracker';
 import { getInventoryState } from '@/lib/inventory';
 
-function getShareableImageUrl(url?: string): string {
-  if (!url || !url.startsWith('/api/image-cache?')) return url || '';
-
-  try {
-    const parsed = new URL(url, 'https://revalin.local');
-    return parsed.searchParams.get('src') || url;
-  } catch {
-    return url;
-  }
-}
-
 // Generate static params for all products at build time
 export async function generateStaticParams() {
   try {
@@ -65,7 +54,6 @@ export async function generateMetadata(props: { params: Promise<{ handle: string
   if (!product) return notFound();
 
   const { url, width, height, altText: alt } = product.featuredImage || {};
-  const shareableImageUrl = getShareableImageUrl(url);
   const indexable = !product.tags.includes(HIDDEN_PRODUCT_TAG);
 
   return {
@@ -82,11 +70,11 @@ export async function generateMetadata(props: { params: Promise<{ handle: string
         follow: indexable,
       },
     },
-    openGraph: shareableImageUrl
+    openGraph: url
       ? {
           images: [
             {
-              url: shareableImageUrl,
+              url,
               width,
               height,
               alt,
@@ -113,7 +101,7 @@ export default async function ProductPage(props: { params: Promise<{ handle: str
     '@type': 'Product',
     name: product.title,
     description: product.description,
-    image: getShareableImageUrl(product.featuredImage.url),
+    image: product.featuredImage.url,
     offers: {
       '@type': 'AggregateOffer',
       availability: inventory.isBackorder ? 'https://schema.org/BackOrder' : 'https://schema.org/InStock',
