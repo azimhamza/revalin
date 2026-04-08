@@ -247,6 +247,10 @@ function buildAuthHeaders(apiUrl: string): HeadersInit[] {
   return headers;
 }
 
+function shouldRetryWithDefaultCurrency(currencyCode?: string): boolean {
+  return normalizeCurrencyCode(currencyCode, DEFAULT_CURRENCY) !== DEFAULT_CURRENCY;
+}
+
 async function swellFetch<T>(
   path: string,
   params?: { [key: string]: QueryValue },
@@ -1205,6 +1209,14 @@ async function getSwellProducts(params: {
 
   const sorted = sortProducts(filtered, sortKey, reverse);
   const pageProducts = sorted.slice(0, pageSize);
+
+  if (pageProducts.length === 0 && shouldRetryWithDefaultCurrency(currencyCode)) {
+    return getSwellProducts({
+      ...params,
+      currencyCode: DEFAULT_CURRENCY,
+    });
+  }
+
   const hydratedProducts = await Promise.all(pageProducts.map(product => hydrateProductForVariants(product, currencyCode)));
   return hydratedProducts.map(product => mapSwellProduct(product, currencyCode));
 }
@@ -1377,6 +1389,10 @@ export async function getProduct(handle: string, currencyCode?: string): Promise
   if (fallback && (fallback.active ?? true) !== false) {
     const hydratedFallback = await hydrateProductForVariants(fallback, currencyCode);
     return mapSwellProduct(hydratedFallback, currencyCode);
+  }
+
+  if (shouldRetryWithDefaultCurrency(currencyCode)) {
+    return getProduct(handle, DEFAULT_CURRENCY);
   }
 
   return null;

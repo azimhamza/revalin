@@ -1,10 +1,5 @@
 import { headers } from 'next/headers';
 
-const DEFAULT_BUILTIN_COUNTRY_CURRENCY_MAP: Record<string, string> = {
-  CA: 'CAD',
-  US: 'USD',
-};
-
 function normalizeCode(value: string | undefined | null): string {
   return String(value || '')
     .trim()
@@ -43,11 +38,10 @@ export function currencyForCountry(countryCode: string | undefined | null): stri
   const normalizedCountry = normalizeCode(countryCode);
   if (!normalizedCountry || normalizedCountry.length !== 2) return DEFAULT_STORE_CURRENCY;
 
-  return (
-    ENV_COUNTRY_CURRENCY_MAP[normalizedCountry]
-    || DEFAULT_BUILTIN_COUNTRY_CURRENCY_MAP[normalizedCountry]
-    || DEFAULT_STORE_CURRENCY
-  );
+  // Country-to-currency overrides must be explicit. Swell storefronts can be
+  // single-currency, and guessing based on IP country can turn valid catalog
+  // pages into empty results or 404s when that currency is unsupported.
+  return ENV_COUNTRY_CURRENCY_MAP[normalizedCountry] || DEFAULT_STORE_CURRENCY;
 }
 
 export async function resolveRequestCurrencyCode(): Promise<string> {
