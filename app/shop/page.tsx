@@ -18,6 +18,9 @@ export const metadata: Metadata = {
     'research chemical supplier',
     'laboratory peptide products',
   ],
+  alternates: {
+    canonical: '/shop',
+  },
 };
 
 // Enable ISR with 1 minute revalidation

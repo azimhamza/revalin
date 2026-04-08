@@ -6,6 +6,9 @@ export const metadata: Metadata = {
   title: 'Shipping & Returns | Revalin',
   description:
     'Shipping regions, delivery times, free shipping policy, and return/exchange information for Revalin research products.',
+  alternates: {
+    canonical: '/shipping',
+  },
 };
 
 const KEY_POINTS = [

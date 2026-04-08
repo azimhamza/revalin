@@ -4,6 +4,9 @@ const DEFAULT_AFFILIATE_APPROVAL_TRANSACTIONAL_ID = "cmnhzqj3z02jx0i31crzp740f";
 const DEFAULT_AFFILIATE_REMOVAL_TRANSACTIONAL_ID = "cmnj8xa4300eb0ivwkioll82w";
 const DEFAULT_AFFILIATE_REINSTATEMENT_TRANSACTIONAL_ID =
   "cmnj9xaj2009e0i1dgya1lguq";
+const DEFAULT_AFFILIATE_APPLICATION_TRANSACTIONAL_ID =
+  "cmnmb8o0s00b40iuq46qek8jv";
+const DEFAULT_AFFILIATE_APPLICATION_RECIPIENT = "operations@revalin.ca";
 
 function getSiteUrl() {
   const explicit =
@@ -16,6 +19,48 @@ function getFirstName(name: string) {
   const normalized = name.trim();
   if (!normalized) return "there";
   return normalized.split(/\s+/)[0] || normalized;
+}
+
+function getAffiliateApplicationRecipient() {
+  return (
+    process.env.AFFILIATE_APPLICATION_EMAIL_TO?.trim() ||
+    DEFAULT_AFFILIATE_APPLICATION_RECIPIENT
+  );
+}
+
+export async function sendAffiliateApplicationReceivedEmail(args: {
+  applicantName?: string | null;
+  applicantEmail: string;
+}) {
+  if (!hasLoopsConfig()) {
+    console.warn(
+      "Skipping affiliate application email: Loops not configured.",
+    );
+    return null;
+  }
+
+  const transactionalId =
+    process.env.LOOPS_TRANSACTIONAL_AFFILIATE_APPLICATION_RECEIVED?.trim() ||
+    DEFAULT_AFFILIATE_APPLICATION_TRANSACTIONAL_ID;
+  if (!transactionalId) {
+    console.warn(
+      "Skipping affiliate application email: LOOPS_TRANSACTIONAL_AFFILIATE_APPLICATION_RECEIVED not set.",
+    );
+    return null;
+  }
+
+  const firstNameSource =
+    args.applicantName?.trim() ||
+    args.applicantEmail.split("@")[0] ||
+    "Applicant";
+
+  return sendTransactionalEmail({
+    email: getAffiliateApplicationRecipient(),
+    transactionalId,
+    dataVariables: {
+      first_name: getFirstName(firstNameSource),
+    },
+  });
 }
 
 export async function sendAffiliateApprovalEmail(args: {

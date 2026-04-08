@@ -40,6 +40,9 @@ export async function generateMetadata(props: { params: Promise<{ collection: st
       'research product supplier',
       'laboratory peptides',
     ],
+    alternates: {
+      canonical: `/shop/${params.collection}`,
+    },
   };
 }
 

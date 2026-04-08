@@ -6,6 +6,9 @@ export const metadata: Metadata = {
   title: 'FAQ | Revalin',
   description:
     'Frequently asked questions about Revalin research peptides, purity verification, shipping, returns, and payment.',
+  alternates: {
+    canonical: '/faq',
+  },
 };
 
 const KEY_POINTS = [

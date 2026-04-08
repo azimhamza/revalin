@@ -14,6 +14,8 @@ import { getServerSession } from "@/lib/auth-server";
 import { getAffiliateByUserIdentity } from "@/lib/checkout/affiliate-service";
 import { getAffiliateCommissionOverview } from "@/lib/checkout/commission-service";
 import { getPayoutsForAffiliate } from "@/lib/checkout/payout-service";
+import { formatPayoutPeriodLabel } from "@/lib/checkout/payout-periods";
+import { getWeeklyPayoutBatchesForAffiliate } from "@/lib/checkout/weekly-payout-service";
 
 import {
   AffiliatePanel,
@@ -39,6 +41,14 @@ function formatProviderLabel(provider?: string | null) {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+function formatUsd(value: string | number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0));
+}
+
 export default async function AffiliatePayoutsPage() {
   const session = await getServerSession();
   if (!session?.user) redirect("/login");
@@ -52,42 +62,63 @@ export default async function AffiliatePayoutsPage() {
     return <AffiliateRecoveryState email={session.user.email} />;
   }
 
-  const [payouts, commissionOverview] = await Promise.all([
+  const [earnings, weeklyBatches, commissionOverview] = await Promise.all([
     getPayoutsForAffiliate(affiliate.id),
+    getWeeklyPayoutBatchesForAffiliate(affiliate.id),
     getAffiliateCommissionOverview({ affiliateId: affiliate.id }).catch(
       () => null,
     ),
   ]);
+
   const currentCommissionSummary = commissionOverview?.summary ?? null;
-  const totalEarned = payouts.reduce(
-    (sum, payout) => sum + Number(payout.commissionAmount),
+  const totalEarned = earnings.reduce(
+    (sum, earning) =>
+      sum + Number(earning.normalizedCommissionAmount ?? earning.commissionAmount),
     0,
   );
-  const totalPaid = payouts
-    .filter((payout) => payout.status === "paid")
-    .reduce((sum, payout) => sum + Number(payout.commissionAmount), 0);
-  const totalPendingReview = payouts
-    .filter((payout) => payout.status === "pending")
-    .reduce((sum, payout) => sum + Number(payout.commissionAmount), 0);
-  const totalApproved = payouts
-    .filter((payout) => payout.status === "approved")
-    .reduce((sum, payout) => sum + Number(payout.commissionAmount), 0);
-  const totalRejected = payouts
-    .filter((payout) => payout.status === "rejected")
-    .reduce((sum, payout) => sum + Number(payout.commissionAmount), 0);
-  const nextToSettle = payouts.find(
-    (payout) => payout.status === "approved" || payout.status === "pending",
+  const totalPendingReview = earnings
+    .filter((earning) => earning.status === "pending")
+    .reduce(
+      (sum, earning) =>
+        sum +
+        Number(earning.normalizedCommissionAmount ?? earning.commissionAmount),
+      0,
+    );
+  const totalApproved = weeklyBatches
+    .filter((batch) => batch.status === "approved")
+    .reduce(
+      (sum, batch) => sum + Number(batch.totalNormalizedCommissionAmount),
+      0,
+    );
+  const totalPaid = weeklyBatches
+    .filter((batch) => batch.status === "paid")
+    .reduce(
+      (sum, batch) => sum + Number(batch.totalNormalizedCommissionAmount),
+      0,
+    );
+  const totalRejected = earnings
+    .filter((earning) => earning.status === "rejected")
+    .reduce(
+      (sum, earning) =>
+        sum +
+        Number(earning.normalizedCommissionAmount ?? earning.commissionAmount),
+      0,
+    );
+  const nextToSettle = weeklyBatches.find(
+    (batch) => batch.status === "approved" || batch.status === "pending",
   );
   const configuredWallet = getConfiguredWallet(affiliate.walletAddress);
   const walletPreview = formatWalletPreview(affiliate.walletAddress);
   const hasWallet = Boolean(configuredWallet);
   const providerSummary = Array.from(
-    payouts.reduce((summary, payout) => {
-      const key = payout.paymentProvider || "manual";
+    earnings.reduce((summary, earning) => {
+      const key = earning.paymentProvider || "manual";
       const entry = summary.get(key) || { count: 0, amount: 0 };
 
       entry.count += 1;
-      entry.amount += Number(payout.commissionAmount);
+      entry.amount += Number(
+        earning.normalizedCommissionAmount ?? earning.commissionAmount,
+      );
       summary.set(key, entry);
 
       return summary;
@@ -99,45 +130,45 @@ export default async function AffiliatePayoutsPage() {
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <AffiliateStatCard
           label="Total earned"
-          value={`$${totalEarned.toFixed(2)}`}
-          detail={`${payouts.length} ledger ${payouts.length === 1 ? "entry" : "entries"}.`}
+          value={formatUsd(totalEarned)}
+          detail={`${earnings.length} earned ${earnings.length === 1 ? "entry" : "entries"}.`}
           tone="inverse"
           size="compact"
         />
         <AffiliateStatCard
           label="Pending review"
-          value={`$${totalPendingReview.toFixed(2)}`}
-          detail="Waiting for approval."
+          value={formatUsd(totalPendingReview)}
+          detail="New earnings waiting for a weekly payout batch."
           size="compact"
         />
         <AffiliateStatCard
           label="Ready to send"
-          value={`$${totalApproved.toFixed(2)}`}
+          value={formatUsd(totalApproved)}
           detail={
             hasWallet
               ? `Wallet ${walletPreview}.`
-              : "Set a payout wallet before approved payouts are sent."
+              : "Set a payout wallet before approved weekly payouts are sent."
           }
           size="compact"
         />
         <AffiliateStatCard
           label="Paid out"
-          value={`$${totalPaid.toFixed(2)}`}
-          detail="Completed USDC payouts."
+          value={formatUsd(totalPaid)}
+          detail="Completed weekly USDC payouts."
           size="compact"
         />
         <AffiliateStatCard
           label="Rejected"
-          value={`$${totalRejected.toFixed(2)}`}
-          detail="Entries removed from payout flow."
+          value={formatUsd(totalRejected)}
+          detail="Earnings removed from payout flow."
           size="compact"
         />
       </section>
 
       <AffiliatePanel>
         <AffiliateSectionHeader
-          eyebrow="Payouts"
-          title="Payout ledger"
+          eyebrow="Weekly payouts"
+          title="Settlement history"
           action={
             <Link
               href="/affiliate/dashboard#payout-settings"
@@ -190,14 +221,15 @@ export default async function AffiliatePayoutsPage() {
                     affiliate.commissionRate,
                 ) * 100
               ).toFixed(1)}
-              %.
+              %. Tier{" "}
+              {currentCommissionSummary?.tierLabel || "baseline"}.
             </p>
           </div>
 
           <div className="border border-[#0B2E2F]/10 bg-[#FCFAF6] px-3 py-3">
             <div className="flex items-center gap-2 text-xs font-semibold text-[#0B2E2F]">
               <Clock className="size-4" />
-              Transaction sources
+              Earning sources
             </div>
             {providerSummary.length > 0 ? (
               <div className="mt-2 space-y-1.5">
@@ -208,23 +240,120 @@ export default async function AffiliatePayoutsPage() {
                   >
                     <span>{formatProviderLabel(provider)}</span>
                     <span className="font-semibold">
-                      {summary.count} / ${summary.amount.toFixed(2)}
+                      {summary.count} / {formatUsd(summary.amount)}
                     </span>
                   </div>
                 ))}
               </div>
             ) : (
               <p className="mt-2 text-[11px] text-[#0B2E2F]/58">
-                No payouts recorded yet.
+                No earnings recorded yet.
               </p>
             )}
             {nextToSettle ? (
               <p className="mt-3 text-[11px] text-[#0B2E2F]/58">
-                Next in flow: order {nextToSettle.orderId}.
+                Next settlement window:{" "}
+                {formatPayoutPeriodLabel({
+                  start: nextToSettle.periodStart,
+                  end: nextToSettle.periodEnd,
+                  timezone: nextToSettle.periodTimezone,
+                })}
+                .
               </p>
             ) : null}
           </div>
         </div>
+
+        <div className="mt-3 overflow-hidden border border-[#0B2E2F]/10 bg-white/72">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-[#0B2E2F]/10">
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
+                  Period
+                </TableHead>
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
+                  Month
+                </TableHead>
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
+                  Earnings
+                </TableHead>
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
+                  Payout
+                </TableHead>
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
+                  Status
+                </TableHead>
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
+                  Transaction
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {weeklyBatches.map((batch) => (
+                <TableRow key={batch.id} className="border-[#0B2E2F]/10">
+                  <TableCell className="py-2 text-xs text-[#0B2E2F]">
+                    {formatPayoutPeriodLabel({
+                      start: batch.periodStart,
+                      end: batch.periodEnd,
+                      timezone: batch.periodTimezone,
+                    })}
+                  </TableCell>
+                  <TableCell className="py-2 text-xs text-[#0B2E2F]/72">
+                    {batch.commissionMonthKey}
+                  </TableCell>
+                  <TableCell className="py-2 text-xs text-[#0B2E2F]/72">
+                    {batch.earningCount}
+                  </TableCell>
+                  <TableCell className="py-2 text-xs font-semibold text-[#0B2E2F]">
+                    {formatUsd(batch.totalNormalizedCommissionAmount)}
+                  </TableCell>
+                  <TableCell className="py-2">
+                    <span
+                      className={`${affiliateStatusChipClass} ${getPayoutStatusClasses(batch.status)}`}
+                    >
+                      {batch.status}
+                    </span>
+                  </TableCell>
+                  <TableCell className="max-w-[180px] truncate py-2 text-[11px] font-mono text-[#0B2E2F]/46">
+                    {batch.txHash ? (
+                      <a
+                        href={`https://polygonscan.com/tx/${batch.txHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 underline underline-offset-4 hover:text-[#0B2E2F]"
+                      >
+                        {batch.txHash.slice(0, 10)}...
+                        <ArrowRight className="size-3" />
+                      </a>
+                    ) : (
+                      "-"
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+
+              {weeklyBatches.length === 0 ? (
+                <TableRow className="border-[#0B2E2F]/10">
+                  <TableCell
+                    colSpan={6}
+                    className="py-8 text-center text-[11px] text-[#0B2E2F]/58"
+                  >
+                    No weekly payout batches yet. New earnings accumulate through the
+                    week and appear here once they are grouped for payout.
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </div>
+      </AffiliatePanel>
+
+      <AffiliatePanel>
+        <AffiliateSectionHeader
+          eyebrow="Earnings"
+          title="Recent earned entries"
+          description="Per-sale earnings still show here as support detail, but settlement is done as weekly payout batches."
+        />
 
         <div className="mt-3 overflow-hidden border border-[#0B2E2F]/10 bg-white/72">
           <Table>
@@ -237,7 +366,10 @@ export default async function AffiliatePayoutsPage() {
                   Order total
                 </TableHead>
                 <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
-                  Commission
+                  Earned
+                </TableHead>
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
+                  Weekly batch
                 </TableHead>
                 <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Status
@@ -245,65 +377,52 @@ export default async function AffiliatePayoutsPage() {
                 <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Source
                 </TableHead>
-                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
-                  Transaction
-                </TableHead>
-                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
-                  Date
-                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {payouts.map((payout) => (
-                <TableRow key={payout.id} className="border-[#0B2E2F]/10">
+              {earnings.map((earning) => (
+                <TableRow key={earning.id} className="border-[#0B2E2F]/10">
                   <TableCell className="py-2 font-mono text-[11px] text-[#0B2E2F]">
-                    {payout.orderId}
+                    {earning.orderId}
                   </TableCell>
                   <TableCell className="py-2 text-xs text-[#0B2E2F]/72">
-                    ${payout.orderTotal} {payout.currencyCode}
+                    ${earning.orderTotal} {earning.currencyCode}
                   </TableCell>
                   <TableCell className="py-2 text-xs font-semibold text-[#0B2E2F]">
-                    ${payout.commissionAmount}
+                    {formatUsd(
+                      earning.normalizedCommissionAmount ?? earning.commissionAmount,
+                    )}
+                  </TableCell>
+                  <TableCell className="py-2 text-xs text-[#0B2E2F]/58">
+                    {earning.payoutPeriodStart && earning.payoutPeriodEnd
+                      ? formatPayoutPeriodLabel({
+                          start: earning.payoutPeriodStart,
+                          end: earning.payoutPeriodEnd,
+                          timezone: earning.payoutPeriodTimezone,
+                        })
+                      : "-"}
                   </TableCell>
                   <TableCell className="py-2">
                     <span
-                      className={`${affiliateStatusChipClass} ${getPayoutStatusClasses(payout.status)}`}
+                      className={`${affiliateStatusChipClass} ${getPayoutStatusClasses(earning.status)}`}
                     >
-                      {payout.status}
+                      {earning.status}
                     </span>
                   </TableCell>
                   <TableCell className="py-2 text-xs text-[#0B2E2F]/58">
-                    {formatProviderLabel(payout.paymentProvider)}
-                  </TableCell>
-                  <TableCell className="max-w-[140px] truncate py-2 text-[11px] font-mono text-[#0B2E2F]/46">
-                    {payout.txHash ? (
-                      <a
-                        href={`https://polygonscan.com/tx/${payout.txHash}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 underline underline-offset-4 hover:text-[#0B2E2F]"
-                      >
-                        {payout.txHash.slice(0, 10)}...
-                        <ArrowRight className="size-3" />
-                      </a>
-                    ) : (
-                      "-"
-                    )}
-                  </TableCell>
-                  <TableCell className="py-2 text-xs text-[#0B2E2F]/46">
-                    {new Date(payout.createdAt).toLocaleDateString()}
+                    {formatProviderLabel(earning.paymentProvider)}
                   </TableCell>
                 </TableRow>
               ))}
 
-              {payouts.length === 0 ? (
+              {earnings.length === 0 ? (
                 <TableRow className="border-[#0B2E2F]/10">
                   <TableCell
-                    colSpan={7}
+                    colSpan={6}
                     className="py-8 text-center text-[11px] text-[#0B2E2F]/58"
                   >
-                    No payouts yet. Referred paid orders will populate this
-                    ledger automatically.
+                    No earnings yet. Paid referred orders will create earned entries
+                    automatically.
                   </TableCell>
                 </TableRow>
               ) : null}

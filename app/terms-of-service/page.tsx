@@ -8,6 +8,9 @@ export const metadata: Metadata = {
   title: 'Terms of Service | Revalin',
   description:
     'Terms of Service for Revalin research products, including purchase eligibility, prohibited uses, and compliance obligations.',
+  alternates: {
+    canonical: '/terms-of-service',
+  },
 };
 
 const KEY_POINTS = [

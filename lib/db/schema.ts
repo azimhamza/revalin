@@ -241,6 +241,65 @@ export const affiliateVisits = pgTable(
   ],
 );
 
+export const affiliateWeeklyPayouts = pgTable(
+  "affiliate_weekly_payouts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    affiliateId: uuid("affiliate_id")
+      .notNull()
+      .references(() => affiliates.id, { onDelete: "cascade" }),
+    affiliateCode: varchar("affiliate_code", { length: 64 }).notNull(),
+    commissionMonthKey: varchar("commission_month_key", { length: 7 }).notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    periodTimezone: varchar("period_timezone", { length: 64 })
+      .default("America/Toronto")
+      .notNull(),
+    earningCount: integer("earning_count").default(0).notNull(),
+    totalNormalizedCommissionAmount: varchar(
+      "total_normalized_commission_amount",
+      { length: 32 },
+    )
+      .default("0.00")
+      .notNull(),
+    payoutCurrencyCode: varchar("payout_currency_code", { length: 8 })
+      .default("USD")
+      .notNull(),
+    currentTierKey: varchar("current_tier_key", { length: 32 }),
+    currentTierLabel: varchar("current_tier_label", { length: 64 }),
+    nextTierKey: varchar("next_tier_key", { length: 32 }),
+    nextTierLabel: varchar("next_tier_label", { length: 64 }),
+    amountToNextTier: varchar("amount_to_next_tier", { length: 32 }),
+    effectiveRate: varchar("effective_rate", { length: 16 }),
+    encryptedWalletAddress: text("encrypted_wallet_address"),
+    walletIv: varchar("wallet_iv", { length: 64 }),
+    walletTag: varchar("wallet_tag", { length: 64 }),
+    txHash: varchar("tx_hash", { length: 128 }),
+    adminNotes: text("admin_notes"),
+    status: payoutStatusEnum("status").default("pending").notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("affiliate_weekly_payouts_period_idx").on(
+      table.affiliateId,
+      table.commissionMonthKey,
+      table.periodStart,
+      table.periodEnd,
+    ),
+    index("affiliate_weekly_payouts_affiliate_id_idx").on(table.affiliateId),
+    index("affiliate_weekly_payouts_status_idx").on(table.status),
+    index("affiliate_weekly_payouts_period_start_idx").on(table.periodStart),
+  ],
+);
+
 export const affiliatePayouts = pgTable(
   "affiliate_payouts",
   {
@@ -258,8 +317,28 @@ export const affiliatePayouts = pgTable(
     commissionTierLabel: varchar("commission_tier_label", { length: 64 }),
     commissionRate: varchar("commission_rate", { length: 16 }).notNull(),
     commissionAmount: varchar("commission_amount", { length: 32 }).notNull(),
+    normalizedOrderTotal: varchar("normalized_order_total", { length: 32 }),
+    normalizedCommissionAmount: varchar("normalized_commission_amount", {
+      length: 32,
+    }),
+    payoutCurrencyCode: varchar("payout_currency_code", { length: 8 })
+      .default("USD")
+      .notNull(),
     currencyCode: varchar("currency_code", { length: 8 }).notNull(),
     paymentProvider: varchar("payment_provider", { length: 32 }).notNull(),
+    earnedAt: timestamp("earned_at", { withTimezone: true }),
+    payoutPeriodStart: timestamp("payout_period_start", { withTimezone: true }),
+    payoutPeriodEnd: timestamp("payout_period_end", { withTimezone: true }),
+    payoutPeriodTimezone: varchar("payout_period_timezone", { length: 64 })
+      .default("America/Toronto")
+      .notNull(),
+    weeklyPayoutId: uuid("weekly_payout_id").references(
+      () => affiliateWeeklyPayouts.id,
+      { onDelete: "set null" },
+    ),
+    earnedEmailSentAt: timestamp("earned_email_sent_at", {
+      withTimezone: true,
+    }),
     status: payoutStatusEnum("status").default("pending").notNull(),
     txHash: varchar("tx_hash", { length: 128 }),
     adminNotes: text("admin_notes"),
@@ -278,6 +357,8 @@ export const affiliatePayouts = pgTable(
     index("affiliate_payouts_affiliate_id_idx").on(table.affiliateId),
     index("affiliate_payouts_status_idx").on(table.status),
     index("affiliate_payouts_month_key_idx").on(table.commissionMonthKey),
+    index("affiliate_payouts_weekly_payout_id_idx").on(table.weeklyPayoutId),
+    index("affiliate_payouts_period_start_idx").on(table.payoutPeriodStart),
   ],
 );
 
@@ -309,6 +390,31 @@ export const affiliateDiscountChanges = pgTable(
     index("affiliate_discount_changes_affiliate_id_idx").on(table.affiliateId),
     index("affiliate_discount_changes_created_at_idx").on(table.createdAt),
     index("affiliate_discount_changes_batch_id_idx").on(table.batchId),
+  ],
+);
+
+export const affiliateCommissionTiers = pgTable(
+  "affiliate_commission_tiers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    key: varchar("key", { length: 32 }).notNull(),
+    label: varchar("label", { length: 64 }).notNull(),
+    minRevenue: varchar("min_revenue", { length: 32 }).notNull(),
+    maxRevenue: varchar("max_revenue", { length: 32 }),
+    rate: varchar("rate", { length: 16 }).notNull(),
+    sortOrder: integer("sort_order").notNull(),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("affiliate_commission_tiers_key_idx").on(table.key),
+    uniqueIndex("affiliate_commission_tiers_sort_order_idx").on(table.sortOrder),
+    index("affiliate_commission_tiers_active_idx").on(table.active),
   ],
 );
 

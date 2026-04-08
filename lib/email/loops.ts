@@ -1,4 +1,4 @@
-import { LoopsClient, type APIError } from 'loops';
+import { LoopsClient, type APIError, type TransactionalVariables } from 'loops';
 
 let client: LoopsClient | null = null;
 
@@ -20,9 +20,10 @@ export function hasLoopsConfig() {
 export async function sendTransactionalEmail(args: {
   email: string;
   transactionalId: string;
-  dataVariables?: Record<string, string | number | Array<Record<string, string | number>>>;
+  dataVariables?: TransactionalVariables;
   addToAudience?: boolean;
   attachments?: Array<{ filename: string; data: string; contentType: string }>;
+  headers?: Record<string, string>;
 }) {
   const apiKey = process.env.LOOPS_API_KEY?.trim();
   if (apiKey && args.transactionalId === apiKey) {
@@ -39,6 +40,7 @@ export async function sendTransactionalEmail(args: {
     addToAudience: args.addToAudience,
     dataVariables: args.dataVariables,
     attachments: args.attachments,
+    headers: args.headers,
   });
 
   if (!response.success) {

@@ -647,6 +647,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
           productHandle: item.merchandise.product.handle,
           productTitle: item.merchandise.product.title,
           variantTitle: item.merchandise.title,
+          skuNumber: item.merchandise.sku || undefined,
           imageUrl,
           selectedOptions: item.merchandise.selectedOptions,
           quantity: item.quantity,

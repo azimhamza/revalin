@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { NextResponse } from 'next/server';
 import { createSwellCoupon } from '@/lib/checkout/swell-order-management';
 import { hasLoopsConfig, createOrUpdateContact, sendLoopsEvent } from '@/lib/email/loops';
+import { buildWelcomeDiscountContactProperties } from '@/lib/email/welcome-discount';
+import { sendWelcomeDiscountIssuedEmail } from '@/lib/email/welcome-discount-emails';
 
 const subscribeSchema = z.object({
   email: z.string().trim().email('Enter a valid email address.'),
@@ -43,10 +45,10 @@ export async function POST(request: Request) {
       email: body.email,
       source: body.source,
       mailingLists: newsletterListId ? { [newsletterListId]: true } : undefined,
-      properties: {
-        welcomeDiscountCode: discountCode,
-        welcomeDiscountExpiresAt: expiresAt,
-      },
+      properties: buildWelcomeDiscountContactProperties({
+        discountCode,
+        discountExpiresAt: expiresAt,
+      }),
     });
 
     // Fire event to trigger automation
@@ -59,6 +61,12 @@ export async function POST(request: Request) {
         source: body.source,
       },
     });
+
+    try {
+      await sendWelcomeDiscountIssuedEmail(discountCode);
+    } catch (notificationError) {
+      console.error('[EMAIL-SUBSCRIBE] Failed to send welcome discount notification:', notificationError);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error) {

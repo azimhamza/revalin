@@ -94,6 +94,7 @@ type CartLineState = {
   merchandise: {
     id: string;
     title: string;
+    sku?: string;
     price: {
       amount: string;
       currencyCode: string;
@@ -803,6 +804,7 @@ function mapSwellProduct(product: SwellApiProduct, fallbackCurrencyCode = DEFAUL
     return {
       id: buildVariantId(productId, String(variant.id || variant.sku || variant.name || 'default')),
       title: variant.name || variant.sku || 'Default',
+      sku: variant.sku || undefined,
       price: {
         amount: toAmountString(variantCurrentPrice),
         currencyCode: variantCurrencyCode,
@@ -876,6 +878,7 @@ function mapSwellProduct(product: SwellApiProduct, fallbackCurrencyCode = DEFAUL
     node: {
       id: variant.id,
       title: variant.title,
+      sku: variant.sku,
       price: variant.price,
       compareAtPrice: variant.compareAtPrice,
       availableForSale: variant.availableForSale,
@@ -950,6 +953,7 @@ function mapSwellProduct(product: SwellApiProduct, fallbackCurrencyCode = DEFAUL
                 node: {
                   id: buildVariantId(productId),
                   title: 'Default',
+                  sku: undefined,
                   price: {
                     amount: toAmountString(basePrice),
                     currencyCode,
@@ -1492,6 +1496,7 @@ export async function addCartLines(
       merchandise: {
         id: line.merchandiseId,
         title: selectedVariant?.title || product.title,
+        sku: selectedVariant?.sku || undefined,
         price: selectedVariant?.price || {
           amount: product.priceRange.minVariantPrice.amount,
           currencyCode: product.priceRange.minVariantPrice.currencyCode,

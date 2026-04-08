@@ -5,6 +5,7 @@ import { syncShieldClimbOrderToSwell } from '@/lib/checkout/swell-payment-sync';
 import { sendOrderConfirmationEmail } from '@/lib/email/order-emails';
 import { isShieldClimbPayment } from '@/lib/checkout/types';
 import { createPayoutFromOrder } from '@/lib/checkout/payout-service';
+import { markWelcomeDiscountUsed } from '@/lib/email/welcome-discount';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -53,7 +54,7 @@ export async function GET(request: Request) {
     });
 
     // Update order payment status
-    await updateCheckoutOrder(orderId, current => ({
+    const updatedOrder = await updateCheckoutOrder(orderId, current => ({
       ...current,
       payment: {
         ...current.payment,
@@ -65,20 +66,29 @@ export async function GET(request: Request) {
       },
     }));
 
+    if (updatedOrder) {
+      markWelcomeDiscountUsed({
+        email: updatedOrder.shippingAddress.email,
+        discountCode: updatedOrder.totals.discountCode,
+      }).catch(err =>
+        console.error('Welcome discount usage update failed:', err)
+      );
+    }
+
     // Create affiliate payout record (non-blocking)
     createPayoutFromOrder(orderId, 'shieldclimb').catch(err =>
       console.error('Affiliate payout creation failed:', err)
     );
 
     // Fire background tasks (non-blocking)
-    const updatedOrder = await getCheckoutOrder(orderId);
+    const refreshedOrder = await getCheckoutOrder(orderId);
 
-    if (updatedOrder) {
-      syncShieldClimbOrderToSwell(updatedOrder).catch(err =>
+    if (refreshedOrder) {
+      syncShieldClimbOrderToSwell(refreshedOrder).catch(err =>
         console.error('ShieldClimb Swell sync failed:', err)
       );
 
-      sendOrderConfirmationEmail(updatedOrder).catch(err =>
+      sendOrderConfirmationEmail(refreshedOrder).catch(err =>
         console.error('Order confirmation email failed:', err)
       );
     }

@@ -6,6 +6,7 @@ import { isShieldClimbPayment, isNowPaymentsPayment, toPublicCheckoutOrder } fro
 import { syncCheckoutOrderToSwell, syncShieldClimbOrderToSwell } from '@/lib/checkout/swell-payment-sync';
 import { sendOrderConfirmationEmail } from '@/lib/email/order-emails';
 import { sendPaymentFailedEvent } from '@/lib/email/marketing-events';
+import { isSuccessfulPaymentStatus, markWelcomeDiscountUsed } from '@/lib/email/welcome-discount';
 
 export async function GET(
   request: Request,
@@ -55,6 +56,12 @@ export async function GET(
           sendOrderConfirmationEmail(updatedOrder).catch(err =>
             console.error('Order confirmation email failed:', err)
           );
+          markWelcomeDiscountUsed({
+            email: updatedOrder.shippingAddress.email,
+            discountCode: updatedOrder.totals.discountCode,
+          }).catch(err =>
+            console.error('Welcome discount usage update failed:', err)
+          );
         }
 
         return NextResponse.json({ order: updatedOrder ? toPublicCheckoutOrder(updatedOrder) : toPublicCheckoutOrder(order) });
@@ -97,6 +104,19 @@ export async function GET(
           latestError: null,
         };
       });
+
+      if (
+        updated &&
+        isSuccessfulPaymentStatus(payment.payment_status) &&
+        !isSuccessfulPaymentStatus(order.payment.status)
+      ) {
+        markWelcomeDiscountUsed({
+          email: updated.shippingAddress.email,
+          discountCode: updated.totals.discountCode,
+        }).catch(err =>
+          console.error('Welcome discount usage update failed:', err)
+        );
+      }
 
       // Fire payment failed event if status transitioned to expired/failed
       const failedStatuses = ['expired', 'failed', 'refunded'];
