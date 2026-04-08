@@ -167,52 +167,105 @@ function adaptSwellProduct(swellProduct: SwellProduct): Product {
 
 // Cart adapting happens in server actions to avoid cyclic deps
 
-// Public API functions
-export async function getCollections(): Promise<Collection[]> {
+// -----------------------------------------------------------------------------
+// Public API
+//
+// IMPORTANT — cache poisoning safety:
+//
+// The cached (`'use cache'`) functions below MUST throw on failure rather than
+// catch-and-return-a-fallback. If a cached function returns a value (even an
+// empty array), `'use cache'` persists it into Vercel's Data Cache for the
+// duration of `cacheLife('minutes')`. That means a single transient Swell
+// failure during a background revalidate would permanently overwrite the good
+// catalog with `[]` and the shop would silently render empty until the next
+// successful revalidate (or a manual `revalidateTag(...)`).
+//
+// Throwing inside `'use cache'` is NOT memoized — the next request retries the
+// fetch. So we keep all error handling at the OUTER (non-cached) boundary,
+// which is where the fallback values live.
+// -----------------------------------------------------------------------------
+
+async function getCollectionsCached(): Promise<Collection[]> {
   'use cache';
   cacheTag(TAGS.collections);
   cacheLife('minutes');
 
+  const swellCollections = await getSwellCollections();
+  if (swellCollections.length === 0) {
+    // Don't cache emptiness — throw so the outer wrapper falls back AND so the
+    // next request re-attempts the Swell fetch instead of being stuck on the
+    // static fallback forever.
+    throw new Error('Swell returned no collections');
+  }
+  return swellCollections.map(adaptSwellCollection);
+}
+
+export async function getCollections(): Promise<Collection[]> {
   try {
-    const swellCollections = await getSwellCollections();
-    if (swellCollections.length === 0) {
-      console.warn('Swell returned no collections. Falling back to static category navigation.');
-      return getFallbackCollections();
-    }
-    return swellCollections.map(adaptSwellCollection);
+    return await getCollectionsCached();
   } catch (error) {
-    console.error('Error fetching collections:', error);
+    console.warn(
+      'getCollections: falling back to static category navigation.',
+      (error as Error)?.message || error
+    );
     return getFallbackCollections();
   }
 }
 
-export async function getCollection(handle: string): Promise<Collection | null> {
+async function getCollectionCached(handle: string): Promise<Collection | null> {
   'use cache';
   cacheTag(TAGS.collections);
   cacheLife('minutes');
 
+  const collections = await getSwellCollections();
+  if (collections.length === 0) {
+    throw new Error('Swell returned no collections');
+  }
+
+  const normalizedQuery = normalizeHandle(handle);
+  const collection = collections.find(
+    (collection: SwellCollection) =>
+      normalizeHandle(collection.handle) === normalizedQuery ||
+      normalizeHandle(collection.id) === normalizedQuery
+  );
+  return collection ? adaptSwellCollection(collection) : null;
+}
+
+export async function getCollection(handle: string): Promise<Collection | null> {
   try {
-    const collections = await getSwellCollections();
+    return await getCollectionCached(handle);
+  } catch (error) {
+    console.warn(
+      `getCollection(${handle}): falling back to static collections.`,
+      (error as Error)?.message || error
+    );
     const normalizedQuery = normalizeHandle(handle);
-    const sourceCollections: readonly SwellCollection[] = collections.length > 0 ? collections : FALLBACK_COLLECTIONS;
-    const collection = sourceCollections.find(
+    const fallback = FALLBACK_COLLECTIONS.find(
       (collection: SwellCollection) =>
         normalizeHandle(collection.handle) === normalizedQuery ||
         normalizeHandle(collection.id) === normalizedQuery
     );
-    return collection ? adaptSwellCollection(collection) : null;
-  } catch (error) {
-    console.error('Error fetching collection:', error);
-    return null;
+    return fallback ? adaptSwellCollection(fallback) : null;
   }
 }
 
-export async function getProduct(handle: string, currencyCode?: string): Promise<Product | null> {
+async function getProductCached(handle: string, currencyCode?: string): Promise<Product | null> {
   'use cache';
   cacheTag(TAGS.products);
   cacheLife('minutes');
 
-  return getLiveProduct(handle, currencyCode);
+  // No try/catch — let throws propagate so failures don't poison the cache.
+  const swellProduct = await getSwellProduct(handle, currencyCode);
+  return swellProduct ? adaptSwellProduct(swellProduct) : null;
+}
+
+export async function getProduct(handle: string, currencyCode?: string): Promise<Product | null> {
+  try {
+    return await getProductCached(handle, currencyCode);
+  } catch (error) {
+    console.error(`getProduct(${handle}): error fetching product:`, error);
+    return null;
+  }
 }
 
 export async function getLiveProduct(handle: string, currencyCode?: string): Promise<Product | null> {
@@ -220,12 +273,12 @@ export async function getLiveProduct(handle: string, currencyCode?: string): Pro
     const swellProduct = await getSwellProduct(handle, currencyCode);
     return swellProduct ? adaptSwellProduct(swellProduct) : null;
   } catch (error) {
-    console.error('Error fetching product:', error);
+    console.error(`getLiveProduct(${handle}): error fetching product:`, error);
     return null;
   }
 }
 
-export async function getProducts(params: {
+async function getProductsCached(params: {
   limit?: number;
   sortKey?: ProductSortKey;
   reverse?: boolean;
@@ -236,16 +289,29 @@ export async function getProducts(params: {
   cacheTag(TAGS.products);
   cacheLife('minutes');
 
+  const swellProducts = await getSwellProducts(params);
+  // An empty result for a query/filter is a legitimate response (e.g. a search
+  // with no matches). Only THROWS poison-proof the cache here; empty arrays
+  // are fine to cache.
+  return swellProducts.map(adaptSwellProduct);
+}
+
+export async function getProducts(params: {
+  limit?: number;
+  sortKey?: ProductSortKey;
+  reverse?: boolean;
+  query?: string;
+  currencyCode?: string;
+}): Promise<Product[]> {
   try {
-    const swellProducts = await getSwellProducts(params);
-    return swellProducts.map(adaptSwellProduct);
+    return await getProductsCached(params);
   } catch (error) {
-    console.error('Error fetching products:', error);
+    console.error('getProducts: error fetching products:', error);
     return [];
   }
 }
 
-export async function getCollectionProducts(params: {
+async function getCollectionProductsCached(params: {
   collection: string;
   limit?: number;
   sortKey?: ProductCollectionSortKey;
@@ -257,42 +323,71 @@ export async function getCollectionProducts(params: {
   cacheTag(TAGS.collectionProducts);
   cacheLife('minutes');
 
+  const swellProducts = await getSwellCollectionProducts(params);
+  return swellProducts.map(adaptSwellProduct);
+}
+
+export async function getCollectionProducts(params: {
+  collection: string;
+  limit?: number;
+  sortKey?: ProductCollectionSortKey;
+  reverse?: boolean;
+  query?: string;
+  currencyCode?: string;
+}): Promise<Product[]> {
   try {
-    const swellProducts = await getSwellCollectionProducts(params);
-    return swellProducts.map(adaptSwellProduct);
+    return await getCollectionProductsCached(params);
   } catch (error) {
-    console.error('Error fetching collection products:', error);
+    console.error(
+      `getCollectionProducts(${params.collection}): error fetching collection products:`,
+      error
+    );
     return [];
   }
 }
 
-export async function getRelatedProducts(product: Product, limit = 4, currencyCode?: string): Promise<Product[]> {
+async function getRelatedProductsCached(
+  product: Product,
+  limit: number,
+  currencyCode?: string
+): Promise<Product[]> {
   'use cache';
   cacheTag(TAGS.products);
   cacheLife('minutes');
 
+  let candidates: Product[] = [];
+
+  if (product.categoryId) {
+    const categoryProducts = await getCollectionProductsCached({
+      collection: product.categoryId,
+      limit: limit + 1,
+      currencyCode,
+    });
+    candidates = categoryProducts.filter(p => p.id !== product.id);
+  }
+
+  if (candidates.length < limit) {
+    const allProducts = await getProductsCached({
+      limit: limit + 1 + candidates.length,
+      currencyCode,
+    });
+    const existingIds = new Set([product.id, ...candidates.map(p => p.id)]);
+    const extras = allProducts.filter(p => !existingIds.has(p.id));
+    candidates = [...candidates, ...extras];
+  }
+
+  return candidates.slice(0, limit);
+}
+
+export async function getRelatedProducts(
+  product: Product,
+  limit = 4,
+  currencyCode?: string
+): Promise<Product[]> {
   try {
-    let candidates: Product[] = [];
-
-    if (product.categoryId) {
-      const categoryProducts = await getCollectionProducts({
-        collection: product.categoryId,
-        limit: limit + 1,
-        currencyCode,
-      });
-      candidates = categoryProducts.filter(p => p.id !== product.id);
-    }
-
-    if (candidates.length < limit) {
-      const allProducts = await getProducts({ limit: limit + 1 + candidates.length, currencyCode });
-      const existingIds = new Set([product.id, ...candidates.map(p => p.id)]);
-      const extras = allProducts.filter(p => !existingIds.has(p.id));
-      candidates = [...candidates, ...extras];
-    }
-
-    return candidates.slice(0, limit);
+    return await getRelatedProductsCached(product, limit, currencyCode);
   } catch (error) {
-    console.error('Error fetching related products:', error);
+    console.error(`getRelatedProducts(${product.handle}): error fetching related products:`, error);
     return [];
   }
 }
