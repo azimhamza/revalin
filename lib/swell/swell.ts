@@ -1,3 +1,5 @@
+import { unstable_cacheLife as cacheLife, unstable_cacheTag as cacheTag } from 'next/cache';
+
 import {
   BulkPriceTier,
   ProductCollectionSortKey,
@@ -21,10 +23,6 @@ import { TAGS } from '@/lib/constants';
 // `lib/swell/index.ts` so that `revalidateTag(...)` busts both layers in one
 // call (e.g. from a Swell webhook).
 const SWELL_FETCH_TAGS = [TAGS.products, TAGS.collections, TAGS.collectionProducts];
-// Default ISR window for inner Swell reads when called outside a `'use cache'`
-// boundary. Inside `'use cache'`, the function-level `cacheLife` takes
-// precedence and this value is effectively ignored.
-const SWELL_FETCH_REVALIDATE_SECONDS = 60;
 
 const rawSwellStoreUrl =
   process.env.NEXT_PUBLIC_SWELL_STORE_URL ||
@@ -247,8 +245,42 @@ function buildAuthHeaders(apiUrl: string): HeadersInit[] {
   return headers;
 }
 
-function shouldRetryWithDefaultCurrency(currencyCode?: string): boolean {
-  return normalizeCurrencyCode(currencyCode, DEFAULT_CURRENCY) !== DEFAULT_CURRENCY;
+// Currency-aware cached fetch helper.
+//
+// Why this exists: Swell selects the response currency via the X-Currency
+// HTTP header (see swell-js src/api.js). But Next.js's built-in `fetch` cache
+// keys entries on URL + method + body and explicitly ignores request headers.
+// That means when we rely on `next: { revalidate }`, the first request
+// (typically USD at build) gets cached and every subsequent CAD/GBP/EUR
+// request returns the stale USD payload even though the X-Currency header is
+// different. We also can't use `?currency=` as a URL-level cache key because
+// Swell treats it as a real filter (and returns 0 results), and any other
+// unknown query param is rejected the same way.
+//
+// Solution: wrap the fetch in a `'use cache'` helper whose cache key is
+// derived from its explicit arguments (`requestUrl`, `headers`, `currencyCode`).
+// `'use cache'` hashes arguments into the cache key, so each currency ends up
+// with its own entry. `currencyCode` is intentionally passed as a dedicated
+// argument (even though the merged headers already carry X-Currency) so that
+// the cache key is obviously per-currency at the call site. Returns the
+// serialized response shape so the caller can parse/inspect it.
+async function fetchSwellResponseCached(
+  requestUrl: string,
+  headers: Record<string, string>,
+  currencyCode: string
+): Promise<{ ok: boolean; status: number; body: string }> {
+  'use cache';
+  cacheLife('minutes');
+  cacheTag(...SWELL_FETCH_TAGS);
+
+  void currencyCode; // participates in the cache key via 'use cache' arg hashing
+  const response = await fetch(requestUrl, {
+    method: 'GET',
+    headers,
+    credentials: 'include',
+  });
+  const body = (await response.text()).trim();
+  return { ok: response.ok, status: response.status, body };
 }
 
 async function swellFetch<T>(
@@ -258,43 +290,34 @@ async function swellFetch<T>(
 ): Promise<T> {
   const { allowExpandFallback = true, currencyCode } = options;
   const normalizedCurrency = normalizeCurrencyCode(currencyCode, DEFAULT_CURRENCY);
-  const requestParams = params && Object.prototype.hasOwnProperty.call(params, 'currency')
-    ? params
-    : { ...(params || {}), currency: normalizedCurrency };
-  const requestUrls = buildApiUrls(path, requestParams);
+  const requestUrls = buildApiUrls(path, params);
   const errors: string[] = [];
 
   for (const requestUrl of requestUrls) {
     const authHeaders = buildAuthHeaders(requestUrl);
     for (const headers of authHeaders) {
-      // IMPORTANT: do NOT use `cache: 'no-store'` here. The Swell read paths
-      // are wrapped in `'use cache'` functions in `lib/swell/index.ts`, and
-      // a `no-store` fetch inside a cached function throws DYNAMIC_SERVER_USAGE
-      // — that error is then swallowed by the wrapper's try/catch and an empty
-      // array is persisted into both the `'use cache'` layer and the route's
-      // ISR cache, which is why production was rendering an empty catalog.
-      //
-      // Instead, opt the fetch into Next.js's cache with a 60s revalidate
-      // window and tag it so that `revalidateTag(...)` (e.g. from a Swell
-      // webhook) can bust both this fetch cache and the outer `'use cache'`
-      // wrappers in a single call.
-      const response = await fetch(requestUrl, {
-        method: 'GET',
-        headers,
-        credentials: 'include',
-        next: {
-          revalidate: SWELL_FETCH_REVALIDATE_SECONDS,
-          tags: SWELL_FETCH_TAGS,
-        },
-      });
+      // Swell selects the response currency via the X-Currency request header
+      // (matches swell-js src/api.js). Sending it here makes prices come back
+      // converted via the rate table the merchant configured in Swell admin
+      // (store.currencies). Cart and checkout calls that don't pass
+      // currencyCode default to the store's base currency, so transactions
+      // stay in USD even when display is localized.
+      const mergedHeaders = {
+        ...(headers as Record<string, string>),
+        'X-Currency': normalizedCurrency,
+      };
 
-      if (response.ok) {
-        return response.json() as Promise<T>;
+      const { ok, status, body } = await fetchSwellResponseCached(
+        requestUrl,
+        mergedHeaders,
+        normalizedCurrency
+      );
+
+      if (ok) {
+        return JSON.parse(body) as T;
       }
 
-      const body = (await response.text()).trim();
-
-      if (allowExpandFallback && requestParams?.expand && (response.status === 400 || response.status === 403)) {
+      if (allowExpandFallback && params?.expand && (status === 400 || status === 403)) {
         let parsedErrorCode = '';
         try {
           const parsed = JSON.parse(body);
@@ -304,7 +327,7 @@ async function swellFetch<T>(
         }
 
         if (parsedErrorCode === 'permission_error') {
-          const { expand, ...fallbackParams } = requestParams;
+          const { expand, ...fallbackParams } = params;
           try {
             return await swellFetch<T>(path, fallbackParams, {
               allowExpandFallback: false,
@@ -318,7 +341,7 @@ async function swellFetch<T>(
         }
       }
 
-      errors.push(`${response.status} ${requestUrl} -> ${body || '(empty body)'}`);
+      errors.push(`${status} ${requestUrl} -> ${body || '(empty body)'}`);
     }
   }
 
@@ -1210,13 +1233,6 @@ async function getSwellProducts(params: {
   const sorted = sortProducts(filtered, sortKey, reverse);
   const pageProducts = sorted.slice(0, pageSize);
 
-  if (pageProducts.length === 0 && shouldRetryWithDefaultCurrency(currencyCode)) {
-    return getSwellProducts({
-      ...params,
-      currencyCode: DEFAULT_CURRENCY,
-    });
-  }
-
   const hydratedProducts = await Promise.all(pageProducts.map(product => hydrateProductForVariants(product, currencyCode)));
   return hydratedProducts.map(product => mapSwellProduct(product, currencyCode));
 }
@@ -1389,10 +1405,6 @@ export async function getProduct(handle: string, currencyCode?: string): Promise
   if (fallback && (fallback.active ?? true) !== false) {
     const hydratedFallback = await hydrateProductForVariants(fallback, currencyCode);
     return mapSwellProduct(hydratedFallback, currencyCode);
-  }
-
-  if (shouldRetryWithDefaultCurrency(currencyCode)) {
-    return getProduct(handle, DEFAULT_CURRENCY);
   }
 
   return null;

@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import { DesktopFilters } from './components/shop-filters';
 import { Suspense } from 'react';
 import { getCollections } from '@/lib/swell';
@@ -5,6 +6,22 @@ import { PageLayout } from '@/components/layout/page-layout';
 import { MobileFilters } from './components/mobile-filters';
 import { MobileQuickSearch } from './components/mobile-quick-search';
 import { ProductsProvider } from './providers/products-provider';
+
+// Keep a stable title at the segment level so /shop navigations do not fall back
+// to Next's default untitled state while the page content streams in.
+export const metadata: Metadata = {
+  title: 'Revalin | Shop',
+  description:
+    'Shop Revalin research peptides for legitimate laboratory and pre-clinical studies. Purchase from a trusted research product distributor.',
+  keywords: [
+    'peptide shop',
+    'research peptides purchase',
+    'buy research peptides',
+    'peptide distributor',
+    'research chemical supplier',
+    'laboratory peptide products',
+  ],
+};
 
 // Enable ISR with 1 minute revalidation for the layout
 export const revalidate = 60;

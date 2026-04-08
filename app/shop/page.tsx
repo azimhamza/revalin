@@ -7,17 +7,6 @@ import { ProductGrid } from './components/product-grid';
 import { ProductCardSkeleton } from './components/product-card-skeleton';
 
 export const metadata: Metadata = {
-  title: 'Revalin | Shop',
-  description:
-    'Shop Revalin research peptides for legitimate laboratory and pre-clinical studies. Purchase from a trusted research product distributor.',
-  keywords: [
-    'peptide shop',
-    'research peptides purchase',
-    'buy research peptides',
-    'peptide distributor',
-    'research chemical supplier',
-    'laboratory peptide products',
-  ],
   alternates: {
     canonical: '/shop',
   },
