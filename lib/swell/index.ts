@@ -170,19 +170,31 @@ function adaptSwellProduct(swellProduct: SwellProduct): Product {
 // -----------------------------------------------------------------------------
 // Public API
 //
-// IMPORTANT — cache poisoning safety:
+// Caching strategy:
 //
-// The cached (`'use cache'`) functions below MUST throw on failure rather than
-// catch-and-return-a-fallback. If a cached function returns a value (even an
-// empty array), `'use cache'` persists it into Vercel's Data Cache for the
-// duration of `cacheLife('minutes')`. That means a single transient Swell
-// failure during a background revalidate would permanently overwrite the good
-// catalog with `[]` and the shop would silently render empty until the next
-// successful revalidate (or a manual `revalidateTag(...)`).
+// Each catalog read has TWO layers of cache: an inner Next.js fetch cache
+// (`next: { revalidate, tags }` in swellFetch) and an outer `'use cache'`
+// wrapper. The outer wrapper memoizes the *transformed* product/collection
+// shape so we don't pay the adapter cost on every request.
 //
-// Throwing inside `'use cache'` is NOT memoized — the next request retries the
-// fetch. So we keep all error handling at the OUTER (non-cached) boundary,
-// which is where the fallback values live.
+// IMPORTANT — never throw inside a `'use cache'` body. Throwing inside a
+// cached function is processed by React's Server Component error boundary
+// FIRST and produces noisy "An error occurred in the Server Components
+// render" output during `next build`, even when the outer wrapper catches
+// the error. The build still succeeds, but the log becomes unreadable.
+//
+// Instead:
+//   1. Cached functions return whatever Swell returned (empty arrays / null
+//      are OK to memoize briefly).
+//   2. The outer wrapper detects empty / null results and substitutes the
+//      static fallback for the current request.
+//   3. The cache self-heals after `cacheLife('minutes')` expires, OR
+//      immediately when the Swell webhook calls
+//      `revalidateTag(TAGS.collections|products|...)`.
+//
+// Genuine exceptions (network errors, auth failures, etc.) still propagate
+// out of the cached function — Next.js does not memoize thrown errors — and
+// the outer try/catch handles them with the same fallback path.
 // -----------------------------------------------------------------------------
 
 async function getCollectionsCached(): Promise<Collection[]> {
@@ -191,18 +203,20 @@ async function getCollectionsCached(): Promise<Collection[]> {
   cacheLife('minutes');
 
   const swellCollections = await getSwellCollections();
-  if (swellCollections.length === 0) {
-    // Don't cache emptiness — throw so the outer wrapper falls back AND so the
-    // next request re-attempts the Swell fetch instead of being stuck on the
-    // static fallback forever.
-    throw new Error('Swell returned no collections');
-  }
   return swellCollections.map(adaptSwellCollection);
 }
 
 export async function getCollections(): Promise<Collection[]> {
   try {
-    return await getCollectionsCached();
+    const collections = await getCollectionsCached();
+    if (collections.length === 0) {
+      // Cache may transiently hold an empty result (e.g. Swell rate-limited
+      // during build). Substitute the static fallback for this request; the
+      // cache will refresh on its own when cacheLife expires or when the
+      // Swell webhook busts TAGS.collections.
+      return getFallbackCollections();
+    }
+    return collections;
   } catch (error) {
     console.warn(
       'getCollections: falling back to static category navigation.',
@@ -219,7 +233,7 @@ async function getCollectionCached(handle: string): Promise<Collection | null> {
 
   const collections = await getSwellCollections();
   if (collections.length === 0) {
-    throw new Error('Swell returned no collections');
+    return null;
   }
 
   const normalizedQuery = normalizeHandle(handle);
@@ -231,21 +245,32 @@ async function getCollectionCached(handle: string): Promise<Collection | null> {
   return collection ? adaptSwellCollection(collection) : null;
 }
 
+function findFallbackCollection(handle: string): Collection | null {
+  const normalizedQuery = normalizeHandle(handle);
+  const fallback = FALLBACK_COLLECTIONS.find(
+    (collection: SwellCollection) =>
+      normalizeHandle(collection.handle) === normalizedQuery ||
+      normalizeHandle(collection.id) === normalizedQuery
+  );
+  return fallback ? adaptSwellCollection(fallback) : null;
+}
+
 export async function getCollection(handle: string): Promise<Collection | null> {
   try {
-    return await getCollectionCached(handle);
+    const collection = await getCollectionCached(handle);
+    if (!collection) {
+      // Either Swell returned empty collections, or the handle didn't match
+      // anything in the (briefly cached) Swell response. Try the static
+      // fallback list before giving up.
+      return findFallbackCollection(handle);
+    }
+    return collection;
   } catch (error) {
     console.warn(
       `getCollection(${handle}): falling back to static collections.`,
       (error as Error)?.message || error
     );
-    const normalizedQuery = normalizeHandle(handle);
-    const fallback = FALLBACK_COLLECTIONS.find(
-      (collection: SwellCollection) =>
-        normalizeHandle(collection.handle) === normalizedQuery ||
-        normalizeHandle(collection.id) === normalizedQuery
-    );
-    return fallback ? adaptSwellCollection(fallback) : null;
+    return findFallbackCollection(handle);
   }
 }
 
