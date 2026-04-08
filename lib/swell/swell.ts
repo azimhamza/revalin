@@ -15,6 +15,16 @@ import {
 import { DEFAULT_PAGE_SIZE, DEFAULT_SORT_KEY } from './constants';
 import { DEFAULT_STORE_CURRENCY, normalizeCurrencyCode } from './currency';
 import { resolveUnitPrice } from './utils';
+import { TAGS } from '@/lib/constants';
+
+// Inner-fetch tags. Mirrors the tags used by `'use cache'` wrappers in
+// `lib/swell/index.ts` so that `revalidateTag(...)` busts both layers in one
+// call (e.g. from a Swell webhook).
+const SWELL_FETCH_TAGS = [TAGS.products, TAGS.collections, TAGS.collectionProducts];
+// Default ISR window for inner Swell reads when called outside a `'use cache'`
+// boundary. Inside `'use cache'`, the function-level `cacheLife` takes
+// precedence and this value is effectively ignored.
+const SWELL_FETCH_REVALIDATE_SECONDS = 60;
 
 const rawSwellStoreUrl =
   process.env.NEXT_PUBLIC_SWELL_STORE_URL ||
@@ -253,11 +263,25 @@ async function swellFetch<T>(
   for (const requestUrl of requestUrls) {
     const authHeaders = buildAuthHeaders(requestUrl);
     for (const headers of authHeaders) {
+      // IMPORTANT: do NOT use `cache: 'no-store'` here. The Swell read paths
+      // are wrapped in `'use cache'` functions in `lib/swell/index.ts`, and
+      // a `no-store` fetch inside a cached function throws DYNAMIC_SERVER_USAGE
+      // — that error is then swallowed by the wrapper's try/catch and an empty
+      // array is persisted into both the `'use cache'` layer and the route's
+      // ISR cache, which is why production was rendering an empty catalog.
+      //
+      // Instead, opt the fetch into Next.js's cache with a 60s revalidate
+      // window and tag it so that `revalidateTag(...)` (e.g. from a Swell
+      // webhook) can bust both this fetch cache and the outer `'use cache'`
+      // wrappers in a single call.
       const response = await fetch(requestUrl, {
         method: 'GET',
         headers,
         credentials: 'include',
-        cache: 'no-store',
+        next: {
+          revalidate: SWELL_FETCH_REVALIDATE_SECONDS,
+          tags: SWELL_FETCH_TAGS,
+        },
       });
 
       if (response.ok) {
