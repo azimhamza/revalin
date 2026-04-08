@@ -10,6 +10,7 @@ import {
   getAccountDestinationForRole,
   getSafeAppDestination,
 } from '@/lib/account-destination';
+import { linkAffiliateWithTimeout } from '@/lib/link-affiliate-client';
 
 export function LoginForm() {
   const router = useRouter();
@@ -41,13 +42,8 @@ export function LoginForm() {
 
       // Link pre-existing orders to this user
       fetch('/api/account/link-orders', { method: 'POST' }).catch(() => {});
-      // Link affiliate record if email matches so affiliates land in the right dashboard.
-      const linkAffiliateResult = await fetch('/api/auth/link-affiliate', { method: 'POST' })
-        .then(async (res) => {
-          if (!res.ok) return { linked: false };
-          return (await res.json()) as { linked?: boolean };
-        })
-        .catch(() => ({ linked: false }));
+      // Best-effort only. Never let affiliate linking stall the login redirect.
+      const linkAffiliateResult = await linkAffiliateWithTimeout();
 
       const role = (result.data?.user as any)?.role;
       const destination = getSafeAppDestination(

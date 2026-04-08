@@ -11,6 +11,7 @@ import {
   getSafeAppDestination,
 } from '@/lib/account-destination';
 import { RESEARCH_USE_MINIMUM_AGE } from '@/lib/compliance';
+import { linkAffiliateWithTimeout } from '@/lib/link-affiliate-client';
 
 export function SignupForm() {
   const router = useRouter();
@@ -57,12 +58,7 @@ export function SignupForm() {
 
       // Link pre-existing orders and affiliate record
       fetch('/api/account/link-orders', { method: 'POST' }).catch(() => {});
-      const linkAffiliateResult = await fetch('/api/auth/link-affiliate', { method: 'POST' })
-        .then(async (res) => {
-          if (!res.ok) return { linked: false };
-          return (await res.json()) as { linked?: boolean };
-        })
-        .catch(() => ({ linked: false }));
+      const linkAffiliateResult = await linkAffiliateWithTimeout();
 
       const role = (result.data?.user as any)?.role;
       const destination = getSafeAppDestination(
