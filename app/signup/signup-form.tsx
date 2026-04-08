@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { signUp } from '@/lib/auth-client';
@@ -12,11 +12,14 @@ import {
 } from '@/lib/account-destination';
 import { RESEARCH_USE_MINIMUM_AGE } from '@/lib/compliance';
 import { linkAffiliateWithTimeout } from '@/lib/link-affiliate-client';
+import { useAuthSession } from '@/components/auth/session-provider';
 
 export function SignupForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedCallbackUrl = searchParams.get('callbackUrl');
+  const { data: session, isPending: isSessionPending } = useAuthSession();
+  const redirectStartedRef = useRef(false);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -25,6 +28,22 @@ export function SignupForm() {
   const [researchUseAccepted, setResearchUseAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (isSessionPending || !session?.user || redirectStartedRef.current) {
+      return;
+    }
+
+    redirectStartedRef.current = true;
+
+    const role = (session.user as any)?.role;
+    const destination = getSafeAppDestination(
+      requestedCallbackUrl || getAccountDestinationForRole(role),
+    );
+
+    router.push('/verify-email?callbackUrl=' + encodeURIComponent(destination));
+    router.refresh();
+  }, [isSessionPending, requestedCallbackUrl, router, session?.user]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

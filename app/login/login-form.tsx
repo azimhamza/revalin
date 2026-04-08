@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { signIn } from '@/lib/auth-client';
@@ -11,17 +11,40 @@ import {
   getSafeAppDestination,
 } from '@/lib/account-destination';
 import { linkAffiliateWithTimeout } from '@/lib/link-affiliate-client';
+import { useAuthSession } from '@/components/auth/session-provider';
 
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedCallbackUrl = searchParams.get('callbackUrl');
   const resetState = searchParams.get('reset');
+  const { data: session, isPending: isSessionPending } = useAuthSession();
+  const redirectStartedRef = useRef(false);
 
   const [email, setEmail] = useState(() => searchParams.get('email')?.trim() ?? '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (isSessionPending || !session?.user || redirectStartedRef.current) {
+      return;
+    }
+
+    redirectStartedRef.current = true;
+
+    const role = (session.user as any)?.role;
+    const destination = getSafeAppDestination(
+      requestedCallbackUrl || getAccountDestinationForRole(role),
+    );
+
+    if (!session.user.emailVerified) {
+      router.push('/verify-email?callbackUrl=' + encodeURIComponent(destination));
+    } else {
+      router.push(destination);
+    }
+    router.refresh();
+  }, [isSessionPending, requestedCallbackUrl, router, session?.user]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

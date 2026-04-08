@@ -5,7 +5,10 @@ import {
   isTemporarilyHiddenAppRoute,
 } from '@/lib/account-destination';
 
-const AUTH_COOKIE = 'better-auth.session_token';
+const AUTH_COOKIES = [
+  'better-auth.session_token',
+  '__Secure-better-auth.session_token',
+];
 
 const PROTECTED_PREFIXES = ['/account', '/admin', '/affiliate/dashboard'];
 const AUTH_PAGES = ['/login', '/signup'];
@@ -13,7 +16,7 @@ const VERIFY_PAGE = '/verify-email';
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const hasSession = request.cookies.has(AUTH_COOKIE);
+  const hasSession = AUTH_COOKIES.some(cookieName => request.cookies.has(cookieName));
 
   if (isTemporarilyHiddenAppRoute(pathname)) {
     return NextResponse.next();
@@ -31,8 +34,10 @@ export function middleware(request: NextRequest) {
   // Auth pages: redirect to account if already logged in
   if (AUTH_PAGES.includes(pathname)) {
     if (hasSession) {
+      const callbackUrl = request.nextUrl.searchParams.get('callbackUrl');
+      const destination = getSafeAppDestination(callbackUrl, '/account');
       return NextResponse.redirect(
-        new URL(getSafeAppDestination('/account'), request.url),
+        new URL(destination, request.url),
       );
     }
   }
