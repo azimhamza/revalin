@@ -13,6 +13,9 @@ export const metadata = {
   title: 'Revalin',
   description:
     'Research-grade peptides with published COAs, independent batch testing, and same-day fulfillment for qualified buyers.',
+  alternates: {
+    canonical: '/',
+  },
 };
 
 const FEATURED_PRODUCT_HANDLE = 'glp-3-triple-agonist';

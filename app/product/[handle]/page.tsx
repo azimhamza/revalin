@@ -71,6 +71,9 @@ export async function generateMetadata(props: { params: Promise<{ handle: string
   return {
     title: product.seo.title || product.title,
     description: product.seo.description || product.description,
+    alternates: {
+      canonical: `/product/${params.handle}`,
+    },
     robots: {
       index: indexable,
       follow: indexable,

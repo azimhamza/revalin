@@ -24,6 +24,7 @@ export const ACCOUNT_NAV_ROUTES: NavItem[] = [
   { href: "/account", label: "Overview" },
   { href: "/account/orders", label: "Orders" },
   { href: "/account/profile", label: "Profile" },
+  { href: "/account/security", label: "Security" },
 ];
 
 export const ACCOUNT_AFFILIATE_ROUTE: NavItem = {

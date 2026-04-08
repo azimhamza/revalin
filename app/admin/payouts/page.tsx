@@ -1,21 +1,53 @@
-import { getAllPayouts } from '@/lib/checkout/payout-service';
-import { PayoutManagement } from './payout-management';
+import {
+  getCurrentPayoutFridayDate,
+  type WeeklyPayoutPeriod,
+} from "@/lib/checkout/payout-periods";
+import { getWeeklyPayoutBatchPeriodOverview } from "@/lib/checkout/weekly-payout-service";
+
+import { PayoutManagement } from "./payout-management";
 
 export const metadata = {
-  title: 'Payout Management | Revalin Admin',
+  title: "Weekly Payout Management | Revalin Admin",
 };
 
-export default async function PayoutsPage() {
-  const payouts = await getAllPayouts();
+type PayoutsPageProps = {
+  searchParams?: Promise<{
+    periodDate?: string | string[] | undefined;
+  }>;
+};
 
-  const serialized = payouts.map((p) => ({
-    ...p,
-    createdAt: p.createdAt.toISOString(),
-    updatedAt: p.updatedAt.toISOString(),
-    approvedAt: p.approvedAt?.toISOString() ?? null,
-    paidAt: p.paidAt?.toISOString() ?? null,
-    rejectedAt: p.rejectedAt?.toISOString() ?? null,
+function serializePeriod(period: WeeklyPayoutPeriod) {
+  return {
+    ...period,
+    start: period.start.toISOString(),
+    end: period.end.toISOString(),
+  };
+}
+
+export default async function PayoutsPage({ searchParams }: PayoutsPageProps) {
+  const params = (await searchParams) || {};
+  const requestedPeriodDate = Array.isArray(params.periodDate)
+    ? params.periodDate[0]
+    : params.periodDate;
+  const periodDate = requestedPeriodDate || getCurrentPayoutFridayDate();
+  const { period, batches } = await getWeeklyPayoutBatchPeriodOverview(periodDate);
+
+  const serialized = batches.map((batch) => ({
+    ...batch,
+    periodStart: batch.periodStart.toISOString(),
+    periodEnd: batch.periodEnd.toISOString(),
+    createdAt: batch.createdAt.toISOString(),
+    updatedAt: batch.updatedAt.toISOString(),
+    approvedAt: batch.approvedAt?.toISOString() ?? null,
+    paidAt: batch.paidAt?.toISOString() ?? null,
+    rejectedAt: batch.rejectedAt?.toISOString() ?? null,
   }));
 
-  return <PayoutManagement payouts={serialized} />;
+  return (
+    <PayoutManagement
+      periodDate={periodDate}
+      period={serializePeriod(period)}
+      batches={serialized}
+    />
+  );
 }

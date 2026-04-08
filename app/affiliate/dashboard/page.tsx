@@ -8,6 +8,7 @@ import { getAffiliateByUserIdentity } from "@/lib/checkout/affiliate-service";
 import { getAffiliateCommissionOverview } from "@/lib/checkout/commission-service";
 import { getAffiliateVisitSummary } from "@/lib/checkout/affiliate-visit-service";
 import { getPayoutsForAffiliate } from "@/lib/checkout/payout-service";
+import { getWeeklyPayoutBatchesForAffiliate } from "@/lib/checkout/weekly-payout-service";
 import { db } from "@/lib/db";
 import { affiliatePayouts, checkoutOrders } from "@/lib/db/schema";
 import { formatPrice } from "@/lib/swell/utils";
@@ -60,9 +61,10 @@ export default async function AffiliateDashboardPage() {
     return <AffiliateRecoveryState email={session.user.email} />;
   }
 
-  const [payouts, commissionOverview, referredOrderRows, visitSummary] =
+  const [earnings, weeklyBatches, commissionOverview, referredOrderRows, visitSummary] =
     await Promise.all([
       getPayoutsForAffiliate(affiliate.id),
+      getWeeklyPayoutBatchesForAffiliate(affiliate.id),
       getAffiliateCommissionOverview({ affiliateId: affiliate.id }).catch(
         () => null,
       ),
@@ -85,28 +87,46 @@ export default async function AffiliateDashboardPage() {
   const currentCommissionSummary = commissionOverview?.summary ?? null;
   const referredOrderCount = referredOrderRows.length;
 
-  const totalRevenue = payouts.reduce(
-    (sum, payout) => sum + Number(payout.orderTotal),
+  const totalRevenue = earnings.reduce(
+    (sum, earning) =>
+      sum + Number(earning.normalizedOrderTotal ?? earning.orderTotal),
     0,
   );
   const averageOrderValue =
     referredOrderCount > 0 ? totalRevenue / referredOrderCount : 0;
-  const commissionEarned = payouts.reduce(
-    (sum, payout) => sum + Number(payout.commissionAmount),
+  const commissionEarned = earnings.reduce(
+    (sum, earning) =>
+      sum + Number(earning.normalizedCommissionAmount ?? earning.commissionAmount),
     0,
   );
-  const commissionPaid = payouts
-    .filter((payout) => payout.status === "paid")
-    .reduce((sum, payout) => sum + Number(payout.commissionAmount), 0);
-  const commissionPendingReview = payouts
-    .filter((payout) => payout.status === "pending")
-    .reduce((sum, payout) => sum + Number(payout.commissionAmount), 0);
-  const commissionApproved = payouts
-    .filter((payout) => payout.status === "approved")
-    .reduce((sum, payout) => sum + Number(payout.commissionAmount), 0);
-  const commissionRejected = payouts
-    .filter((payout) => payout.status === "rejected")
-    .reduce((sum, payout) => sum + Number(payout.commissionAmount), 0);
+  const commissionPaid = weeklyBatches
+    .filter((batch) => batch.status === "paid")
+    .reduce(
+      (sum, batch) => sum + Number(batch.totalNormalizedCommissionAmount),
+      0,
+    );
+  const commissionPendingReview = earnings
+    .filter((earning) => earning.status === "pending")
+    .reduce(
+      (sum, earning) =>
+        sum +
+        Number(earning.normalizedCommissionAmount ?? earning.commissionAmount),
+      0,
+    );
+  const commissionApproved = weeklyBatches
+    .filter((batch) => batch.status === "approved")
+    .reduce(
+      (sum, batch) => sum + Number(batch.totalNormalizedCommissionAmount),
+      0,
+    );
+  const commissionRejected = earnings
+    .filter((earning) => earning.status === "rejected")
+    .reduce(
+      (sum, earning) =>
+        sum +
+        Number(earning.normalizedCommissionAmount ?? earning.commissionAmount),
+      0,
+    );
   const commissionDue = commissionPendingReview + commissionApproved;
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://revalin.ca";
   const configuredWallet = getConfiguredWallet(affiliate.walletAddress);
@@ -332,7 +352,7 @@ export default async function AffiliateDashboardPage() {
           <AffiliateSectionHeader
             eyebrow="Ledger"
             title="Sales ledger"
-            description="Each referred sale with the order value, commission amount, attribution source, and payout state."
+            description="Each referred sale with the original order value, normalized payout amount, attribution source, and weekly settlement state."
             action={
               <Link
                 href="/affiliate/dashboard/payouts"
@@ -406,8 +426,9 @@ export default async function AffiliateDashboardPage() {
                         <p className="mt-1 text-[11px] text-[#0B2E2F]/58">
                           Commission{" "}
                           {formatPrice(
-                            payout.commissionAmount,
-                            payout.currencyCode,
+                            payout.normalizedCommissionAmount ||
+                              payout.commissionAmount,
+                            payout.payoutCurrencyCode || "USD",
                           )}
                         </p>
                       </div>

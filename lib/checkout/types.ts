@@ -20,6 +20,7 @@ export type CheckoutOrderLine = {
   productHandle: string;
   productTitle: string;
   variantTitle: string;
+  skuNumber?: string;
   imageUrl: string;
   selectedOptions: Array<{ name: string; value: string }>;
   quantity: number;

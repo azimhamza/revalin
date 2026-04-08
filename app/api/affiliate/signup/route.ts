@@ -10,6 +10,7 @@ import {
   MAX_AFFILIATE_SOCIAL_PROFILES,
   normalizeAffiliateSocialUrl,
 } from "@/lib/checkout/affiliate-social-profiles";
+import { sendAffiliateApplicationReceivedEmail } from "@/lib/email/affiliate-emails";
 
 const socialProfileSchema = z.object({
   platform: z.string().trim().min(2, "Enter the social platform name."),
@@ -70,6 +71,15 @@ export async function POST(request: Request) {
       socialProfiles: payload.socialProfiles,
       userId: session.user.id,
     });
+
+    try {
+      await sendAffiliateApplicationReceivedEmail({
+        applicantName: session.user.name,
+        applicantEmail: normalizedEmail,
+      });
+    } catch (error) {
+      console.error("[AFFILIATE-SIGNUP-EMAIL]", error);
+    }
 
     return NextResponse.json(
       {

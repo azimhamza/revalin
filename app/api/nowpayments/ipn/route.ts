@@ -5,6 +5,7 @@ import { syncCheckoutOrderToSwell } from '@/lib/checkout/swell-payment-sync';
 import { isNowPaymentsPayment } from '@/lib/checkout/types';
 import { sendPaymentFailedEvent } from '@/lib/email/marketing-events';
 import { createPayoutFromOrder } from '@/lib/checkout/payout-service';
+import { isSuccessfulPaymentStatus, markWelcomeDiscountUsed } from '@/lib/email/welcome-discount';
 
 export async function POST(request: Request) {
   const signature = request.headers.get('x-nowpayments-sig');
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
         );
       }
 
-      await saveCheckoutOrder({
+      const updatedOrder = await saveCheckoutOrder({
         ...matchedOrder,
         updatedAt: new Date().toISOString(),
         payment: {
@@ -103,6 +104,18 @@ export async function POST(request: Request) {
           },
         ],
       });
+
+      if (
+        isSuccessfulPaymentStatus(newStatus) &&
+        !isSuccessfulPaymentStatus(matchedOrder.payment.status)
+      ) {
+        markWelcomeDiscountUsed({
+          email: updatedOrder.shippingAddress.email,
+          discountCode: updatedOrder.totals.discountCode,
+        }).catch(err =>
+          console.error('Welcome discount usage update failed:', err)
+        );
+      }
 
       // Create affiliate payout when payment is finished
       if (newStatus === 'finished') {

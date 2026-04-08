@@ -15,8 +15,9 @@ export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedCallbackUrl = searchParams.get('callbackUrl');
+  const resetState = searchParams.get('reset');
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => searchParams.get('email')?.trim() ?? '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -71,6 +72,12 @@ export function LoginForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {resetState === 'success' && !error && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          Password updated. Sign in with your new password.
+        </div>
+      )}
+
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {error}
@@ -105,6 +112,12 @@ export function LoginForm() {
           className="h-11 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
         />
       </label>
+
+      <div className="flex justify-end">
+        <Link href="/forgot-password" className="text-sm font-semibold text-[#0B2E2F] underline underline-offset-2">
+          Forgot password?
+        </Link>
+      </div>
 
       <Button
         type="submit"

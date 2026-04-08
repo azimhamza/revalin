@@ -6,6 +6,9 @@ export const metadata: Metadata = {
   title: 'About | Revalin',
   description:
     'Revalin is a research peptide supplier built on transparency, independent testing, and rigorous chemistry standards.',
+  alternates: {
+    canonical: '/about',
+  },
 };
 
 const KEY_POINTS = [

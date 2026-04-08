@@ -7,6 +7,9 @@ export const metadata: Metadata = {
   title: 'Privacy Policy | Revalin',
   description:
     'Privacy Policy for Revalin, including data collection, payment processing, fraud/compliance screening, and user rights.',
+  alternates: {
+    canonical: '/privacy-policy',
+  },
 };
 
 const KEY_POINTS = [

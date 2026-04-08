@@ -3,7 +3,9 @@ import { affiliateCommissionMonths, affiliates } from "@/lib/db/schema";
 import { desc, eq, inArray } from "drizzle-orm";
 import { decrypt } from "@/lib/db/encryption";
 import { listAffiliateRoleOrphans } from "@/lib/checkout/affiliate-service";
+import { listCommissionTierConfig } from "@/lib/checkout/commission-tier-service";
 import { getCommissionMonthKey } from "@/lib/checkout/commission-service";
+import { CommissionTierManagement } from "./commission-tier-management";
 import { AffiliateManagement } from "./affiliate-management";
 
 export const metadata = {
@@ -48,7 +50,7 @@ export default async function AffiliatesPage({
     ? params.openAffiliate[0]
     : params.openAffiliate;
 
-  const [baseRows, selectedRows, orphanUsers] = await Promise.all([
+  const [baseRows, selectedRows, orphanUsers, commissionTiers] = await Promise.all([
     db.select().from(affiliates).orderBy(desc(affiliates.createdAt)).limit(200),
     requestedAffiliateId
       ? db
@@ -58,6 +60,7 @@ export default async function AffiliatesPage({
           .limit(1)
       : Promise.resolve([]),
     listAffiliateRoleOrphans().catch(() => []),
+    listCommissionTierConfig({ includeInactive: true }).catch(() => []),
   ]);
 
   const rows = [...selectedRows, ...baseRows].filter(
@@ -115,6 +118,9 @@ export default async function AffiliatesPage({
   }));
 
   return (
-    <AffiliateManagement affiliates={decryptedRows} orphanUsers={orphanUsers} />
+    <div className="space-y-4">
+      <CommissionTierManagement initialTiers={commissionTiers} />
+      <AffiliateManagement affiliates={decryptedRows} orphanUsers={orphanUsers} />
+    </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutGrid, Package, Shield, UserRound, Users } from "lucide-react";
+import { KeyRound, LayoutGrid, Package, Shield, UserRound, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   ACCOUNT_ADMIN_ROUTE,
@@ -17,6 +17,8 @@ const NAV_ITEMS = ACCOUNT_NAV_ROUTES.map((item) => ({
       ? LayoutGrid
       : item.href === "/account/orders"
         ? Package
+        : item.href === "/account/security"
+          ? KeyRound
         : UserRound,
 }));
 

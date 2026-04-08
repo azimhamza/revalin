@@ -7,63 +7,26 @@ import {
   affiliatePayouts,
   affiliates,
 } from "@/lib/db/schema";
+import {
+  formatAmount,
+  formatRate,
+  normalizeCommissionRateInput,
+  parseAmount,
+  parseRate,
+} from "@/lib/checkout/affiliate-math";
+import {
+  getCommissionTierProgress,
+  listCommissionTierConfig,
+  resolveCommissionTierFromConfig,
+  type CommissionTierConfig,
+} from "@/lib/checkout/commission-tier-service";
 import { updateCheckoutOrder } from "@/lib/checkout/order-store";
+import {
+  getDefaultPayoutTimezone,
+  getTimeZoneMonthKey,
+} from "@/lib/checkout/payout-periods";
 
-const FALLBACK_BASELINE_RATE = 0.1;
-
-export const COMMISSION_TIERS = [
-  {
-    key: "operator",
-    label: "Operator",
-    minRevenue: 0,
-    maxRevenue: 9_999.99,
-    rate: 0.1,
-  },
-  {
-    key: "builder",
-    label: "Builder",
-    minRevenue: 10_000,
-    maxRevenue: 29_999.99,
-    rate: 0.15,
-  },
-  {
-    key: "scaler",
-    label: "Scaler",
-    minRevenue: 30_000,
-    maxRevenue: 49_999.99,
-    rate: 0.2,
-  },
-  {
-    key: "partner",
-    label: "Partner",
-    minRevenue: 50_000,
-    maxRevenue: 74_999.99,
-    rate: 0.25,
-  },
-  {
-    key: "apex",
-    label: "Apex",
-    minRevenue: 75_000,
-    maxRevenue: 99_999.99,
-    rate: 0.3,
-  },
-  {
-    key: "authority",
-    label: "Authority",
-    minRevenue: 100_000,
-    maxRevenue: 499_999.99,
-    rate: 0.35,
-  },
-  {
-    key: "partner_equity",
-    label: "Partner + Equity",
-    minRevenue: 500_000,
-    maxRevenue: null,
-    rate: 0.4,
-  },
-] as const;
-
-export type CommissionTierDefinition = (typeof COMMISSION_TIERS)[number];
+export type CommissionTierDefinition = CommissionTierConfig;
 export type CommissionMonthRecord = typeof affiliateCommissionMonths.$inferSelect;
 export type CommissionEventRecord = typeof affiliateCommissionEvents.$inferSelect;
 export type AffiliatePayoutRecord = typeof affiliatePayouts.$inferSelect;
@@ -82,6 +45,9 @@ export type CommissionMonthSummary = {
   overrideRate: string | null;
   overrideReason: string | null;
   hasOverride: boolean;
+  nextTierKey: string | null;
+  nextTierLabel: string | null;
+  amountToNextTier: string | null;
 };
 
 export type CommissionMonthOverview = {
@@ -116,94 +82,21 @@ export type PayoutApprovalPreview = {
   affectedCount: number;
 };
 
-function trimNumericString(value: string) {
-  return value.replace(/\.?0+$/, "") || "0";
-}
-
-function formatRate(value: number) {
-  return trimNumericString(value.toFixed(4));
-}
-
-function formatAmount(value: number) {
-  return value.toFixed(2);
-}
-
-function parseRate(value: string | number | null | undefined) {
-  const numeric =
-    typeof value === "number"
-      ? value
-      : typeof value === "string"
-        ? Number(value.trim())
-        : NaN;
-
-  return Number.isFinite(numeric) ? numeric : FALLBACK_BASELINE_RATE;
-}
-
-function parseAmount(value: string | number | null | undefined) {
-  const numeric =
-    typeof value === "number"
-      ? value
-      : typeof value === "string"
-        ? Number(value.trim())
-        : NaN;
-
-  return Number.isFinite(numeric) ? numeric : 0;
-}
-
 export function getCommissionMonthKey(value: Date | string | number = new Date()) {
-  const date =
-    value instanceof Date
-      ? value
-      : typeof value === "string" || typeof value === "number"
-        ? new Date(value)
-        : new Date();
-
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-
-  return `${year}-${month}`;
-}
-
-export function normalizeCommissionRateInput(
-  value: string | number | null | undefined,
-) {
-  const raw =
-    typeof value === "string" ? value.trim() : value === null ? "" : `${value ?? ""}`;
-  const parsed = Number(raw);
-
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error("Commission rate must be a number greater than 0.");
-  }
-
-  const normalized = parsed > 1 ? parsed / 100 : parsed;
-  if (normalized > 1) {
-    throw new Error("Commission rate cannot exceed 100%.");
-  }
-
-  const numeric = Number(normalized.toFixed(4));
-  return {
-    numeric,
-    stored: formatRate(numeric),
-    percentDisplay: trimNumericString((numeric * 100).toFixed(2)),
-  };
-}
-
-export function resolveCommissionTier(revenue: number): CommissionTierDefinition {
-  const matchedTier = COMMISSION_TIERS.find((tier) => {
-    const meetsMinimum = revenue >= tier.minRevenue;
-    const meetsMaximum = tier.maxRevenue === null || revenue <= tier.maxRevenue;
-
-    return meetsMinimum && meetsMaximum;
-  });
-
-  return matchedTier ?? COMMISSION_TIERS[0];
+  return getTimeZoneMonthKey(value, getDefaultPayoutTimezone());
 }
 
 function toSummary(
   affiliateId: string,
   affiliateCode: string,
   row: CommissionMonthRecord,
+  tiers: CommissionTierConfig[],
 ): CommissionMonthSummary {
+  const progress = getCommissionTierProgress({
+    revenue: parseAmount(row.recognizedRevenue),
+    tiers,
+  });
+
   return {
     affiliateId,
     affiliateCode,
@@ -218,6 +111,9 @@ function toSummary(
     overrideRate: row.overrideRate,
     overrideReason: row.overrideReason,
     hasOverride: Boolean(row.overrideRate),
+    nextTierKey: progress.nextTier?.key ?? null,
+    nextTierLabel: progress.nextTier?.label ?? null,
+    amountToNextTier: progress.amountToNextTier,
   };
 }
 
@@ -296,7 +192,7 @@ function buildPayoutImpact(
   tier: CommissionTierDefinition,
 ): PayoutRecalculationImpact {
   const nextAmount = formatAmount(
-    parseAmount(payout.orderTotal) * effectiveRateNumeric,
+    parseAmount(payout.normalizedOrderTotal ?? payout.orderTotal) * effectiveRateNumeric,
   );
 
   return {
@@ -320,11 +216,13 @@ function buildPayoutImpact(
 }
 
 async function computeCommissionMonthState(affiliateId: string, monthKey: string) {
-  const [affiliate, existingSummary, priorSummary, payouts] = await Promise.all([
+  const [affiliate, existingSummary, priorSummary, payouts, tiers] =
+    await Promise.all([
     getAffiliateCore(affiliateId),
     getExistingCommissionMonth(affiliateId, monthKey),
     getLatestPriorCommissionMonth(affiliateId, monthKey),
     getMonthPayoutRows(affiliateId, monthKey),
+    listCommissionTierConfig({ includeInactive: false }),
   ]);
 
   const baselineRate = parseRate(affiliate.commissionRate);
@@ -334,17 +232,22 @@ async function computeCommissionMonthState(affiliateId: string, monthKey: string
   const carriedForwardFromMonthKey = priorSummary?.monthKey ?? null;
   const recognizedPayouts = payouts.filter((row) => row.status !== "rejected");
   const recognizedRevenueNumeric = recognizedPayouts.reduce(
-    (sum, row) => sum + parseAmount(row.orderTotal),
+    (sum, row) =>
+      sum + parseAmount(row.normalizedOrderTotal ?? row.orderTotal),
     0,
   );
   const recognizedOrderCount = recognizedPayouts.length;
-  const tier = resolveCommissionTier(recognizedRevenueNumeric);
+  const tier = resolveCommissionTierFromConfig(recognizedRevenueNumeric, tiers);
+  const progress = getCommissionTierProgress({
+    revenue: recognizedRevenueNumeric,
+    tiers,
+  });
   const overrideRateNumeric =
     existingSummary?.overrideRate === null || existingSummary?.overrideRate === undefined
       ? null
       : parseRate(existingSummary.overrideRate);
   const effectiveRateNumeric =
-    overrideRateNumeric ?? Math.max(startingRateNumeric, tier.rate);
+    overrideRateNumeric ?? Math.max(startingRateNumeric, parseRate(tier.rate));
   const nextSummaryValues = {
     startingRate: formatRate(startingRateNumeric),
     carriedForwardFromMonthKey,
@@ -356,6 +259,9 @@ async function computeCommissionMonthState(affiliateId: string, monthKey: string
     overrideRate:
       overrideRateNumeric === null ? null : formatRate(overrideRateNumeric),
     overrideReason: existingSummary?.overrideReason ?? null,
+    nextTierKey: progress.nextTier?.key ?? null,
+    nextTierLabel: progress.nextTier?.label ?? null,
+    amountToNextTier: progress.amountToNextTier,
   };
   const openPayouts = recognizedPayouts.filter(
     (row) => row.status !== "paid" && row.status !== "rejected",
@@ -368,6 +274,7 @@ async function computeCommissionMonthState(affiliateId: string, monthKey: string
     affiliate,
     existingSummary,
     tier,
+    tiers,
     nextSummaryValues,
     recognizedRevenueNumeric,
     recognizedOrderCount,
@@ -465,6 +372,7 @@ export async function syncAffiliateCommissionMonth(args: {
           .set({
             commissionRate: impact.newCommissionRate,
             commissionAmount: impact.newCommissionAmount,
+            normalizedCommissionAmount: impact.newCommissionAmount,
             commissionTierKey: impact.newCommissionTierKey,
             commissionTierLabel: impact.newCommissionTierLabel,
             updatedAt: new Date(),
@@ -495,7 +403,7 @@ export async function syncAffiliateCommissionMonth(args: {
   }
 
   return {
-    summary: toSummary(state.affiliate.id, state.affiliate.code, summaryRow),
+    summary: toSummary(state.affiliate.id, state.affiliate.code, summaryRow, state.tiers),
     impacts: state.impacts,
   };
 }
@@ -512,7 +420,7 @@ export async function getAffiliateCommissionOverview(args: {
     recordEvent: false,
   });
 
-  const [recentMonthRows, events] = await Promise.all([
+  const [recentMonthRows, events, tiers] = await Promise.all([
     db
       .select()
       .from(affiliateCommissionMonths)
@@ -525,12 +433,13 @@ export async function getAffiliateCommissionOverview(args: {
       .where(eq(affiliateCommissionEvents.affiliateId, args.affiliateId))
       .orderBy(desc(affiliateCommissionEvents.createdAt))
       .limit(10),
+    listCommissionTierConfig({ includeInactive: false }),
   ]);
 
   return {
     summary,
     recentMonths: recentMonthRows.map((row) =>
-      toSummary(affiliate.id, affiliate.code, row),
+      toSummary(affiliate.id, affiliate.code, row, tiers),
     ),
     events,
   } satisfies CommissionMonthOverview;
@@ -543,6 +452,8 @@ export async function getAffiliateCommissionSnapshot(args: {
   const overview = await getAffiliateCommissionOverview(args);
   return overview.summary;
 }
+
+export { normalizeCommissionRateInput };
 
 export async function setAffiliateCommissionOverride(args: {
   affiliateId: string;

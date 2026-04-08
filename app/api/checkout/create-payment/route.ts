@@ -93,6 +93,7 @@ const createPaymentSchema = z.object({
             productHandle: z.string().trim().min(1),
             productTitle: z.string(),
             variantTitle: z.string(),
+            skuNumber: z.string().optional(),
             imageUrl: z.string(),
             selectedOptions: z.array(
               z.object({
@@ -138,6 +139,7 @@ function serializeCartLine(line: SwellCartLine): CheckoutOrderLine {
     productHandle: line.merchandise.product.handle,
     productTitle: line.merchandise.product.title,
     variantTitle: line.merchandise.title,
+    skuNumber: line.merchandise.sku || undefined,
     imageUrl,
     selectedOptions: line.merchandise.selectedOptions || [],
     quantity: line.quantity,

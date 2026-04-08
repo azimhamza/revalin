@@ -212,6 +212,9 @@ export async function generateMetadata({
   return {
     title: `${entry.peptide.name} Research - Peptide Studies & Protocols`,
     description: entry.peptide.description,
+    alternates: {
+      canonical: `/research/${slug}`,
+    },
   };
 }
 

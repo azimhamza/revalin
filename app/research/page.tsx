@@ -8,6 +8,9 @@ export const metadata = {
   title: 'Research Library - Peptide Profiles & Protocols',
   description:
     'Comprehensive research peptide profiles with storage protocols, reconstitution guidelines, and study references.',
+  alternates: {
+    canonical: '/research',
+  },
 };
 
 // Mock data - replace with actual database/CMS

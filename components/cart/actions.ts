@@ -38,6 +38,7 @@ function adaptCartLine(swellLine: SwellCartLine): CartItem {
     merchandise: {
       id: merchandise.id,
       title: merchandise.title,
+      sku: merchandise.sku,
       availableQuantity: merchandise.availableQuantity ?? null,
       selectedOptions: merchandise.selectedOptions || [],
       product: {

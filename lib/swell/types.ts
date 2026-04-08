@@ -48,6 +48,7 @@ export interface SwellProduct {
       node: {
         id: string;
         title: string;
+        sku?: string;
         price: {
           amount: string;
           currencyCode: string;
@@ -219,6 +220,7 @@ export interface SwellCartLine {
   merchandise: {
     id: string;
     title: string;
+    sku?: string;
     price: {
       amount: string;
       currencyCode: string;
@@ -342,6 +344,7 @@ export type SelectedOptions = {
 export type ProductVariant = {
   id: string;
   title: string;
+  sku?: string;
   availableForSale: boolean;
   stockStatus?: string;
   stockLevel?: number;
@@ -409,6 +412,7 @@ export type CartItem = {
   merchandise: {
     id: string;
     title: string;
+    sku?: string;
     availableQuantity?: number | null;
     selectedOptions: SelectedOptions;
     product: Product;
