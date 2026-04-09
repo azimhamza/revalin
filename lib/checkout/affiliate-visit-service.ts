@@ -12,6 +12,13 @@ export type AffiliateVisitSummary = {
   uniqueVisitors30d: number;
 };
 
+export const EMPTY_AFFILIATE_VISIT_SUMMARY: AffiliateVisitSummary = {
+  totalVisits: 0,
+  totalUniqueVisitors: 0,
+  visits30d: 0,
+  uniqueVisitors30d: 0,
+};
+
 type CountRow = {
   count: number | string | null;
 };
@@ -27,6 +34,20 @@ function normalizeNullable(
   const normalized = value?.trim();
   if (!normalized) return null;
   return normalized.slice(0, maxLength);
+}
+
+function logAffiliateVisitError(scope: string, error: unknown, affiliateId?: string) {
+  const message =
+    error instanceof Error ? error.message : String(error);
+  const cause =
+    error instanceof Error && "cause" in error
+      ? (error as Error & { cause?: unknown }).cause
+      : undefined;
+
+  console.warn(
+    `[affiliate-visits] ${scope} unavailable for affiliate ${affiliateId ?? "unknown"}: ${message}`,
+    cause,
+  );
 }
 
 export async function createAffiliateVisit(args: {
@@ -57,60 +78,62 @@ export async function getAffiliateVisitSummary(
 ): Promise<AffiliateVisitSummary> {
   const start30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-  const [
-    totalVisitsRows,
-    totalUniqueVisitorRows,
-    visits30dRows,
-    unique30dRows,
-  ] = await Promise.all([
-    db
-      .select({ count: sql<number>`count(*)` })
-      .from(affiliateVisits)
-      .where(eq(affiliateVisits.affiliateId, affiliateId)),
-    db
-      .select({
-        count: sql<number>`count(distinct ${affiliateVisits.visitorId})`,
-      })
-      .from(affiliateVisits)
-      .where(eq(affiliateVisits.affiliateId, affiliateId)),
-    db
-      .select({ count: sql<number>`count(*)` })
-      .from(affiliateVisits)
-      .where(
-        and(
-          eq(affiliateVisits.affiliateId, affiliateId),
-          gte(affiliateVisits.createdAt, start30d),
-        ),
-      ),
-    db
-      .select({
-        count: sql<number>`count(distinct ${affiliateVisits.visitorId})`,
-      })
-      .from(affiliateVisits)
-      .where(
-        and(
-          eq(affiliateVisits.affiliateId, affiliateId),
-          gte(affiliateVisits.createdAt, start30d),
-        ),
-      ),
-  ]);
+  try {
+    const affiliateScope = eq(affiliateVisits.affiliateId, affiliateId);
+    const last30dScope = and(
+      affiliateScope,
+      gte(affiliateVisits.createdAt, start30d),
+    );
 
-  return {
-    totalVisits: getCount(totalVisitsRows),
-    totalUniqueVisitors: getCount(totalUniqueVisitorRows),
-    visits30d: getCount(visits30dRows),
-    uniqueVisitors30d: getCount(unique30dRows),
-  };
+    const [
+      totalVisitsRows,
+      totalUniqueVisitorRows,
+      visits30dRows,
+      unique30dRows,
+    ] = await Promise.all([
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(affiliateVisits)
+        .where(affiliateScope),
+      db
+        .selectDistinct({ visitorId: affiliateVisits.visitorId })
+        .from(affiliateVisits)
+        .where(affiliateScope),
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(affiliateVisits)
+        .where(last30dScope),
+      db
+        .selectDistinct({ visitorId: affiliateVisits.visitorId })
+        .from(affiliateVisits)
+        .where(last30dScope),
+    ]);
+
+    return {
+      totalVisits: getCount(totalVisitsRows),
+      totalUniqueVisitors: totalUniqueVisitorRows.length,
+      visits30d: getCount(visits30dRows),
+      uniqueVisitors30d: unique30dRows.length,
+    };
+  } catch (error) {
+    logAffiliateVisitError("summary", error, affiliateId);
+    return EMPTY_AFFILIATE_VISIT_SUMMARY;
+  }
 }
 
 export async function getRecentAffiliateVisits(
   affiliateId: string,
   limit = 8,
 ): Promise<AffiliateVisitRecord[]> {
-  return db
-    .select()
-    .from(affiliateVisits)
-    .where(eq(affiliateVisits.affiliateId, affiliateId))
-    .orderBy(desc(affiliateVisits.createdAt))
-    .limit(limit);
+  try {
+    return await db
+      .select()
+      .from(affiliateVisits)
+      .where(eq(affiliateVisits.affiliateId, affiliateId))
+      .orderBy(desc(affiliateVisits.createdAt))
+      .limit(limit);
+  } catch (error) {
+    logAffiliateVisitError("recent", error, affiliateId);
+    return [];
+  }
 }

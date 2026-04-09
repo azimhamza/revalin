@@ -36,14 +36,38 @@ export const POST = createApiRoute({
       ?.value?.trim();
     const visitorId = existingVisitorId || randomUUID();
 
-    await createAffiliateVisit({
-      affiliateId: affiliate.id,
-      affiliateCode: affiliate.code,
-      visitorId,
-      referralPath: body.referralPath,
-      referrer: body.referrer,
-      userAgent: request.headers.get('user-agent'),
-    });
+    try {
+      await createAffiliateVisit({
+        affiliateId: affiliate.id,
+        affiliateCode: affiliate.code,
+        visitorId,
+        referralPath: body.referralPath,
+        referrer: body.referrer,
+        userAgent: request.headers.get('user-agent'),
+      });
+    } catch (error) {
+      console.error('[affiliate-visits] write failed', {
+        affiliateId: affiliate.id,
+        message: error instanceof Error ? error.message : String(error),
+        cause:
+          error instanceof Error && 'cause' in error
+            ? (error as Error & { cause?: unknown }).cause
+            : undefined,
+      });
+
+      return {
+        data: {
+          recorded: false,
+        },
+        headers: !existingVisitorId
+          ? {
+              'set-cookie': `${AFFILIATE_VISITOR_COOKIE_NAME}=${visitorId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${
+                AFFILIATE_VISITOR_COOKIE_MAX_AGE_DAYS * 24 * 60 * 60
+              }${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`,
+            }
+          : undefined,
+      };
+    }
 
     return {
       data: {

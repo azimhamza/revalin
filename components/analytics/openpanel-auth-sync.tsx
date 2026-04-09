@@ -29,12 +29,14 @@ export default function OpenPanelAuthSync() {
 
     const user = session?.user;
     const userRole = typeof (user as any)?.role === 'string' ? (user as any).role : null;
+    const userEmail = typeof user?.email === 'string' ? user.email : undefined;
+    const userName = typeof user?.name === 'string' ? user.name : undefined;
     const affiliateCode = readCookie(AFFILIATE_COOKIE_NAME);
     const syncKey = JSON.stringify({
       affiliateCode,
-      email: user?.email ?? null,
+      email: userEmail ?? null,
       emailVerified: user?.emailVerified ?? null,
-      name: user?.name ?? null,
+      name: userName ?? null,
       role: userRole,
       userId: user?.id ?? null,
     });
@@ -65,13 +67,13 @@ export default function OpenPanelAuthSync() {
 
     window.op.identify({
       profileId: user.id,
-      email: user.email,
-      firstName: getFirstName(user.name),
+      ...(userEmail ? { email: userEmail } : {}),
+      firstName: getFirstName(userName),
       properties: {
         affiliate_code: affiliateCode,
         auth_state: 'authenticated',
         email_verified: Boolean(user.emailVerified),
-        full_name: user.name,
+        ...(userName ? { full_name: userName } : {}),
         ...(userRole ? { user_role: userRole } : {}),
       },
     });

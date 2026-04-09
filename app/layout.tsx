@@ -8,6 +8,7 @@ import { SessionProvider } from '@/components/auth/session-provider';
 import { DebugGrid } from '@/components/debug-grid';
 import { isDevelopment } from '@/lib/constants';
 import { getCollections } from '@/lib/swell';
+import { getServerSession } from '@/lib/auth-server';
 import dynamic from 'next/dynamic';
 import { V0Provider } from '../lib/context';
 import { cn } from '../lib/utils';
@@ -67,7 +68,10 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const collections = await getCollections();
+  const [collections, session] = await Promise.all([
+    getCollections(),
+    getServerSession(),
+  ]);
 
   return (
     <html lang="en">
@@ -76,7 +80,7 @@ export default async function RootLayout({
         suppressHydrationWarning
       >
         <V0Provider isV0={isV0}>
-          <SessionProvider>
+          <SessionProvider initialSession={session}>
             <CartProvider>
               <NuqsAdapter>
                 {openPanelClientId ? (

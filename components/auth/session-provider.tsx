@@ -7,7 +7,6 @@ import {
   useRef,
   type ReactNode,
 } from 'react';
-import { useSession } from '@/lib/auth-client';
 import { AFFILIATE_COOKIE_NAME } from '@/lib/checkout/affiliate-constants';
 import {
   clearPostAuthPendingCookie,
@@ -15,7 +14,28 @@ import {
 } from '@/lib/auth/post-auth-client';
 import { POST_AUTH_PENDING_COOKIE } from '@/lib/auth/post-auth-cookie';
 
-type SessionContext = ReturnType<typeof useSession>;
+type SessionUser = {
+  id?: string;
+  email?: string | null;
+  name?: string | null;
+  emailVerified?: boolean | null;
+  role?: string | null;
+  [key: string]: unknown;
+};
+
+type SessionData = {
+  user?: SessionUser | null;
+  session?: Record<string, unknown> | null;
+  [key: string]: unknown;
+} | null;
+
+type SessionContext = {
+  data: SessionData;
+  error: Error | null;
+  isPending: boolean;
+  isRefetching: boolean;
+  refetch: () => Promise<void>;
+};
 
 const AuthSessionContext = createContext<SessionContext | null>(null);
 
@@ -41,12 +61,14 @@ function OpenPanelSessionSync({ session }: { session: SessionContext }) {
     const user = data?.user;
     const userRole =
       typeof (user as any)?.role === 'string' ? (user as any).role : null;
+    const userEmail = typeof user?.email === 'string' ? user.email : undefined;
+    const userName = typeof user?.name === 'string' ? user.name : undefined;
     const affiliateCode = readCookie(AFFILIATE_COOKIE_NAME);
     const syncKey = JSON.stringify({
       affiliateCode,
-      email: user?.email ?? null,
+      email: userEmail ?? null,
       emailVerified: user?.emailVerified ?? null,
-      name: user?.name ?? null,
+      name: userName ?? null,
       role: userRole,
       userId: user?.id ?? null,
     });
@@ -77,13 +99,13 @@ function OpenPanelSessionSync({ session }: { session: SessionContext }) {
 
     window.op.identify({
       profileId: user.id,
-      email: user.email,
-      firstName: getFirstName(user.name),
+      ...(userEmail ? { email: userEmail } : {}),
+      firstName: getFirstName(userName),
       properties: {
         affiliate_code: affiliateCode,
         auth_state: 'authenticated',
         email_verified: Boolean(user.emailVerified),
-        full_name: user.name,
+        ...(userName ? { full_name: userName } : {}),
         ...(userRole ? { user_role: userRole } : {}),
       },
     });
@@ -141,8 +163,23 @@ function PostAuthReconcileBootstrap({ session }: { session: SessionContext }) {
   return null;
 }
 
-export function SessionProvider({ children }: { children: ReactNode }) {
-  const session = useSession();
+async function noopRefetch() {}
+
+export function SessionProvider({
+  children,
+  initialSession,
+}: {
+  children: ReactNode;
+  initialSession: SessionData;
+}) {
+  const session: SessionContext = {
+    data: initialSession,
+    error: null,
+    isPending: false,
+    isRefetching: false,
+    refetch: noopRefetch,
+  };
+
   return (
     <AuthSessionContext.Provider value={session}>
       <OpenPanelSessionSync session={session} />

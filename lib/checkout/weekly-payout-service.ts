@@ -51,6 +51,19 @@ type BatchGroupingRow = {
   affiliate: typeof affiliates.$inferSelect | null;
 };
 
+function logWeeklyPayoutError(scope: string, error: unknown, affiliateId?: string) {
+  const message = error instanceof Error ? error.message : String(error);
+  const cause =
+    error instanceof Error && "cause" in error
+      ? (error as Error & { cause?: unknown }).cause
+      : undefined;
+
+  console.warn(
+    `[weekly-payouts] ${scope} unavailable${affiliateId ? ` for affiliate ${affiliateId}` : ""}: ${message}`,
+    cause,
+  );
+}
+
 function decryptWalletSnapshot(
   batch: Pick<
     WeeklyPayoutBatchRecord,
@@ -319,28 +332,36 @@ export async function listWeeklyPayoutBatches(args?: {
   status?: WeeklyPayoutBatchRecord["status"];
 }) {
   const period = args?.periodDate ? getPeriodFromDate(args.periodDate) : null;
-  const rows = await db
-    .select()
-    .from(affiliateWeeklyPayouts)
-    .orderBy(desc(affiliateWeeklyPayouts.periodStart), desc(affiliateWeeklyPayouts.createdAt))
-    .limit(500);
 
-  return rows
-    .filter((row) => {
-      if (args?.affiliateId && row.affiliateId !== args.affiliateId) return false;
-      if (args?.status && row.status !== args.status) return false;
-      if (period) {
-        return (
-          row.periodStart.getTime() === period.start.getTime() &&
-          row.periodEnd.getTime() === period.end.getTime()
-        );
-      }
-      return true;
-    })
-    .map((row) => ({
+  try {
+    const conditions = [];
+
+    if (args?.affiliateId) {
+      conditions.push(eq(affiliateWeeklyPayouts.affiliateId, args.affiliateId));
+    }
+    if (args?.status) {
+      conditions.push(eq(affiliateWeeklyPayouts.status, args.status));
+    }
+    if (period) {
+      conditions.push(eq(affiliateWeeklyPayouts.periodStart, period.start));
+      conditions.push(eq(affiliateWeeklyPayouts.periodEnd, period.end));
+    }
+
+    const rows = await db
+      .select()
+      .from(affiliateWeeklyPayouts)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(affiliateWeeklyPayouts.periodStart), desc(affiliateWeeklyPayouts.createdAt))
+      .limit(500);
+
+    return rows.map((row) => ({
       ...row,
       walletAddress: decryptWalletSnapshot(row),
     }));
+  } catch (error) {
+    logWeeklyPayoutError("list", error, args?.affiliateId);
+    return [];
+  }
 }
 
 export async function getWeeklyPayoutBatchById(batchId: string) {
