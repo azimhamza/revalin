@@ -1,13 +1,13 @@
 'use client';
 
 import { signOut } from '@/lib/auth-client';
-import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { LogOut } from 'lucide-react';
+import { Loader2, LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function AccountSignOut({ className }: { className?: string }) {
-  const router = useRouter();
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   return (
     <Button
@@ -16,14 +16,27 @@ export function AccountSignOut({ className }: { className?: string }) {
         'text-foreground/55 hover:bg-rose-500/10 hover:text-rose-950',
         className
       )}
+      disabled={isSigningOut}
       onClick={async () => {
-        await signOut();
-        router.push('/');
-        router.refresh();
+        if (isSigningOut) return;
+
+        setIsSigningOut(true);
+
+        try {
+          await signOut();
+          window.location.assign('/');
+        } catch (error) {
+          setIsSigningOut(false);
+          console.error('Failed to sign out:', error);
+        }
       }}
     >
-      <LogOut className="size-4" />
-      Sign out
+      {isSigningOut ? (
+        <Loader2 className="size-4 animate-spin" />
+      ) : (
+        <LogOut className="size-4" />
+      )}
+      {isSigningOut ? 'Signing out...' : 'Sign out'}
     </Button>
   );
 }

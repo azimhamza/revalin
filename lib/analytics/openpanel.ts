@@ -44,6 +44,7 @@ export async function trackOpenPanelServerEvent(
 
 const EXPORT_BASE = "https://api.openpanel.dev/export";
 const INSIGHTS_BASE = "https://api.openpanel.dev/insights";
+const DEFAULT_OPENPANEL_FETCH_TIMEOUT_MS = 2_000;
 
 type OpenPanelInsightsCredentials = {
   clientId: string;
@@ -250,6 +251,26 @@ function opHeaders() {
     "openpanel-client-secret": credentials.clientSecret,
     "Content-Type": "application/json",
   };
+}
+
+function getOpenPanelFetchTimeoutMs() {
+  const configured = Number(process.env.OPENPANEL_FETCH_TIMEOUT_MS);
+
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_OPENPANEL_FETCH_TIMEOUT_MS;
+}
+
+function createOpenPanelTimeoutSignal() {
+  const timeout = (
+    AbortSignal as typeof AbortSignal & {
+      timeout?: (milliseconds: number) => AbortSignal;
+    }
+  ).timeout;
+
+  return typeof timeout === "function"
+    ? timeout(getOpenPanelFetchTimeoutMs())
+    : undefined;
 }
 
 function projectId() {
@@ -483,7 +504,11 @@ async function fetchOpenPanel(url: string, context: string) {
   if (!headers) return null;
 
   try {
-    const res = await fetch(url, { headers, next: { revalidate: 300 } });
+    const res = await fetch(url, {
+      headers,
+      next: { revalidate: 300 },
+      signal: createOpenPanelTimeoutSignal(),
+    });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.warn(

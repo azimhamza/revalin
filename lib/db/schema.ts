@@ -92,6 +92,12 @@ export const user = pgTable("user", {
   banned: boolean("banned").default(false),
   banReason: text("ban_reason"),
   banExpires: timestamp("ban_expires", { withTimezone: true }),
+  referredByAffiliateCode: varchar("referred_by_affiliate_code", {
+    length: 64,
+  }),
+  referredByAffiliateAt: timestamp("referred_by_affiliate_at", {
+    withTimezone: true,
+  }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

@@ -6,6 +6,7 @@ import {
   getAffiliateByUserIdentity,
   syncApprovedAffiliateForUser,
 } from '@/lib/checkout/affiliate-service';
+import { stampUserReferralFromCookie } from '@/lib/checkout/affiliate-user-referral';
 import { linkOrdersToUser } from '@/lib/checkout/link-orders-to-user';
 
 type PostAuthUser = {
@@ -16,14 +17,25 @@ type PostAuthUser = {
 };
 
 export async function reconcilePostAuthUser(user: PostAuthUser) {
-  const [linkedOrders, affiliateSync] = await Promise.allSettled([
+  const [linkedOrders, affiliateSync, referralStamp] = await Promise.allSettled([
     linkOrdersToUser(user.id, user.email),
     syncApprovedAffiliateForUser({
       userId: user.id,
       email: user.email,
       currentRole: user.role,
     }),
+    stampUserReferralFromCookie({
+      userId: user.id,
+      userEmail: user.email,
+    }),
   ]);
+
+  if (referralStamp.status === 'rejected') {
+    console.error(
+      'Failed to stamp affiliate referral on user row:',
+      referralStamp.reason,
+    );
+  }
 
   if (affiliateSync.status === 'fulfilled') {
     return {
@@ -73,12 +85,13 @@ export async function resolvePostAuthDestination(args: {
   callbackUrl?: string | null;
   user: PostAuthUser;
 }) {
-  const access = await getPostAuthAccess(args.user);
-  const role = access.role ?? args.user.role ?? null;
+  const role = args.user.role ?? null;
+  const alreadyHasDashboardAccess = role === 'affiliate' || role === 'admin';
+  const access = alreadyHasDashboardAccess
+    ? null
+    : await getPostAuthAccess(args.user);
   const canAccessAffiliateDashboard =
-    access.canAccessAffiliateDashboard ||
-    role === 'affiliate' ||
-    role === 'admin';
+    alreadyHasDashboardAccess || Boolean(access?.canAccessAffiliateDashboard);
   const fallback =
     role === 'admin'
       ? getAccountDestinationForRole('admin')

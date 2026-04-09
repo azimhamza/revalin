@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { cookies } from 'next/headers';
+import { optionalSession } from '@/lib/api/auth';
 import { createApiRoute } from '@/lib/api/route';
 import { AFFILIATE_COOKIE_NAME } from '@/lib/checkout/affiliate-constants';
+import { getStoredUserReferralCode } from '@/lib/checkout/affiliate-user-referral';
 import {
   assertSessionReadyForFinalize,
   buildSessionChanges,
@@ -83,8 +85,21 @@ export const POST = createApiRoute({
       };
     }
 
-    const affiliateCode =
-      (await cookies()).get(AFFILIATE_COOKIE_NAME)?.value ?? null;
+    const cookieAffiliateCode =
+      (await cookies()).get(AFFILIATE_COOKIE_NAME)?.value?.trim() || null;
+
+    // Fall back to the affiliate code stamped on the user row during
+    // post-auth reconcile. This preserves attribution for shoppers who
+    // cleared cookies, switched devices, or returned after the 30-day
+    // cookie window — as long as they're signed in when they check out.
+    let affiliateCode = cookieAffiliateCode;
+    if (!affiliateCode) {
+      const authSession = await optionalSession();
+      if (authSession?.user?.id) {
+        affiliateCode = await getStoredUserReferralCode(authSession.user.id);
+      }
+    }
+
     let result: {
       accessKey: string;
       order: CheckoutOrderPublic;

@@ -39,6 +39,14 @@ type SessionContext = {
 
 const AuthSessionContext = createContext<SessionContext | null>(null);
 
+type IdleWindow = Window & {
+  requestIdleCallback?: (
+    callback: IdleRequestCallback,
+    options?: IdleRequestOptions,
+  ) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
+
 function readCookie(name: string) {
   return readBrowserCookie(name);
 }
@@ -145,19 +153,38 @@ function PostAuthReconcileBootstrap({ session }: { session: SessionContext }) {
 
     attemptedRef.current = userId;
 
-    fetch('/api/auth/reconcile', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    })
-      .catch((error) => {
-        console.error('[POST-AUTH-RECONCILE]', error);
+    const runReconcile = () => {
+      fetch('/api/auth/reconcile', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+        },
       })
-      .finally(() => {
-        clearPostAuthPendingCookie();
+        .catch((error) => {
+          console.error('[POST-AUTH-RECONCILE]', error);
+        })
+        .finally(() => {
+          clearPostAuthPendingCookie();
+        });
+    };
+
+    const idleWindow = window as IdleWindow;
+    if (idleWindow.requestIdleCallback) {
+      const idleHandle = idleWindow.requestIdleCallback(runReconcile, {
+        timeout: 2_000,
       });
+
+      return () => {
+        idleWindow.cancelIdleCallback?.(idleHandle);
+      };
+    }
+
+    const timeoutHandle = window.setTimeout(runReconcile, 500);
+
+    return () => {
+      window.clearTimeout(timeoutHandle);
+    };
   }, [session.data?.user?.id, session.isPending]);
 
   return null;

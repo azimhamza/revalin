@@ -3,6 +3,7 @@ import { getProducts, getLiveProduct } from "@/lib/swell";
 import { createSwellCoupon } from "@/lib/checkout/swell-order-management";
 import { hasLoopsConfig, sendTransactionalEmail } from "@/lib/email/loops";
 import type { Product } from "@/lib/swell/types";
+import { buildProductNotificationReadyEmailVariables } from "./email-payloads";
 import type {
   ProductNotificationAdminData,
   ProductNotificationAdminProduct,
@@ -156,15 +157,15 @@ async function sendCustomerReadyEmail(args: {
   await sendTransactionalEmail({
     email: args.subscription.email,
     transactionalId,
-    dataVariables: {
+    dataVariables: buildProductNotificationReadyEmailVariables({
       productTitle: args.subscription.productTitle,
-      variantTitle: args.subscription.variantTitle || "",
+      variantTitle: args.subscription.variantTitle,
       discountPercent: PRODUCT_NOTIFICATION_DISCOUNT_PERCENT,
       discountCode: args.discountCode,
       discountExpiresAt: args.discountExpiresAt,
       productUrl,
       checkoutUrl,
-    },
+    }),
   });
 }
 

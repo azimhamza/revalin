@@ -4,6 +4,7 @@ import {
 } from "@/lib/swell/swell";
 import type { SwellCart as StorefrontCart } from "@/lib/swell/types";
 import { providerFetch } from "@/lib/api/provider-client";
+import { buildSwellCouponCreatePayload } from "./swell-coupon-payloads";
 
 type QueryValue =
   | string
@@ -816,22 +817,15 @@ export async function createSwellCoupon(args: {
   description?: string;
 }) {
   return swellBackendRequest<SwellBackendCoupon>("POST", "/coupons", {
-    body: {
+    body: buildSwellCouponCreatePayload({
+      code: args.code,
       name: args.name,
+      percentOff: args.percentOff,
+      expiresAt: args.expiresAt,
       description: args.description,
-      active: true,
-      date_expired: args.expiresAt,
-      codes: [args.code],
-      limit_uses: 1,
-      limit_account_uses: 1,
-      discounts: [
-        {
-          type: "total",
-          value_type: "percent",
-          value_percent: args.percentOff,
-        },
-      ],
-    },
+      limitUses: 1,
+      limitAccountUses: 1,
+    }),
   });
 }
 
@@ -926,19 +920,13 @@ export async function createSwellAffiliateCoupon(args: {
   active?: boolean;
 }) {
   return swellBackendRequest<SwellBackendCoupon>("POST", "/coupons", {
-    body: {
+    body: buildSwellCouponCreatePayload({
+      code: args.code,
       name: args.name,
+      percentOff: args.percentOff,
       description: args.description,
-      active: args.active ?? true,
-      codes: [{ code: args.code.trim().toUpperCase() }],
-      discounts: [
-        {
-          type: "total",
-          value_type: "percent",
-          value_percent: args.percentOff,
-        },
-      ],
-    },
+      active: args.active,
+    }),
   });
 }
 

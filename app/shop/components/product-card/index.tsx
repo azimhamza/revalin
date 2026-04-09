@@ -18,10 +18,24 @@ export const ProductCard = ({ product }: { product: Product }) => {
   const discountPercentage = getDiscountPercentage(compareAtPrice, displayPrice);
   const inventory = getInventoryState(product, selectedVariant);
 
+  // Forward the currently-selected variant options so /product/[handle] opens
+  // to the same dosage/option the shopper picked on the card.
+  const productHref = (() => {
+    const base = `/product/${product.handle}`;
+    if (!selectedVariant?.selectedOptions?.length) return base;
+    const params = new URLSearchParams();
+    for (const option of selectedVariant.selectedOptions) {
+      if (!option?.name || !option?.value) continue;
+      params.set(option.name.toLowerCase(), option.value);
+    }
+    const query = params.toString();
+    return query ? `${base}?${query}` : base;
+  })();
+
   return (
     <div className="relative isolate w-full aspect-[3/4] md:aspect-square bg-muted group">
       <IntentLink
-        href={`/product/${product.handle}`}
+        href={productHref}
         className="block size-full overflow-hidden focus-visible:outline-none"
         aria-label={`View details for ${product.title}, price ${displayPrice.amount} ${displayPrice.currencyCode}`}
       >
@@ -63,7 +77,7 @@ export const ProductCard = ({ product }: { product: Product }) => {
 
             {inventory.isBackorder ? (
               <IntentLink
-                href={`/product/${product.handle}`}
+                href={productHref}
                 className="group/waitlist col-start-2 self-end inline-flex h-7 items-center gap-1.5 rounded-sm py-1 px-2 text-base font-semibold text-[#F4F1EA] bg-[#0B2E2F] transition-opacity hover:opacity-90"
               >
                 Get Notified

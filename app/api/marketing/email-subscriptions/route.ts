@@ -5,7 +5,10 @@ import { apiError } from '@/lib/api/errors';
 import { createSwellCoupon } from '@/lib/checkout/swell-order-management';
 import { createOrUpdateContact, hasLoopsConfig, sendLoopsEvent } from '@/lib/email/loops';
 import { buildWelcomeDiscountContactProperties } from '@/lib/email/welcome-discount';
-import { sendWelcomeDiscountIssuedEmail } from '@/lib/email/welcome-discount-emails';
+import {
+  sendWelcomeDiscountIssuedEmail,
+  sendWelcomeDiscountSubscriberEmail,
+} from '@/lib/email/welcome-discount-emails';
 
 const subscribeSchema = z.object({
   email: z.string().trim().email('Enter a valid email address.'),
@@ -55,6 +58,18 @@ export const POST = createApiRoute({
         discountCode,
         discountExpiresAt: expiresAt,
       }),
+    });
+
+    // Deliver the 10% off code directly to the subscriber via a Loops
+    // transactional template. This is the source of truth for the customer
+    // email — the `sendLoopsEvent` call below is kept for any downstream
+    // analytics / secondary Loops automations, but we no longer rely on it
+    // for the actual discount delivery.
+    await sendWelcomeDiscountSubscriberEmail({
+      email: body.email,
+      discountCode,
+      discountPercent: DISCOUNT_PERCENT,
+      discountExpiresAt: expiresAt,
     });
 
     await sendLoopsEvent({
