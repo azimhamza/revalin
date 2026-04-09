@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { affiliates, user } from "@/lib/db/schema";
 import { encrypt, decrypt } from "@/lib/db/encryption";
 import { RESERVED_SLUGS } from "@/lib/checkout/affiliate-constants";
+import { shouldPromoteToAffiliateRole } from "@/lib/checkout/affiliate-role";
 import {
   normalizeAffiliateSocialProfiles,
   type AffiliateSocialProfile,
@@ -45,6 +46,20 @@ export type ApprovedAffiliateSyncResult = {
   roleUpdated: boolean;
   role: string | null;
 };
+
+export type AffiliateSetupPreview =
+  | {
+      kind: "existing";
+      affiliateId: string;
+    }
+  | {
+      kind: "draft";
+      userId: string;
+      name: string;
+      email: string;
+      role: string | null;
+      affiliateCode: string;
+    };
 
 function decryptRow(row: typeof affiliates.$inferSelect): AffiliateRecord {
   const walletAddress = decrypt({
@@ -264,7 +279,7 @@ export async function syncApprovedAffiliateForUser(args: {
 
   let roleUpdated = false;
   let role = currentRole;
-  if (currentRole === "customer") {
+  if (shouldPromoteToAffiliateRole(currentRole)) {
     await db
       .update(user)
       .set({ role: "affiliate", updatedAt: new Date() })
@@ -279,6 +294,50 @@ export async function syncApprovedAffiliateForUser(args: {
     linked,
     roleUpdated,
     role,
+  };
+}
+
+export async function getAffiliateSetupPreviewForUser(args: {
+  userId: string;
+}): Promise<AffiliateSetupPreview> {
+  const userRows = await db
+    .select({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    })
+    .from(user)
+    .where(eq(user.id, args.userId))
+    .limit(1);
+
+  const currentUser = userRows[0];
+  if (!currentUser) {
+    throw new Error("User not found.");
+  }
+
+  const existingAffiliate = await getAffiliateByUserIdentity({
+    userId: currentUser.id,
+    email: currentUser.email,
+  });
+
+  if (existingAffiliate) {
+    return {
+      kind: "existing",
+      affiliateId: existingAffiliate.id,
+    };
+  }
+
+  return {
+    kind: "draft",
+    userId: currentUser.id,
+    name: currentUser.name?.trim() || "Growth Partner Applicant",
+    email: currentUser.email.toLowerCase(),
+    role: currentUser.role ?? null,
+    affiliateCode: await generateAffiliateCode({
+      name: currentUser.name,
+      email: currentUser.email,
+    }),
   };
 }
 
@@ -338,7 +397,6 @@ export async function ensureAffiliateSetupForUser(args: {
   return ensureAffiliateRecordForUser({
     userId: args.userId,
     affiliateCode: args.affiliateCode,
-    rejectAdminUsers: true,
     syncApprovedRole: true,
   });
 }
@@ -347,7 +405,6 @@ async function ensureAffiliateRecordForUser(args: {
   userId: string;
   affiliateCode?: string;
   requireAffiliateRole?: boolean;
-  rejectAdminUsers?: boolean;
   syncApprovedRole?: boolean;
 }): Promise<AffiliateUserSetupResult> {
   const userRows = await db
@@ -368,12 +425,6 @@ async function ensureAffiliateRecordForUser(args: {
 
   if (args.requireAffiliateRole && currentUser.role !== "affiliate") {
     throw new Error("This user is not currently marked as a Growth Partner.");
-  }
-
-  if (args.rejectAdminUsers && currentUser.role === "admin") {
-    throw new Error(
-      "Admin accounts cannot be converted to Growth Partners from the roster.",
-    );
   }
 
   const existingByUserId = await db
@@ -470,7 +521,7 @@ async function syncApprovedAffiliateRole(args: {
   userId: string;
   currentRole: string | null;
 }) {
-  if (args.currentRole === "affiliate") {
+  if (!shouldPromoteToAffiliateRole(args.currentRole)) {
     return false;
   }
 

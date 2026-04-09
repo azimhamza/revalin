@@ -75,5 +75,7 @@ export default async function UsersPage() {
     };
   });
 
-  return <UserManagement users={usersWithAffiliates} />;
+  const canDeleteUsers = process.env.NODE_ENV !== 'production';
+
+  return <UserManagement users={usersWithAffiliates} canDeleteUsers={canDeleteUsers} />;
 }

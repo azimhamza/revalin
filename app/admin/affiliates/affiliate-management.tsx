@@ -7,6 +7,7 @@ import {
   Copy,
   Loader2,
   MoreHorizontal,
+  XCircle,
 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -35,6 +36,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
+import type { AffiliateSetupPreview } from "@/lib/checkout/affiliate-service";
 
 import {
   adminFieldClass,
@@ -176,6 +178,7 @@ type BulkDiscountSummary = {
   }>;
 };
 
+type DraftAffiliateSetup = Extract<AffiliateSetupPreview, { kind: "draft" }>;
 
 function statusBadgeVariant(
   status: string,
@@ -227,9 +230,11 @@ function unwrapAdminPayload<T>(payload: unknown) {
 export function AffiliateManagement({
   affiliates,
   orphanUsers,
+  initialSetupTarget,
 }: {
   affiliates: AffiliateRow[];
   orphanUsers: OrphanAffiliateUser[];
+  initialSetupTarget: AffiliateSetupPreview | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -244,6 +249,8 @@ export function AffiliateManagement({
   const [assignmentError, setAssignmentError] = useState<string | null>(null);
   const [selectedAffiliate, setSelectedAffiliate] =
     useState<AffiliateRow | null>(null);
+  const [selectedDraftSetup, setSelectedDraftSetup] =
+    useState<DraftAffiliateSetup | null>(null);
   const [activeTab, setActiveTab] = useState<DialogTab>("codes");
   const [profilesExpanded, setProfilesExpanded] = useState(false);
   const [assignmentForm, setAssignmentForm] = useState<AssignmentFormState>({
@@ -287,7 +294,7 @@ export function AffiliateManagement({
   const [dangerZoneMode, setDangerZoneMode] = useState<
     "suspended" | "delete" | null
   >(null);
-  const autoOpenedAffiliateId = useRef<string | null>(null);
+  const autoOpenedSetupTarget = useRef<string | null>(null);
 
   const counts = useMemo(
     () => ({
@@ -371,11 +378,49 @@ export function AffiliateManagement({
   const isReinstatementFlow =
     selectedAffiliate?.status === "suspended" ||
     selectedAffiliate?.status === "rejected";
+  const isDraftSetup = Boolean(selectedDraftSetup);
+  const selectedSubject = selectedAffiliate
+      ? {
+        name: selectedAffiliate.name,
+        email: selectedAffiliate.email,
+        status: selectedAffiliate.status,
+        socialProfiles: selectedAffiliate.socialProfiles,
+      }
+      : selectedDraftSetup
+      ? {
+          name: selectedDraftSetup.name,
+          email: selectedDraftSetup.email,
+          status: "draft",
+          socialProfiles: [] as AffiliateRow["socialProfiles"],
+        }
+      : null;
+  const dialogTabs = isDraftSetup
+    ? ([
+        { key: "codes", label: "Codes" },
+        { key: "rates", label: "Rates" },
+        { key: "options", label: "Options" },
+      ] as const)
+    : ([
+        { key: "codes", label: "Codes" },
+        { key: "rates", label: "Rates" },
+        { key: "commission", label: "Commission" },
+        { key: "history", label: "History" },
+        { key: "options", label: "Options" },
+        { key: "danger", label: "Danger" },
+      ] as const);
 
   const derivedDiscountCode = assignmentForm.affiliateCode.toUpperCase();
+  const availabilitySummary = availability
+    ? {
+        allAvailable:
+          availability.affiliateCode.available &&
+          availability.discountCode.available,
+      }
+    : null;
 
   const openAssignmentDialog = useCallback((entry: AffiliateRow) => {
     setSelectedAffiliate(entry);
+    setSelectedDraftSetup(null);
     setAssignmentError(null);
     setAssignmentResult(null);
     setAvailability(null);
@@ -386,6 +431,28 @@ export function AffiliateManagement({
       discountPercent: entry.discountPercent || "10",
       commissionRate: formatCommissionPercent(entry.commissionRate),
       sendApprovalEmail: entry.status !== "approved",
+      reinstatementReason: "",
+      confirmAssignment: false,
+    });
+    setCommissionMonthKey(new Date().toISOString().slice(0, 7));
+    setOverrideRateInput("");
+    setOverrideReason("");
+    setAssignmentOpen(true);
+  }, []);
+
+  const openDraftAssignmentDialog = useCallback((entry: DraftAffiliateSetup) => {
+    setSelectedAffiliate(null);
+    setSelectedDraftSetup(entry);
+    setAssignmentError(null);
+    setAssignmentResult(null);
+    setAvailability(null);
+    setActiveTab("codes");
+    setProfilesExpanded(false);
+    setAssignmentForm({
+      affiliateCode: entry.affiliateCode,
+      discountPercent: "10",
+      commissionRate: "10",
+      sendApprovalEmail: true,
       reinstatementReason: "",
       confirmAssignment: false,
     });
@@ -406,33 +473,64 @@ export function AffiliateManagement({
       setAffiliateActionReason("");
       setActiveTab("codes");
       setProfilesExpanded(false);
+      setSelectedAffiliate(null);
+      setSelectedDraftSetup(null);
     }
   }
 
   useEffect(() => {
-    const requestedAffiliateId = searchParams.get("openAffiliate");
-    if (
-      !requestedAffiliateId ||
-      autoOpenedAffiliateId.current === requestedAffiliateId
-    ) {
+    if (!initialSetupTarget) {
       return;
     }
 
-    const requestedAffiliate = affiliates.find(
-      (entry) => entry.id === requestedAffiliateId,
-    );
-    if (!requestedAffiliate) {
+    const setupKey =
+      initialSetupTarget.kind === "existing"
+        ? `affiliate:${initialSetupTarget.affiliateId}`
+        : `draft:${initialSetupTarget.userId}`;
+    if (autoOpenedSetupTarget.current === setupKey) {
       return;
     }
 
-    autoOpenedAffiliateId.current = requestedAffiliateId;
-    openAssignmentDialog(requestedAffiliate);
+    if (initialSetupTarget.kind === "existing") {
+      const requestedAffiliate = affiliates.find(
+        (entry) => entry.id === initialSetupTarget.affiliateId,
+      );
+      if (!requestedAffiliate) {
+        return;
+      }
+
+      autoOpenedSetupTarget.current = setupKey;
+      openAssignmentDialog(requestedAffiliate);
+    } else {
+      autoOpenedSetupTarget.current = setupKey;
+      openDraftAssignmentDialog(initialSetupTarget);
+    }
 
     const nextParams = new URLSearchParams(searchParams.toString());
     nextParams.delete("openAffiliate");
+    nextParams.delete("openUser");
     const nextQuery = nextParams.toString();
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname);
-  }, [affiliates, openAssignmentDialog, pathname, router, searchParams]);
+  }, [
+    affiliates,
+    initialSetupTarget,
+    openAssignmentDialog,
+    openDraftAssignmentDialog,
+    pathname,
+    router,
+    searchParams,
+  ]);
+
+  useEffect(() => {
+    if (
+      isDraftSetup &&
+      (activeTab === "commission" ||
+        activeTab === "history" ||
+        activeTab === "danger")
+    ) {
+      setActiveTab("codes");
+    }
+  }, [activeTab, isDraftSetup]);
 
   useEffect(() => {
     if (!assignmentOpen || !selectedAffiliate) {
@@ -509,14 +607,16 @@ export function AffiliateManagement({
   }
 
   async function handleCheckAvailability() {
-    if (!selectedAffiliate) return;
+    if (!selectedAffiliate && !selectedDraftSetup) return;
 
     setAvailabilityLoading(true);
     setAssignmentError(null);
 
     try {
       const response = await fetch(
-        `/api/admin/affiliates/${selectedAffiliate.id}`,
+        selectedAffiliate
+          ? `/api/admin/affiliates/${selectedAffiliate.id}`
+          : `/api/admin/users/${selectedDraftSetup!.userId}/affiliate-assignment`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -692,7 +792,7 @@ export function AffiliateManagement({
   async function handleAssignmentSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!selectedAffiliate) return;
+    if (!selectedAffiliate && !selectedDraftSetup) return;
     const reinstatementReason = assignmentForm.reinstatementReason.trim();
 
     if (
@@ -710,25 +810,32 @@ export function AffiliateManagement({
     setAssignmentError(null);
 
     try {
-      const res = await fetch(`/api/admin/affiliates/${selectedAffiliate.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          status: "approved",
-          affiliateCode: assignmentForm.affiliateCode,
-          discountCode: derivedDiscountCode,
-          discountPercent: assignmentForm.discountPercent,
-          commissionRate: assignmentForm.commissionRate,
-          sendApprovalEmail: assignmentForm.sendApprovalEmail,
-          changeReason: isReinstatementFlow
-            ? reinstatementReason ||
-              "Growth Partner reinstated from admin dashboard."
-            : "Growth Partner assignment updated from admin dashboard.",
-          reinstatementReason: isReinstatementFlow
-            ? reinstatementReason
-            : undefined,
-        }),
-      });
+      const res = await fetch(
+        selectedAffiliate
+          ? `/api/admin/affiliates/${selectedAffiliate.id}`
+          : `/api/admin/users/${selectedDraftSetup!.userId}/affiliate-assignment`,
+        {
+          method: selectedAffiliate ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...(selectedAffiliate
+              ? { status: "approved" }
+              : { action: "save_assignment" }),
+            affiliateCode: assignmentForm.affiliateCode,
+            discountCode: derivedDiscountCode,
+            discountPercent: assignmentForm.discountPercent,
+            commissionRate: assignmentForm.commissionRate,
+            sendApprovalEmail: assignmentForm.sendApprovalEmail,
+            changeReason: isReinstatementFlow
+              ? reinstatementReason ||
+                "Growth Partner reinstated from admin dashboard."
+              : "Growth Partner assignment updated from admin dashboard.",
+            reinstatementReason: isReinstatementFlow
+              ? reinstatementReason
+              : undefined,
+          }),
+        },
+      );
 
       const payload = await readJsonSafely(res);
       const data = unwrapAdminPayload<{
@@ -744,8 +851,8 @@ export function AffiliateManagement({
         referralLink: data.assignment.referralLink,
         checkoutLink: data.assignment.checkoutLink,
         emailSent: Boolean(data.assignment.emailSent),
-        affiliateName: selectedAffiliate.name,
-        affiliateEmail: selectedAffiliate.email,
+        affiliateName: selectedSubject?.name || "",
+        affiliateEmail: selectedSubject?.email || "",
       });
       router.refresh();
     } catch (error) {
@@ -975,6 +1082,8 @@ export function AffiliateManagement({
           <DialogTitle className="sr-only">
             {assignmentResult
               ? "Assignment saved"
+              : isDraftSetup
+                ? "Create Growth Partner assignment"
               : selectedAffiliate?.status === "approved"
                 ? "Manage assignment"
                 : isReinstatementFlow
@@ -984,12 +1093,14 @@ export function AffiliateManagement({
           <DialogDescription className="sr-only">
             {assignmentResult
               ? "Codes and links updated."
+              : isDraftSetup
+                ? "Create the Growth Partner record and assignment."
               : isReinstatementFlow
                 ? "Edit codes and reinstatement settings."
                 : "Edit codes and approval settings."}
           </DialogDescription>
 
-          {selectedAffiliate && !assignmentResult ? (
+          {selectedSubject && !assignmentResult ? (
             <form
               onSubmit={handleAssignmentSubmit}
               className="flex min-h-0 flex-1 flex-col"
@@ -998,34 +1109,34 @@ export function AffiliateManagement({
               <div className="shrink-0 border-b border-[#0B2E2F]/12 px-5 py-4">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <p className="text-sm font-semibold tracking-[-0.04em] text-[#0B2E2F]">
-                    {selectedAffiliate.name}
+                    {selectedSubject.name}
                   </p>
                   <span className="text-xs text-[#0B2E2F]/58">
-                    {selectedAffiliate.email}
+                    {selectedSubject.email}
                   </span>
                   <Badge
-                    variant={statusBadgeVariant(selectedAffiliate.status)}
+                    variant={statusBadgeVariant(selectedSubject.status)}
                     className="rounded-none px-2.5 py-0.5 text-[10px] uppercase tracking-[0.14em]"
                   >
-                    {selectedAffiliate.status}
+                    {selectedSubject.status}
                   </Badge>
-                  {selectedAffiliate.socialProfiles.length > 0 ? (
+                  {selectedSubject.socialProfiles.length > 0 ? (
                     <button
                       type="button"
                       onClick={() => setProfilesExpanded((p) => !p)}
                       className="flex items-center gap-1 text-xs font-semibold text-[#0B2E2F]/62 hover:text-[#0B2E2F]"
                     >
-                      {selectedAffiliate.socialProfiles.length} profile
-                      {selectedAffiliate.socialProfiles.length === 1 ? "" : "s"}
+                      {selectedSubject.socialProfiles.length} profile
+                      {selectedSubject.socialProfiles.length === 1 ? "" : "s"}
                       <ChevronDown
                         className={`size-3 transition-transform ${profilesExpanded ? "rotate-180" : ""}`}
                       />
                     </button>
                   ) : null}
                 </div>
-                {profilesExpanded && selectedAffiliate.socialProfiles.length > 0 ? (
+                {profilesExpanded && selectedSubject.socialProfiles.length > 0 ? (
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {selectedAffiliate.socialProfiles.map((profile, index) => (
+                    {selectedSubject.socialProfiles.map((profile, index) => (
                       <a
                         key={`${profile.platform}-${profile.url}-${index}`}
                         href={profile.url}
@@ -1044,16 +1155,7 @@ export function AffiliateManagement({
               <div className="flex min-h-0 flex-1">
                 {/* Left tab nav */}
                 <nav className="flex w-[160px] shrink-0 flex-col gap-0.5 border-r border-[#0B2E2F]/10 bg-[#F8F5EF] px-2 py-3">
-                  {(
-                    [
-                      { key: "codes", label: "Codes" },
-                      { key: "rates", label: "Rates" },
-                      { key: "commission", label: "Commission" },
-                      { key: "history", label: "History" },
-                      { key: "options", label: "Options" },
-                      { key: "danger", label: "Danger" },
-                    ] as const
-                  ).map((tab) => (
+                  {dialogTabs.map((tab) => (
                     <button
                       key={tab.key}
                       type="button"
@@ -1085,13 +1187,16 @@ export function AffiliateManagement({
                         <Input
                           value={assignmentForm.affiliateCode}
                           onChange={(event) =>
-                            setAssignmentForm((current) => ({
-                              ...current,
-                              affiliateCode: sanitizePartnerCode(
-                                event.target.value,
-                              ),
-                              confirmAssignment: false,
-                            }))
+                            {
+                              setAvailability(null);
+                              setAssignmentForm((current) => ({
+                                ...current,
+                                affiliateCode: sanitizePartnerCode(
+                                  event.target.value,
+                                ),
+                                confirmAssignment: false,
+                              }));
+                            }
                           }
                           className={adminFieldClass}
                           placeholder="e.g. azim-lab"
@@ -1138,34 +1243,122 @@ export function AffiliateManagement({
                         </div>
 
                         {availability ? (
-                          <div className="grid gap-2.5 sm:grid-cols-2">
-                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
-                                Partner code
-                              </p>
-                              <p
-                                className={`mt-1.5 text-xs font-semibold ${
-                                  availability.affiliateCode.available
-                                    ? "text-emerald-700"
-                                    : "text-red-600"
-                                }`}
-                              >
-                                {availability.affiliateCode.message}
-                              </p>
+                          <div className="space-y-2.5">
+                            <div
+                              className={`flex items-start gap-2.5 rounded-none border px-3 py-3 ${
+                                availabilitySummary?.allAvailable
+                                  ? "border-emerald-200 bg-emerald-50"
+                                  : "border-red-200 bg-red-50"
+                              }`}
+                            >
+                              {availabilitySummary?.allAvailable ? (
+                                <CheckCircle2 className="mt-0.5 size-4 text-emerald-700" />
+                              ) : (
+                                <XCircle className="mt-0.5 size-4 text-red-600" />
+                              )}
+                              <div className="space-y-1">
+                                <p
+                                  className={`text-xs font-semibold ${
+                                    availabilitySummary?.allAvailable
+                                      ? "text-emerald-700"
+                                      : "text-red-700"
+                                  }`}
+                                >
+                                  {availabilitySummary?.allAvailable
+                                    ? "This partner code and Swell code are available to use."
+                                    : "One or more codes need to be changed before saving."}
+                                </p>
+                                <p className="text-xs text-[#0B2E2F]/58">
+                                  Checked route{" "}
+                                  <span className="font-mono">
+                                    /{assignmentForm.affiliateCode || "partner-code"}
+                                  </span>{" "}
+                                  and Swell code{" "}
+                                  <span className="font-mono">
+                                    {derivedDiscountCode || "—"}
+                                  </span>
+                                  .
+                                </p>
+                              </div>
                             </div>
-                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
-                                Swell code
-                              </p>
-                              <p
-                                className={`mt-1.5 text-xs font-semibold ${
-                                  availability.discountCode.available
-                                    ? "text-emerald-700"
-                                    : "text-red-600"
+
+                            <div className="grid gap-2.5 sm:grid-cols-2">
+                              <div
+                                className={`rounded-none border px-2.5 py-2.5 ${
+                                  availability.affiliateCode.available
+                                    ? "border-emerald-200 bg-emerald-50"
+                                    : "border-red-200 bg-red-50"
                                 }`}
                               >
-                                {availability.discountCode.message}
-                              </p>
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                    Partner code
+                                  </p>
+                                  <span
+                                    className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                                      availability.affiliateCode.available
+                                        ? "text-emerald-700"
+                                        : "text-red-600"
+                                    }`}
+                                  >
+                                    {availability.affiliateCode.available ? (
+                                      <CheckCircle2 className="size-3.5" />
+                                    ) : (
+                                      <XCircle className="size-3.5" />
+                                    )}
+                                    {availability.affiliateCode.available
+                                      ? "Available"
+                                      : "Unavailable"}
+                                  </span>
+                                </div>
+                                <p
+                                  className={`mt-1.5 text-xs font-semibold ${
+                                    availability.affiliateCode.available
+                                      ? "text-emerald-700"
+                                      : "text-red-600"
+                                  }`}
+                                >
+                                  {availability.affiliateCode.message}
+                                </p>
+                              </div>
+                              <div
+                                className={`rounded-none border px-2.5 py-2.5 ${
+                                  availability.discountCode.available
+                                    ? "border-emerald-200 bg-emerald-50"
+                                    : "border-red-200 bg-red-50"
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                    Swell code
+                                  </p>
+                                  <span
+                                    className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                                      availability.discountCode.available
+                                        ? "text-emerald-700"
+                                        : "text-red-600"
+                                    }`}
+                                  >
+                                    {availability.discountCode.available ? (
+                                      <CheckCircle2 className="size-3.5" />
+                                    ) : (
+                                      <XCircle className="size-3.5" />
+                                    )}
+                                    {availability.discountCode.available
+                                      ? "Available"
+                                      : "Unavailable"}
+                                  </span>
+                                </div>
+                                <p
+                                  className={`mt-1.5 text-xs font-semibold ${
+                                    availability.discountCode.available
+                                      ? "text-emerald-700"
+                                      : "text-red-600"
+                                  }`}
+                                >
+                                  {availability.discountCode.message}
+                                </p>
+                              </div>
                             </div>
                           </div>
                         ) : null}
@@ -1514,7 +1707,7 @@ export function AffiliateManagement({
 
                       {!dangerZoneMode ? (
                         <div className="flex gap-2">
-                          {selectedAffiliate.status !== "suspended" ? (
+                          {selectedAffiliate?.status !== "suspended" ? (
                             <Button
                               type="button"
                               variant="outline"
@@ -1536,8 +1729,8 @@ export function AffiliateManagement({
                         <div className="space-y-3">
                           <p className="text-xs text-red-700">
                             {dangerZoneMode === "delete"
-                              ? `Deleting ${selectedAffiliate.name} will remove the application and send the removal email immediately.`
-                              : `Suspending ${selectedAffiliate.name} will disable Growth Partner access and send the suspension email.`}
+                              ? `Deleting ${selectedSubject?.name} will remove the application and send the removal email immediately.`
+                              : `Suspending ${selectedSubject?.name} will disable Growth Partner access and send the suspension email.`}
                           </p>
                           <div className="space-y-2">
                             <Label className="text-xs font-semibold uppercase tracking-[0.16em] text-red-700/70">
@@ -1567,7 +1760,7 @@ export function AffiliateManagement({
                                 setDangerZoneMode(null);
                                 setAffiliateActionReason("");
                               }}
-                              disabled={loadingId === selectedAffiliate.id}
+                              disabled={loadingId === selectedAffiliate?.id}
                             >
                               Back
                             </Button>
@@ -1579,9 +1772,9 @@ export function AffiliateManagement({
                                   : adminPrimaryButtonClass
                               }
                               onClick={handleDangerZoneConfirm}
-                              disabled={loadingId === selectedAffiliate.id}
+                              disabled={loadingId === selectedAffiliate?.id}
                             >
-                              {loadingId === selectedAffiliate.id ? (
+                              {loadingId === selectedAffiliate?.id ? (
                                 <Loader2 className="size-4 animate-spin" />
                               ) : null}
                               {dangerZoneMode === "delete"
@@ -1592,8 +1785,8 @@ export function AffiliateManagement({
                         </div>
                       )}
 
-                      {selectedAffiliate.discountCode ||
-                      selectedAffiliate.swellCouponId ? (
+                      {selectedAffiliate?.discountCode ||
+                      selectedAffiliate?.swellCouponId ? (
                         <div className="border-t border-red-200 pt-3">
                           <Button
                             type="button"
@@ -1644,7 +1837,9 @@ export function AffiliateManagement({
                   >
                     {assignmentLoading ? (
                       <Loader2 className="size-4 animate-spin" />
-                    ) : selectedAffiliate.status === "approved" ? (
+                    ) : isDraftSetup ? (
+                      "Create and assign"
+                    ) : selectedAffiliate?.status === "approved" ? (
                       "Save assignment"
                     ) : isReinstatementFlow ? (
                       "Reinstate and assign"

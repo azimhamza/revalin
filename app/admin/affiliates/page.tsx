@@ -2,7 +2,11 @@ import { db } from "@/lib/db";
 import { affiliateCommissionMonths, affiliates } from "@/lib/db/schema";
 import { desc, eq, inArray } from "drizzle-orm";
 import { decrypt } from "@/lib/db/encryption";
-import { listAffiliateRoleOrphans } from "@/lib/checkout/affiliate-service";
+import {
+  getAffiliateSetupPreviewForUser,
+  type AffiliateSetupPreview,
+  listAffiliateRoleOrphans,
+} from "@/lib/checkout/affiliate-service";
 import { listCommissionTierConfig } from "@/lib/checkout/commission-tier-service";
 import { getCommissionMonthKey } from "@/lib/checkout/commission-service";
 import { CommissionTierManagement } from "./commission-tier-management";
@@ -15,6 +19,7 @@ export const metadata = {
 type AffiliatesPageProps = {
   searchParams?: Promise<{
     openAffiliate?: string | string[] | undefined;
+    openUser?: string | string[] | undefined;
   }>;
 };
 
@@ -49,14 +54,31 @@ export default async function AffiliatesPage({
   const requestedAffiliateId = Array.isArray(params.openAffiliate)
     ? params.openAffiliate[0]
     : params.openAffiliate;
+  const requestedUserId = Array.isArray(params.openUser)
+    ? params.openUser[0]
+    : params.openUser;
+  const initialSetupTarget: AffiliateSetupPreview | null = requestedAffiliateId
+    ? {
+        kind: "existing",
+        affiliateId: requestedAffiliateId,
+      }
+    : requestedUserId
+      ? await getAffiliateSetupPreviewForUser({ userId: requestedUserId }).catch(
+          () => null,
+        )
+      : null;
+  const selectedAffiliateId =
+    initialSetupTarget?.kind === "existing"
+      ? initialSetupTarget.affiliateId
+      : null;
 
   const [baseRows, selectedRows, orphanUsers, commissionTiers] = await Promise.all([
     db.select().from(affiliates).orderBy(desc(affiliates.createdAt)).limit(200),
-    requestedAffiliateId
+    selectedAffiliateId
       ? db
           .select()
           .from(affiliates)
-          .where(eq(affiliates.id, requestedAffiliateId))
+          .where(eq(affiliates.id, selectedAffiliateId))
           .limit(1)
       : Promise.resolve([]),
     listAffiliateRoleOrphans().catch(() => []),
@@ -120,7 +142,11 @@ export default async function AffiliatesPage({
   return (
     <div className="space-y-4">
       <CommissionTierManagement initialTiers={commissionTiers} />
-      <AffiliateManagement affiliates={decryptedRows} orphanUsers={orphanUsers} />
+      <AffiliateManagement
+        affiliates={decryptedRows}
+        orphanUsers={orphanUsers}
+        initialSetupTarget={initialSetupTarget}
+      />
     </div>
   );
 }

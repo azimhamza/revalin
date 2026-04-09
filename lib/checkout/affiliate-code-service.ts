@@ -22,7 +22,12 @@ import {
   updateSwellAffiliateCoupon,
   updateSwellCouponCode,
 } from "@/lib/checkout/swell-order-management";
-import { assertAffiliateCodeAvailable } from "@/lib/checkout/affiliate-service";
+import { shouldPromoteToAffiliateRole } from "@/lib/checkout/affiliate-role";
+import {
+  assertAffiliateCodeAvailable,
+  createAffiliate,
+  getAffiliateByUserIdentity,
+} from "@/lib/checkout/affiliate-service";
 import {
   getCommissionMonthKey,
   normalizeCommissionRateInput,
@@ -125,7 +130,7 @@ function normalizeDiscountPercent(value: string) {
 }
 
 async function assertDiscountCodeAvailable(args: {
-  affiliateId: string;
+  affiliateId?: string | null;
   discountCode: string;
   existingSwellCouponId?: string | null;
 }) {
@@ -134,10 +139,12 @@ async function assertDiscountCodeAvailable(args: {
     .select({ id: affiliates.id })
     .from(affiliates)
     .where(
-      and(
-        eq(affiliates.discountCode, normalizedDiscountCode),
-        ne(affiliates.id, args.affiliateId),
-      ),
+      args.affiliateId
+        ? and(
+            eq(affiliates.discountCode, normalizedDiscountCode),
+            ne(affiliates.id, args.affiliateId),
+          )
+        : eq(affiliates.discountCode, normalizedDiscountCode),
     )
     .limit(1);
 
@@ -175,7 +182,7 @@ function isMissingSwellCouponError(error: unknown) {
   return /(\[404\]|\[410\]|not found)/i.test(error.message);
 }
 
-async function deleteSwellCouponIfPresent(couponId: string | null) {
+export async function deleteSwellCouponIfPresent(couponId: string | null) {
   if (!couponId) return;
 
   try {
@@ -282,6 +289,59 @@ export async function checkAffiliateAssignmentAvailability(args: {
       affiliateId: args.affiliateId,
       discountCode,
       existingSwellCouponId: row.swellCouponId,
+    });
+  } catch (error) {
+    discountCodeAvailable = false;
+    discountCodeMessage =
+      error instanceof Error
+        ? error.message
+        : "Swell discount code is not available.";
+  }
+
+  return {
+    affiliateCode: {
+      value: normalizedAffiliateCode,
+      available: affiliateCodeAvailable,
+      message: affiliateCodeMessage,
+    },
+    discountCode: {
+      value: normalizedDiscountCode,
+      available: discountCodeAvailable,
+      message: discountCodeMessage,
+    },
+  };
+}
+
+export async function checkNewAffiliateAssignmentAvailability(args: {
+  affiliateCode: string;
+  discountCode: string;
+}): Promise<AffiliateAvailabilityCheck> {
+  const affiliateCode = args.affiliateCode.trim();
+  const discountCode = args.discountCode.trim();
+
+  let affiliateCodeMessage = "Partner code is available.";
+  let affiliateCodeAvailable = true;
+  let normalizedAffiliateCode = "";
+
+  try {
+    normalizedAffiliateCode = await assertAffiliateCodeAvailable({
+      code: affiliateCode,
+    });
+  } catch (error) {
+    affiliateCodeAvailable = false;
+    affiliateCodeMessage =
+      error instanceof Error ? error.message : "Partner code is not available.";
+    normalizedAffiliateCode = affiliateCode;
+  }
+
+  let discountCodeMessage = "Swell discount code is available.";
+  let discountCodeAvailable = true;
+  let normalizedDiscountCode = discountCode;
+
+  try {
+    normalizedDiscountCode = await assertDiscountCodeAvailable({
+      discountCode,
+      existingSwellCouponId: null,
     });
   } catch (error) {
     discountCodeAvailable = false;
@@ -416,10 +476,18 @@ export async function saveAffiliateCodeAssignment(args: {
     .where(eq(affiliates.id, row.id));
 
   if (row.userId && nextStatus === "approved") {
-    await db
-      .update(user)
-      .set({ role: "affiliate", updatedAt: new Date() })
-      .where(eq(user.id, row.userId));
+    const linkedUserRows = await db
+      .select({ role: user.role })
+      .from(user)
+      .where(eq(user.id, row.userId))
+      .limit(1);
+
+    if (shouldPromoteToAffiliateRole(linkedUserRows[0]?.role)) {
+      await db
+        .update(user)
+        .set({ role: "affiliate", updatedAt: new Date() })
+        .where(eq(user.id, row.userId));
+    }
   }
 
   if (row.commissionRate !== nextCommissionRate) {
@@ -488,6 +556,62 @@ export async function saveAffiliateCodeAssignment(args: {
     checkoutLink: links.checkoutLink,
     emailSent,
   };
+}
+
+export async function createAffiliateCodeAssignmentForUser(args: {
+  userId: string;
+  affiliateCode: string;
+  discountCode: string;
+  discountPercent?: string;
+  commissionRate?: string;
+  sendEmail?: boolean;
+  changedByUserId?: string | null;
+  changeReason?: string | null;
+  reinstatementReason?: string | null;
+}) {
+  const userRows = await db
+    .select({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+    })
+    .from(user)
+    .where(eq(user.id, args.userId))
+    .limit(1);
+
+  const currentUser = userRows[0];
+  if (!currentUser) {
+    throw new Error("User not found.");
+  }
+
+  let affiliate = await getAffiliateByUserIdentity({
+    userId: currentUser.id,
+    email: currentUser.email,
+  });
+
+  if (!affiliate) {
+    affiliate = await createAffiliate({
+      code: args.affiliateCode,
+      name: currentUser.name?.trim() || "Growth Partner Applicant",
+      email: currentUser.email.toLowerCase(),
+      walletAddress: "",
+      socialProfiles: [],
+      userId: currentUser.id,
+    });
+  }
+
+  return saveAffiliateCodeAssignment({
+    affiliateId: affiliate.id,
+    affiliateCode: args.affiliateCode,
+    discountCode: args.discountCode,
+    discountPercent: args.discountPercent,
+    commissionRate: args.commissionRate,
+    approve: true,
+    sendEmail: args.sendEmail,
+    changedByUserId: args.changedByUserId ?? null,
+    changeReason: args.changeReason ?? null,
+    reinstatementReason: args.reinstatementReason ?? null,
+  });
 }
 
 export async function setAffiliateCodeAssignmentActive(args: {

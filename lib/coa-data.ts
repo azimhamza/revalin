@@ -21,19 +21,19 @@ export interface BatchData {
   verifyUrl: string;
 }
 
-// Search terms used to match each COA product to a Swell store product handle
+// Search terms used to match each COA product to a Swell store product handle.
+// Keep each product's first term specific enough that it resolves to the
+// intended Swell product (e.g. 'cjc-1295-ipamorelin-stack' avoids matching the
+// standalone Ipamorelin product).
 export const PRODUCT_MATCH_TERMS: Record<string, string[]> = {
-  'GLP-3 (Triple Agonist)': ['glp-3', 'glp-3rt', 'triple-agonist'],
+  'GLP-3 (Triple Agonist)': ['retatrutide-glp1-triple-agonist', 'glp-3', 'triple-agonist'],
   Tesamorelin: ['tesamorelin'],
-  'BPC-157': ['bpc-157', 'bpc157', 'bpc 157'],
-  'Glow Blend': ['glow'],
-  'NAD+': ['nad'],
-  'CJC/Ipamorelin': ['ipamorelin', 'cjc'],
-  'GHK-Cu': ['ghk-cu', 'ghk cu'],
-  'ARA-290': ['ara-290', 'ara290'],
-  'MOTS-C': ['mots-c', 'mots c', 'motsc'],
-  'KLOW Blend': ['klow'],
-  Semax: ['semax'],
+  'BPC-157': ['bpc-157-body-protection-compound', 'bpc-157'],
+  'Glow Blend': ['glow-multi-peptide-blend', 'glow'],
+  'CJC/Ipamorelin': ['cjc-1295-ipamorelin-stack', 'cjc-1295-ipamorelin'],
+  'GHK-Cu': ['ghk-cu-copper-peptide', 'ghk-cu'],
+  'KLOW Blend': ['klow-quad-peptide-stack', 'klow'],
+  Semax: ['semax-nootropic-peptide', 'semax'],
 };
 
 export const COA_BATCHES: BatchData[] = [
@@ -102,20 +102,6 @@ export const COA_BATCHES: BatchData[] = [
     verifyUrl: 'https://www.janoshik.com/tests/68487_WVZ84EVZSQAT',
   },
   {
-    id: '5',
-    taskNumber: '68484',
-    sample: 'NAD500',
-    product: 'NAD+',
-    manufacturer: 'Revalin Trusted',
-    testingOrdered: '10 Jun 2025',
-    sampleReceived: '17 Jun 2025',
-    analysisDate: '20 Jun 2025',
-    testRequested: 'Qualitative and quantitative analysis of non-AAS sample.',
-    results: [{ compound: 'NAD+', amount: '559.60 mg' }],
-    verificationKey: 'TDS1FZICZMPY',
-    verifyUrl: 'https://www.janoshik.com/tests/68484_TDS1FZICZMPY',
-  },
-  {
     id: '6',
     taskNumber: '105094',
     sample: 'Sample 7',
@@ -146,36 +132,6 @@ export const COA_BATCHES: BatchData[] = [
     purity: '99.775',
     verificationKey: 'XIVZ3XGKE6HT',
     verifyUrl: 'https://www.janoshik.com/tests/92640_XIVZ3XGKE6HT',
-  },
-  {
-    id: '8',
-    taskNumber: '92639',
-    sample: 'Ara-290',
-    product: 'ARA-290',
-    manufacturer: 'Revalin Trusted',
-    testingOrdered: '05 Dec 2025',
-    sampleReceived: '09 Dec 2025',
-    analysisDate: '10 Dec 2025',
-    testRequested: 'Assessment of a peptide vial or vials.',
-    results: [{ compound: 'ARA-290', amount: '11.25 mg' }],
-    purity: '99.514',
-    verificationKey: '25HZDEC84YUD',
-    verifyUrl: 'https://www.janoshik.com/tests/92639_25HZDEC84YUD',
-  },
-  {
-    id: '9',
-    taskNumber: '105097',
-    sample: 'Sample 8',
-    product: 'MOTS-C',
-    manufacturer: 'Unknown',
-    testingOrdered: '04 Feb 2026',
-    sampleReceived: '09 Feb 2026',
-    analysisDate: '12 Feb 2026',
-    testRequested: 'MOTS-c analysis',
-    results: [{ compound: 'MOTS-C', amount: '11.76 mg' }],
-    purity: '99.376',
-    verificationKey: 'EB7MCX3Z2ATH',
-    verifyUrl: 'https://www.janoshik.com/tests/105097_EB7MCX3Z2ATH',
   },
   {
     id: '10',

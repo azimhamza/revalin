@@ -2,15 +2,33 @@ import { z } from "zod";
 
 import { createApiRoute } from "@/lib/api/route";
 import { apiError } from "@/lib/api/errors";
-import { ensureAffiliateSetupForUser } from "@/lib/checkout/affiliate-service";
+import {
+  checkNewAffiliateAssignmentAvailability,
+  createAffiliateCodeAssignmentForUser,
+} from "@/lib/checkout/affiliate-code-service";
 
 const paramsSchema = z.object({
   userId: z.string().trim().min(1),
 });
 
-const requestSchema = z.object({
-  affiliateCode: z.string().trim().min(1).optional(),
+const availabilityRequestSchema = z.object({
+  action: z.literal("check_availability"),
+  affiliateCode: z.string().trim().min(1),
+  discountCode: z.string().trim().min(1),
 });
+
+const saveRequestSchema = z.object({
+  action: z.literal("save_assignment"),
+  affiliateCode: z.string().trim().min(1),
+  discountCode: z.string().trim().min(1),
+  discountPercent: z.string().trim().min(1),
+  commissionRate: z.string().trim().min(1),
+  sendApprovalEmail: z.boolean().optional(),
+  changeReason: z.string().trim().optional(),
+  reinstatementReason: z.string().trim().optional(),
+});
+
+const requestSchema = z.union([availabilityRequestSchema, saveRequestSchema]);
 
 function normalizeAssignmentError(error: unknown) {
   if (!(error instanceof Error)) {
@@ -29,29 +47,63 @@ function normalizeAssignmentError(error: unknown) {
     return apiError.conflict(error.message);
   }
 
+  if (
+    /reserved by an existing route|already assigned|already in use|requires a Swell discount code|must be/i.test(
+      error.message,
+    )
+  ) {
+    return apiError.badRequest(error.message);
+  }
+
   return apiError.internal(error.message);
 }
 
 export const dynamic = "force-dynamic";
 
-export const POST = createApiRoute({
+export const POST = createApiRoute<
+  "admin",
+  typeof requestSchema,
+  undefined,
+  typeof paramsSchema,
+  Record<string, unknown>
+>({
   route: "/api/admin/users/:userId/affiliate-assignment",
   access: "admin",
   paramsSchema,
   bodySchema: requestSchema,
   cacheControl: "no-store",
-  handler: async ({ params, body }) => {
+  handler: async ({ params, body, session }) => {
     try {
-      const setup = await ensureAffiliateSetupForUser({
-        userId: params.userId,
-        affiliateCode: body.affiliateCode,
-      });
+      if ("action" in body && body.action === "check_availability") {
+        return {
+          data: {
+            availability: await checkNewAffiliateAssignmentAvailability({
+              affiliateCode: body.affiliateCode,
+              discountCode: body.discountCode,
+            }),
+          },
+        };
+      }
 
-      return {
-        data: {
-          setup,
-        },
-      };
+      if ("action" in body && body.action === "save_assignment") {
+        return {
+          data: {
+            assignment: await createAffiliateCodeAssignmentForUser({
+              userId: params.userId,
+              affiliateCode: body.affiliateCode,
+              discountCode: body.discountCode,
+              discountPercent: body.discountPercent,
+              commissionRate: body.commissionRate,
+              sendEmail: body.sendApprovalEmail,
+              changedByUserId: session.user.id,
+              changeReason: body.changeReason ?? null,
+              reinstatementReason: body.reinstatementReason ?? null,
+            }),
+          },
+        };
+      }
+
+      throw apiError.badRequest("Unsupported affiliate assignment action.");
     } catch (error) {
       throw normalizeAssignmentError(error);
     }

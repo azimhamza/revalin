@@ -1,5 +1,60 @@
+'use client';
+
 import Link from 'next/link';
+import { motion, type Variants } from 'motion/react';
 import { ArrowUpRight, BadgeCheck, ClipboardCheck, Truck } from 'lucide-react';
+
+const EASE = [0.22, 1, 0.36, 1] as const;
+
+const fadeUp: Variants = {
+  hidden: { opacity: 0, y: 24 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.8, ease: EASE },
+  },
+};
+
+const staggerContainer: Variants = {
+  hidden: {},
+  visible: {
+    transition: { staggerChildren: 0.14, delayChildren: 0.05 },
+  },
+};
+
+const staggerContainerFast: Variants = {
+  hidden: {},
+  visible: {
+    transition: { staggerChildren: 0.08, delayChildren: 0.1 },
+  },
+};
+
+const wordReveal: Variants = {
+  hidden: { opacity: 0, y: 40 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 1, ease: EASE },
+  },
+};
+
+const ruleDraw: Variants = {
+  hidden: { scaleX: 0 },
+  visible: {
+    scaleX: 1,
+    transition: { duration: 1.1, ease: EASE },
+  },
+};
+
+const chipPop: Variants = {
+  hidden: { opacity: 0, scale: 0.94, y: 14 },
+  visible: {
+    opacity: 1,
+    scale: 1,
+    y: 0,
+    transition: { duration: 0.7, ease: EASE },
+  },
+};
 
 const VALIDATION_PANELS = [
   {
@@ -84,12 +139,38 @@ const faqJsonLd = {
   })),
 };
 
+const HEADING_WORDS = ['Proof,', 'not', 'promises.'];
+
+function SectionMarker({ label }: { label: string }) {
+  return (
+    <motion.div
+      className="flex items-center gap-5"
+      initial="hidden"
+      whileInView="visible"
+      viewport={{ once: true, amount: 0.6 }}
+      variants={staggerContainerFast}
+    >
+      <motion.span
+        variants={fadeUp}
+        className="font-mono text-[11px] font-medium uppercase tracking-[0.2em] text-[#0B2E2F]/55"
+      >
+        {label}
+      </motion.span>
+      <motion.div
+        variants={ruleDraw}
+        style={{ originX: 0 }}
+        className="h-px flex-1 bg-[#0B2E2F]/20"
+      />
+    </motion.div>
+  );
+}
+
 export function ValidationSection() {
   return (
     <section
       id="validation"
       aria-labelledby="validation-heading"
-      className="border-t border-black/10 bg-[#E8E1D4] px-sides py-10 text-[#0B2E2F] md:py-14"
+      className="border-t border-black/10 bg-[#E8E1D4] px-sides py-16 text-[#0B2E2F] md:py-24"
     >
       <script
         type="application/ld+json"
@@ -97,52 +178,92 @@ export function ValidationSection() {
       />
 
       <div className="mx-auto max-w-[1600px]">
-        <div className="grid gap-8 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] md:gap-12">
-          {/* Headline block */}
-          <div className="space-y-5">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-[#0B2E2F]/55">
-              Validation
-            </p>
-            <h2
+        <SectionMarker label="Validation" />
+
+        {/* Editorial split — heading left, body right */}
+        <div className="mt-10 grid gap-10 md:mt-16 md:grid-cols-12 md:gap-14">
+          <div className="md:col-span-5">
+            <motion.h2
               id="validation-heading"
-              className="max-w-xl text-3xl tracking-[-0.05em] md:text-[3.1rem] md:leading-[0.95]"
+              className="flex flex-wrap text-4xl tracking-[-0.05em] md:text-[4.5rem] md:leading-[0.9]"
+              initial="hidden"
+              whileInView="visible"
+              viewport={{ once: true, amount: 0.5 }}
+              variants={staggerContainer}
             >
-              Proof, not promises.
-            </h2>
-            <p className="max-w-md text-base italic leading-relaxed text-[#0B2E2F]/72">
+              {HEADING_WORDS.map((word) => (
+                <motion.span
+                  key={word}
+                  variants={wordReveal}
+                  className="mr-[0.18em] inline-block"
+                >
+                  {word}
+                </motion.span>
+              ))}
+            </motion.h2>
+          </div>
+
+          <motion.div
+            className="max-w-2xl space-y-6 md:col-span-7"
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true, amount: 0.2 }}
+            variants={staggerContainer}
+          >
+            <motion.p
+              variants={fadeUp}
+              className="text-base italic leading-relaxed text-[#0B2E2F]/72 md:text-lg"
+            >
               Independently tested. Openly published. Shipped the same day.
-            </p>
-            <p className="max-w-xl text-sm leading-relaxed text-[#0B2E2F]/72 md:text-base">
+            </motion.p>
+            <motion.p
+              variants={fadeUp}
+              className="text-base leading-[1.7] text-[#0B2E2F]/78 md:text-[1.0625rem]"
+            >
               Revalin is a Canadian research peptide supplier based in Waterloo, Ontario. Every
               compound we ship is independently tested by Janoshik Analytical, published with an
               open Certificate of Analysis, and dispatched same-day to qualified researchers
               across Canada and the United States. Lab-grade material for in-vitro and pre-clinical
               research — documented on record, not on a landing page.
-            </p>
-          </div>
-
-          {/* Stats — 2x2 green anchor chips */}
-          <div className="grid grid-cols-2 gap-3 md:gap-4">
-            {STATS.map(({ label, value }) => (
-              <div
-                key={label}
-                className="rounded-[12px] p-4 text-[#F4F1EA]"
-                style={{ backgroundColor: '#0B2E2F' }}
-              >
-                <p className="text-[10px] uppercase tracking-[0.18em] text-[#F4F1EA]/55">
-                  {label}
-                </p>
-                <p className="mt-3 text-2xl tracking-[-0.04em] md:text-[1.75rem]">{value}</p>
-              </div>
-            ))}
-          </div>
+            </motion.p>
+          </motion.div>
         </div>
 
-        {/* Feature panels — flat icons, no circle wrappers */}
-        <div className="mt-10 grid gap-3 md:mt-14 md:grid-cols-3 md:gap-4">
+        {/* Stats row — green anchor chips */}
+        <motion.div
+          className="mt-14 grid grid-cols-2 gap-3 md:mt-20 md:grid-cols-4 md:gap-4"
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, amount: 0.3 }}
+          variants={staggerContainerFast}
+        >
+          {STATS.map(({ label, value }) => (
+            <motion.div
+              key={label}
+              variants={chipPop}
+              className="rounded-[12px] p-5 text-[#F4F1EA] md:p-6"
+              style={{ backgroundColor: '#0B2E2F' }}
+            >
+              <p className="text-[10px] uppercase tracking-[0.18em] text-[#F4F1EA]/55">
+                {label}
+              </p>
+              <p className="mt-3 text-2xl tracking-[-0.04em] md:text-[1.85rem]">{value}</p>
+            </motion.div>
+          ))}
+        </motion.div>
+
+        {/* Feature panels — staggered fadeUp */}
+        <motion.div
+          className="mt-14 grid gap-3 md:mt-20 md:grid-cols-3 md:gap-4"
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, amount: 0.2 }}
+          variants={staggerContainer}
+        >
           {VALIDATION_PANELS.map(({ icon: Icon, eyebrow, headline, detail, href, cta }) => (
-            <article
+            <motion.article
               key={eyebrow}
+              variants={fadeUp}
               className="flex h-full flex-col justify-between rounded-[12px] border border-[#0B2E2F]/12 bg-[#F4F1EA]/78 p-5"
             >
               <div className="space-y-4">
@@ -163,49 +284,88 @@ export function ValidationSection() {
                 {cta}
                 <ArrowUpRight className="size-3.5" strokeWidth={1.5} aria-hidden="true" />
               </Link>
-            </article>
+            </motion.article>
           ))}
-        </div>
+        </motion.div>
 
-        {/* Frequently Asked Questions — semantic h3 + FAQPage JSON-LD above */}
+        {/* Pull quote — editorial climax */}
+        <motion.p
+          className="mt-20 max-w-4xl text-3xl italic tracking-[-0.03em] leading-[1.1] md:mt-28 md:text-[3.25rem] md:leading-[1.02]"
+          initial={{ opacity: 0, y: 40 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, amount: 0.5 }}
+          transition={{ duration: 1.1, ease: EASE }}
+        >
+          If the data doesn't meet our standard, we don't sell it.
+        </motion.p>
+
+        {/* FAQ — separate marker, staggered reveal */}
         <div
           id="faq"
-          className="mt-10 border-t border-[#0B2E2F]/10 pt-8 md:mt-14 md:pt-10"
+          className="mt-16 border-t border-[#0B2E2F]/12 pt-14 md:mt-24 md:pt-20"
         >
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-[10px] uppercase tracking-[0.24em] text-[#0B2E2F]/55">
-              Frequently Asked Questions
-            </h3>
-            <Link
-              href="/faq"
-              className="inline-flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-[#0B2E2F]/55 transition-colors hover:text-[#0B2E2F]"
-            >
-              View All
-              <ArrowUpRight className="size-3" strokeWidth={1.5} aria-hidden="true" />
-            </Link>
-          </div>
-          <div className="grid gap-2 md:grid-cols-2">
-            {QUICK_FAQ.map((item, i) => (
-              <details
-                key={i}
-                className="group rounded-[12px] border border-[#0B2E2F]/12 bg-[#F4F1EA]/78"
+          <SectionMarker label="Frequently Asked" />
+
+          <div className="mt-10 grid gap-10 md:mt-14 md:grid-cols-12 md:gap-14">
+            <div className="md:col-span-5">
+              <motion.h3
+                className="text-3xl tracking-[-0.04em] md:text-[3rem] md:leading-[0.95]"
+                initial={{ opacity: 0, y: 28 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, amount: 0.5 }}
+                transition={{ duration: 0.9, ease: EASE }}
               >
-                <summary className="cursor-pointer select-none list-none px-4 py-3 [&::-webkit-details-marker]:hidden">
-                  <h4 className="flex items-center justify-between gap-3 text-sm font-medium leading-tight">
-                    <span>{item.question}</span>
-                    <span
-                      aria-hidden="true"
-                      className="shrink-0 text-base leading-none text-[#0B2E2F]/40 transition-transform group-open:rotate-45"
-                    >
-                      +
-                    </span>
-                  </h4>
-                </summary>
-                <div className="px-4 pb-4 text-sm leading-relaxed text-[#0B2E2F]/68">
-                  {item.answer}
-                </div>
-              </details>
-            ))}
+                Answers, on record.
+              </motion.h3>
+              <motion.div
+                className="mt-6"
+                initial={{ opacity: 0, y: 12 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, amount: 0.5 }}
+                transition={{ duration: 0.8, delay: 0.15, ease: EASE }}
+              >
+                <Link
+                  href="/faq"
+                  className="inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-[#0B2E2F]/70 transition-colors hover:text-[#0B2E2F]"
+                >
+                  View all FAQs
+                  <ArrowUpRight className="size-3.5" strokeWidth={1.5} aria-hidden="true" />
+                </Link>
+              </motion.div>
+            </div>
+
+            <motion.div
+              className="md:col-span-7"
+              initial="hidden"
+              whileInView="visible"
+              viewport={{ once: true, amount: 0.15 }}
+              variants={staggerContainer}
+            >
+              <div className="grid gap-2">
+                {QUICK_FAQ.map((item, i) => (
+                  <motion.details
+                    key={i}
+                    variants={fadeUp}
+                    className="group rounded-[12px] border border-[#0B2E2F]/12 bg-[#F4F1EA]/78"
+                  >
+                    <summary className="cursor-pointer select-none list-none px-5 py-4 [&::-webkit-details-marker]:hidden">
+                      <h4 className="flex items-center justify-between gap-3 text-sm font-medium leading-tight md:text-[0.95rem]">
+                        <span>{item.question}</span>
+                        <span
+                          aria-hidden="true"
+                          className="shrink-0 text-base leading-none text-[#0B2E2F]/40 transition-transform group-open:rotate-45"
+                        >
+                          +
+                        </span>
+                      </h4>
+                    </summary>
+                    <div className="px-5 pb-5 text-sm leading-relaxed text-[#0B2E2F]/68">
+                      {item.answer}
+                    </div>
+                  </motion.details>
+                ))}
+              </div>
+            </motion.div>
           </div>
         </div>
       </div>

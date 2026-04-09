@@ -2,11 +2,10 @@
 
 import { useState } from "react";
 
-import { Loader2, MoreHorizontal } from "lucide-react";
+import { Loader2, MoreHorizontal, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { authClient } from "@/lib/auth-client";
-import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -70,29 +69,23 @@ function getAffiliateActionLabel(entry: UserRow) {
   if (!entry.affiliate) {
     return entry.role === "affiliate"
       ? "Open Growth Partner setup"
-      : "Convert to Growth Partner";
+      : "Enable Growth Partner access";
   }
   if (entry.affiliate.status === "approved") return "Manage Growth Partner";
   return "Open Growth Partner setup";
 }
 
-function sanitizePartnerCode(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-+|-+$/g, "");
+function hasGrowthPartnerRecord(entry: UserRow) {
+  return entry.role === "affiliate" || Boolean(entry.affiliate);
 }
 
-function buildSuggestedPartnerCode(entry: Pick<UserRow, "name" | "email">) {
-  const candidate =
-    sanitizePartnerCode(entry.name || "") ||
-    sanitizePartnerCode(entry.email.split("@")[0] || "");
-
-  return candidate.length >= 3 ? candidate : "partner";
-}
-
-export function UserManagement({ users }: { users: UserRow[] }) {
+export function UserManagement({
+  users,
+  canDeleteUsers = false,
+}: {
+  users: UserRow[];
+  canDeleteUsers?: boolean;
+}) {
   const router = useRouter();
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -104,53 +97,7 @@ export function UserManagement({ users }: { users: UserRow[] }) {
       return;
     }
 
-    const suggestedCode = buildSuggestedPartnerCode(entry);
-
-    setLoadingId(entry.id);
-    try {
-      const res = await fetch(`/api/admin/users/${entry.id}/affiliate-assignment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ affiliateCode: suggestedCode }),
-      });
-
-      const payload = await readJsonSafely(res);
-      const data =
-        getApiData<{
-          setup?: {
-            affiliate?: {
-              id: string;
-            };
-          };
-        }>(payload) ??
-        (payload as {
-          setup?: {
-            affiliate?: {
-              id: string;
-            };
-          };
-        });
-      if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Failed to prepare Growth Partner setup."));
-      }
-
-      const affiliateId = data?.setup?.affiliate?.id;
-      if (!affiliateId) {
-        throw new Error("Growth Partner setup is missing an affiliate record.");
-      }
-
-      router.push(`/admin/affiliates?openAffiliate=${affiliateId}`);
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to prepare Growth Partner setup.";
-
-      console.error("Failed to prepare Growth Partner setup:", error);
-      window.alert(message);
-    } finally {
-      setLoadingId(null);
-    }
+    router.push(`/admin/affiliates?openUser=${entry.id}`);
   }
 
   async function handleSetRole(userId: string, role: string) {
@@ -189,11 +136,66 @@ export function UserManagement({ users }: { users: UserRow[] }) {
     }
   }
 
+  async function handleDeleteUser(entry: UserRow) {
+    const confirmed = window.confirm(
+      `Permanently delete ${entry.email}?\n\nThis will remove the user from the database and from Loops. This action cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setLoadingId(entry.id);
+    try {
+      const response = await fetch(`/api/admin/users/${entry.id}`, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+      });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        const message =
+          payload?.error?.message ||
+          `Failed to delete user (${response.status}).`;
+        throw new Error(message);
+      }
+
+      const warnings: string[] = [];
+
+      const swell = payload?.data?.swell;
+      if (swell && Array.isArray(swell.errors) && swell.errors.length > 0) {
+        warnings.push(
+          `Swell coupon cleanup failed for ${swell.errors.length} of ${swell.attempted}: ${swell.errors
+            .map((e: { couponId: string; message: string }) => `${e.couponId} (${e.message})`)
+            .join(", ")}`,
+        );
+      }
+
+      const loops = payload?.data?.loops;
+      if (loops && loops.success === false && !loops.skipped) {
+        warnings.push(
+          `Loops cleanup failed: ${loops.error ?? "unknown error"}`,
+        );
+      }
+
+      if (warnings.length > 0) {
+        window.alert(`User deleted, but:\n\n${warnings.join("\n\n")}`);
+      }
+
+      router.refresh();
+    } catch (err) {
+      console.error("Failed to delete user:", err);
+      window.alert(
+        err instanceof Error ? err.message : "Failed to delete user.",
+      );
+    } finally {
+      setLoadingId(null);
+    }
+  }
+
   const counts = {
     all: users.length,
     customer: users.filter((entry) => (entry.role ?? "customer") === "customer")
       .length,
-    affiliate: users.filter((entry) => entry.role === "affiliate").length,
+    affiliate: users.filter((entry) => hasGrowthPartnerRecord(entry)).length,
     admin: users.filter((entry) => entry.role === "admin").length,
     banned: users.filter((entry) => Boolean(entry.banned)).length,
   };
@@ -204,7 +206,9 @@ export function UserManagement({ users }: { users: UserRow[] }) {
         ? true
         : filter === "banned"
           ? Boolean(entry.banned)
-          : (entry.role ?? "customer") === filter;
+          : filter === "affiliate"
+            ? hasGrowthPartnerRecord(entry)
+            : (entry.role ?? "customer") === filter;
 
     if (!matchesFilter) return false;
 
@@ -230,7 +234,7 @@ export function UserManagement({ users }: { users: UserRow[] }) {
     <div className="space-y-4">
       <AdminSectionHeader
         title="User management"
-        description="Start Growth Partner setup from the roster, then finish code assignment in the affiliate approval flow so partner codes, Swell coupons, and account roles stay in sync."
+        description="Start Growth Partner setup from the roster, including for admins who should keep admin access while also getting linked partner codes, discounts, and commission settings."
       />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -319,12 +323,19 @@ export function UserManagement({ users }: { users: UserRow[] }) {
                   </div>
                 </TableCell>
                 <TableCell className="px-3 py-2.5 align-top">
-                  <Badge
-                    variant={roleBadgeVariant(entry.role)}
-                    className="capitalize"
-                  >
-                    {formatRoleLabel(entry.role)}
-                  </Badge>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Badge
+                      variant={roleBadgeVariant(entry.role)}
+                      className="capitalize"
+                    >
+                      {formatRoleLabel(entry.role)}
+                    </Badge>
+                    {entry.affiliate && entry.role !== "affiliate" ? (
+                      <Badge variant="default">
+                        Growth Partner
+                      </Badge>
+                    ) : null}
+                  </div>
                 </TableCell>
                 <TableCell className="px-3 py-2.5 align-top">
                   {entry.banned ? (
@@ -356,14 +367,12 @@ export function UserManagement({ users }: { users: UserRow[] }) {
                       align="end"
                       className="rounded-none border-border bg-popover p-0.5"
                     >
-                      {entry.role !== "admin" ? (
-                        <DropdownMenuItem
-                          onClick={() => handleOpenAffiliateSetup(entry)}
-                          className="rounded-none px-2.5 py-1.5 text-xs focus:bg-accent"
-                        >
-                          {getAffiliateActionLabel(entry)}
-                        </DropdownMenuItem>
-                      ) : null}
+                      <DropdownMenuItem
+                        onClick={() => handleOpenAffiliateSetup(entry)}
+                        className="rounded-none px-2.5 py-1.5 text-xs focus:bg-accent"
+                      >
+                        {getAffiliateActionLabel(entry)}
+                      </DropdownMenuItem>
                       {entry.role !== "affiliate"
                         ? ROLES.filter((role) => role !== entry.role).map(
                             (role) => (
@@ -392,6 +401,15 @@ export function UserManagement({ users }: { users: UserRow[] }) {
                           Ban user
                         </DropdownMenuItem>
                       )}
+                      {canDeleteUsers ? (
+                        <DropdownMenuItem
+                          onClick={() => handleDeleteUser(entry)}
+                          className="rounded-none border-t border-border/60 px-2.5 py-1.5 text-xs text-red-600 focus:bg-red-50 focus:text-red-700"
+                        >
+                          <Trash2 className="mr-1.5 size-3.5" />
+                          Delete user (dev)
+                        </DropdownMenuItem>
+                      ) : null}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </TableCell>

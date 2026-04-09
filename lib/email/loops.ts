@@ -83,6 +83,31 @@ export async function sendLoopsEvent(args: {
   return response;
 }
 
+export async function deleteLoopsContact(args: { email: string }) {
+  if (!hasLoopsConfig()) {
+    return { success: false, skipped: true as const };
+  }
+
+  const loops = getLoopsClient();
+
+  try {
+    const response = await withProviderTimeout({
+      provider: 'loops',
+      operation: 'deleteContact',
+      task: () => loops.deleteContact({ email: args.email }),
+    });
+
+    return { ...response, skipped: false as const };
+  } catch (error) {
+    // Treat "not found" as a successful no-op — the contact is already gone.
+    const statusCode = (error as APIError)?.statusCode;
+    if (statusCode === 404) {
+      return { success: true, skipped: false as const, notFound: true };
+    }
+    throw error;
+  }
+}
+
 export async function createOrUpdateContact(args: {
   email: string;
   firstName?: string;
