@@ -89,7 +89,7 @@ export function ValidationSection() {
     <section
       id="validation"
       aria-labelledby="validation-heading"
-      className="px-sides py-10 text-[#0B2E2F] md:py-14"
+      className="border-t border-black/10 bg-[#E8E1D4] px-sides py-10 text-[#0B2E2F] md:py-14"
     >
       <script
         type="application/ld+json"
@@ -143,7 +143,7 @@ export function ValidationSection() {
           {VALIDATION_PANELS.map(({ icon: Icon, eyebrow, headline, detail, href, cta }) => (
             <article
               key={eyebrow}
-              className="flex h-full flex-col justify-between rounded-[12px] border border-[#0B2E2F]/12 bg-[#EBE7DC]/60 p-5"
+              className="flex h-full flex-col justify-between rounded-[12px] border border-[#0B2E2F]/12 bg-[#F4F1EA]/78 p-5"
             >
               <div className="space-y-4">
                 <div className="flex items-center gap-2 text-[#0B2E2F]/80">
@@ -188,7 +188,7 @@ export function ValidationSection() {
             {QUICK_FAQ.map((item, i) => (
               <details
                 key={i}
-                className="group rounded-[12px] border border-[#0B2E2F]/12 bg-[#EBE7DC]/60"
+                className="group rounded-[12px] border border-[#0B2E2F]/12 bg-[#F4F1EA]/78"
               >
                 <summary className="cursor-pointer select-none list-none px-4 py-3 [&::-webkit-details-marker]:hidden">
                   <h4 className="flex items-center justify-between gap-3 text-sm font-medium leading-tight">

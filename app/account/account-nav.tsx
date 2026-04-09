@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { KeyRound, LayoutGrid, Package, Shield, UserRound, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { IntentLink } from "@/components/navigation/intent-link";
 import {
   ACCOUNT_ADMIN_ROUTE,
   ACCOUNT_AFFILIATE_ROUTE,
@@ -68,7 +68,7 @@ export function AccountNav({
         const Icon = item.icon;
 
         return (
-          <Link
+          <IntentLink
             key={item.href}
             href={item.href}
             aria-current={isActive ? "page" : undefined}
@@ -102,7 +102,7 @@ export function AccountNav({
                 <Icon className="size-5" />
               </div>
             </div>
-          </Link>
+          </IntentLink>
         );
       })}
     </nav>

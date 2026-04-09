@@ -1,7 +1,6 @@
 'use client';
 
 import React, { Suspense } from 'react';
-import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import { Product } from '@/lib/swell/types';
 import { AddToCart, AddToCartButton } from '@/components/cart/add-to-cart';
@@ -10,6 +9,7 @@ import { VariantSelector } from '../variant-selector';
 import { ProductImage } from './product-image';
 import { useSelectedVariant } from '@/components/products/variant-selector';
 import { getInventoryState } from '@/lib/inventory';
+import { IntentLink } from '@/components/navigation/intent-link';
 
 export const ProductCard = ({ product }: { product: Product }) => {
   const selectedVariant = useSelectedVariant(product);
@@ -20,16 +20,15 @@ export const ProductCard = ({ product }: { product: Product }) => {
 
   return (
     <div className="relative isolate w-full aspect-[3/4] md:aspect-square bg-muted group">
-      <Link
+      <IntentLink
         href={`/product/${product.handle}`}
         className="block size-full overflow-hidden focus-visible:outline-none"
         aria-label={`View details for ${product.title}, price ${displayPrice.amount} ${displayPrice.currencyCode}`}
-        prefetch
       >
         <Suspense fallback={null}>
           <ProductImage product={product} />
         </Suspense>
-      </Link>
+      </IntentLink>
 
       {/* Interactive Overlay */}
       <div className="absolute inset-0 p-2 w-full pointer-events-none">
@@ -63,14 +62,13 @@ export const ProductCard = ({ product }: { product: Product }) => {
             </Suspense>
 
             {inventory.isBackorder ? (
-              <Link
+              <IntentLink
                 href={`/product/${product.handle}`}
                 className="group/waitlist col-start-2 self-end inline-flex h-7 items-center gap-1.5 rounded-sm py-1 px-2 text-base font-semibold text-[#F4F1EA] bg-[#0B2E2F] transition-opacity hover:opacity-90"
-                prefetch
               >
                 Get Notified
                 <ArrowRight className="size-4 transition-transform duration-200 ease-out group-hover/waitlist:translate-x-0.5" />
-              </Link>
+              </IntentLink>
             ) : (
               <Suspense fallback={<AddToCartButton className="col-start-2 self-end" product={product} size="sm" />}>
                 <AddToCart className="col-start-2 self-end" size="sm" product={product} />

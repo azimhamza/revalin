@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { IntentLink } from "@/components/navigation/intent-link";
 import { cn } from "@/lib/utils";
 
 import { affiliateNavItems } from "./affiliate-shell";
@@ -24,7 +24,7 @@ export function AffiliateNav() {
         const active = isActivePath(pathname, item.href);
 
         return (
-          <Link
+          <IntentLink
             key={item.href}
             href={item.href}
             className={cn(
@@ -45,7 +45,7 @@ export function AffiliateNav() {
             >
               {String(index + 1).padStart(2, "0")}
             </span>
-          </Link>
+          </IntentLink>
         );
       })}
     </nav>

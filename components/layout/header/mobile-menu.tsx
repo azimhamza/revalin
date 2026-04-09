@@ -4,7 +4,6 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/ui/button';
-import Link from 'next/link';
 import {
   SITE_LEGAL_ROUTES,
   SITE_PRIMARY_ROUTES,
@@ -14,6 +13,7 @@ import { SidebarLinks } from '../sidebar/product-sidebar-links';
 import { ShopLinks } from '../shop-links';
 import { Collection } from '@/lib/swell/types';
 import { useBodyScrollLock } from '@/lib/hooks/use-body-scroll-lock';
+import { IntentLink } from '@/components/navigation/intent-link';
 
 interface MobileMenuProps {
   collections: Collection[];
@@ -95,9 +95,9 @@ export default function MobileMenu({ collections }: MobileMenuProps) {
                       className="justify-start uppercase bg-background/50"
                       asChild
                     >
-                      <Link href={item.href} prefetch>
+                      <IntentLink href={item.href}>
                         {item.label}
-                      </Link>
+                      </IntentLink>
                     </Button>
                   ))}
                 </nav>
@@ -109,15 +109,14 @@ export default function MobileMenu({ collections }: MobileMenuProps) {
                     </p>
                     <div className="flex flex-col gap-2 text-sm">
                       {SITE_SECONDARY_ROUTES.map((item) => (
-                        <Link
+                        <IntentLink
                           key={item.href}
                           href={item.href}
                           className="text-foreground/70 transition-colors hover:text-foreground"
                           onClick={closeMobileMenu}
-                          prefetch
                         >
                           {item.label}
-                        </Link>
+                        </IntentLink>
                       ))}
                     </div>
                   </div>
@@ -128,15 +127,14 @@ export default function MobileMenu({ collections }: MobileMenuProps) {
                     </p>
                     <div className="flex flex-col gap-2 text-sm">
                       {SITE_LEGAL_ROUTES.map((item) => (
-                        <Link
+                        <IntentLink
                           key={item.href}
                           href={item.href}
                           className="text-foreground/70 transition-colors hover:text-foreground"
                           onClick={closeMobileMenu}
-                          prefetch
                         >
                           {item.label}
-                        </Link>
+                        </IntentLink>
                       ))}
                     </div>
                   </div>

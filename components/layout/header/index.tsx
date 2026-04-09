@@ -1,7 +1,6 @@
 'use client';
 
 import MobileMenu from './mobile-menu';
-import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { LogoSvg } from './logo-svg';
@@ -10,6 +9,7 @@ import { UserMenuNav, UserMenuMobile } from './user-menu';
 import { SITE_PRIMARY_ROUTES } from '@/lib/app-routes';
 import { Collection } from '@/lib/swell/types';
 import { BadgeCheck, Droplets, Truck, Package } from 'lucide-react';
+import { IntentLink } from '@/components/navigation/intent-link';
 
 const BANNER_ITEMS = [
   { icon: BadgeCheck, text: 'Independently Verified' },
@@ -62,14 +62,14 @@ export function Header({ collections }: HeaderProps) {
         <div className="block flex-none md:hidden">
           <MobileMenu collections={collections} />
         </div>
-        <Link href="/" className="md:col-span-3 xl:col-span-2" prefetch>
+        <IntentLink href="/" className="md:col-span-3 xl:col-span-2">
           <LogoSvg className="w-auto h-6 max-md:place-self-center md:w-full md:h-auto max-w-96" />
-        </Link>
+        </IntentLink>
         <nav className="flex gap-2 justify-end items-center md:col-span-9 xl:col-span-10">
           <ul className="items-center gap-5 py-0.5 px-3 bg-background/10 rounded-sm backdrop-blur-md hidden md:flex">
             {navItems.map(item => (
               <li key={item.href}>
-                <Link
+                <IntentLink
                   href={item.href}
                   className={cn(
                     'font-semibold text-base transition-colors duration-200 uppercase',
@@ -77,10 +77,9 @@ export function Header({ collections }: HeaderProps) {
                       ? 'text-foreground'
                       : 'text-foreground/50'
                   )}
-                  prefetch
                 >
                   {item.label}
-                </Link>
+                </IntentLink>
               </li>
             ))}
             <li>

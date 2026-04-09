@@ -3,8 +3,8 @@ import { BlurUpImage } from '@/components/ui/blur-up-image';
 import { FeaturedProductLabel } from './featured-product-label';
 import { Product } from '@/lib/swell/types';
 import { getImageBlurDataURL } from '@/lib/swell/utils';
-import Link from 'next/link';
 import { Suspense } from 'react';
+import { IntentLink } from '@/components/navigation/intent-link';
 
 interface LatestProductCardProps {
   product: Product;
@@ -22,7 +22,7 @@ export function LatestProductCard({
   if (principal) {
     return (
       <div className={cn('min-h-fold flex flex-col relative', className)}>
-        <Link href={`/product/${product.handle}`} className="size-full flex-1 flex flex-col" prefetch>
+        <IntentLink href={`/product/${product.handle}`} className="size-full flex-1 flex flex-col">
           <BlurUpImage
             priority
             src={product.featuredImage.url}
@@ -34,7 +34,7 @@ export function LatestProductCard({
             placeholder="blur"
             blurDataURL={getImageBlurDataURL(product.featuredImage.thumbhash)}
           />
-        </Link>
+        </IntentLink>
         <div className="absolute bottom-0 left-0 grid w-full grid-cols-4 gap-6 pointer-events-none max-md:contents p-sides">
           <Suspense fallback={null}>
             <FeaturedProductLabel
@@ -50,7 +50,7 @@ export function LatestProductCard({
 
   return (
     <div className={cn('relative', className)}>
-      <Link href={`/product/${product.handle}`} className="block w-full aspect-square" prefetch>
+      <IntentLink href={`/product/${product.handle}`} className="block w-full aspect-square">
         <BlurUpImage
           src={product.featuredImage.url}
           alt={product.featuredImage.altText}
@@ -60,7 +60,7 @@ export function LatestProductCard({
           placeholder="blur"
           blurDataURL={getImageBlurDataURL(product.featuredImage.thumbhash)}
         />
-      </Link>
+      </IntentLink>
 
       <div
         className={cn(

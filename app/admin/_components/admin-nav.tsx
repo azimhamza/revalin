@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { IntentLink } from "@/components/navigation/intent-link";
 import { cn } from "@/lib/utils";
 
 import { adminNavItems } from "./admin-shell";
@@ -24,7 +24,7 @@ export function AdminNav() {
         const active = isActivePath(pathname, item.href);
 
         return (
-          <Link
+          <IntentLink
             key={item.href}
             href={item.href}
             className={cn(
@@ -38,7 +38,7 @@ export function AdminNav() {
               {String(index + 1).padStart(2, "0")}
             </span>
             <p className="text-sm font-semibold text-[#0B2E2F]">{item.label}</p>
-          </Link>
+          </IntentLink>
         );
       })}
     </nav>

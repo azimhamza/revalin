@@ -1,7 +1,7 @@
-import Link from 'next/link';
 import { Collection } from '@/lib/swell/types';
 import { cn } from '@/lib/utils';
 import { FALLBACK_COLLECTIONS } from '@/lib/swell/constants';
+import { IntentLink } from '@/components/navigation/intent-link';
 
 type LinkCollection = Pick<Collection, 'handle' | 'title'>;
 
@@ -23,9 +23,9 @@ export function ShopLinks({ collections, label = 'Shop', align = 'left', classNa
       <ul className="flex flex-col gap-1.5 leading-5 mt-5">
         {items.map((item, index) => (
           <li key={`${item.handle}-${index}`}>
-            <Link href={`/shop/${item.handle}`} prefetch>
+            <IntentLink href={`/shop/${item.handle}`}>
               {item.title}
-            </Link>
+            </IntentLink>
           </li>
         ))}
       </ul>

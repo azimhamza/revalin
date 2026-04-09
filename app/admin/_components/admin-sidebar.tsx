@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { usePathname } from "next/navigation";
 
 import { LogoSvg } from "@/components/layout/header/logo-svg";
+import { IntentLink } from "@/components/navigation/intent-link";
 import { Badge } from "@/components/ui/badge";
 import {
   Sidebar,
@@ -32,13 +32,13 @@ export function AdminSidebar() {
   return (
     <Sidebar variant="inset" collapsible="icon">
       <SidebarHeader>
-        <Link
+        <IntentLink
           href="/admin"
           aria-label="Revalin admin"
           className="block border border-sidebar-border bg-sidebar-accent/80 px-2 py-2 group-data-[collapsible=icon]:hidden"
         >
           <LogoSvg className="h-auto w-full max-w-[7.25rem] text-sidebar-foreground" />
-        </Link>
+        </IntentLink>
       </SidebarHeader>
 
       <SidebarContent>
@@ -58,10 +58,10 @@ export function AdminSidebar() {
                       size="sm"
                       tooltip={item.title}
                     >
-                      <Link href={item.href} aria-label={item.title}>
+                      <IntentLink href={item.href} aria-label={item.title}>
                         <Icon />
                         <span className="flex-1 truncate">{item.title}</span>
-                      </Link>
+                      </IntentLink>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );
@@ -94,10 +94,10 @@ export function AdminSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild size="sm" tooltip="Back to account">
-              <Link href="/account" aria-label="Back to account">
+              <IntentLink href="/account" aria-label="Back to account">
                 <ArrowLeft className="size-4" />
                 <span>Back to account</span>
-              </Link>
+              </IntentLink>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
