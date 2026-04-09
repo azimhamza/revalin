@@ -45,7 +45,6 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `LOOPS_TRANSACTIONAL_SHIPPING_LABEL` (optional Loops template ID for the internal shipping-label email with a label URL)
 - `LOOPS_TRANSACTIONAL_EMAIL_VERIFICATION` (optional Loops template ID for 6-digit email verification codes)
 - `LOOPS_TRANSACTIONAL_PASSWORD_RESET` (optional Loops template ID for 6-digit password reset codes; falls back to `LOOPS_TRANSACTIONAL_EMAIL_VERIFICATION`)
-- `LOOPS_TRANSACTIONAL_WELCOME_DISCOUNT_ISSUED` (optional Loops template ID for internal welcome-discount notifications; defaults to `cmnny5qyb07uw0iygc80j82d2`)
 - `LOOPS_TRANSACTIONAL_WELCOME_DISCOUNT_SUBSCRIBER` (**required** Loops template ID for the customer-facing welcome-discount email containing the 10% off code; must expose `discount_code`, `discount_percent`, and `discount_expires_at` data variables)
 - `LOOPS_TRANSACTIONAL_PRODUCT_NOTIFICATION_SIGNUP` (optional Loops template ID for customer restock-signup confirmation emails)
 - `LOOPS_WELCOME_DISCOUNT_CODE_PROPERTY_KEY` (optional Loops contact property API key for storing the issued welcome code; defaults to `initCode`)
@@ -54,7 +53,6 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `LOOPS_TRANSACTIONAL_AFFILIATE_APPLICATION_RECEIVED` (optional Loops template ID for internal Growth Partner application notifications; defaults to `cmnmb8o0s00b40iuq46qek8jv`)
 - `LOOPS_TRANSACTIONAL_AFFILIATE_REMOVED` (optional Loops template ID for Growth Partner suspension / removal notices)
 - `LOOPS_TRANSACTIONAL_AFFILIATE_REINSTATED` (optional Loops template ID for Growth Partner reinstatement notices)
-- `WELCOME_DISCOUNT_EMAIL_TO` (optional recipient inbox for internal welcome-discount notifications; defaults to `operations@revalin.ca`)
 - `AFFILIATE_APPLICATION_EMAIL_TO` (optional recipient inbox for internal Growth Partner application notifications; defaults to `operations@revalin.ca`)
 - `SHIPPING_LABEL_EMAIL` or `SHIPPING_LABEL_EMAILS` (recipient inbox for internal shipping label emails; `SHIPPING_LABEL_EMAILS` accepts comma-separated recipients)
 

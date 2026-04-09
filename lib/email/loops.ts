@@ -83,6 +83,25 @@ export async function sendLoopsEvent(args: {
   return response;
 }
 
+// Look up an existing Loops contact by email. Returns `null` if no contact
+// exists (rather than throwing) so callers can easily branch on "new vs
+// returning subscriber".
+export async function findLoopsContact(args: { email: string }) {
+  const loops = getLoopsClient();
+
+  const contacts = await withProviderTimeout({
+    provider: 'loops',
+    operation: 'findContact',
+    task: () => loops.findContact({ email: args.email }),
+  });
+
+  if (!Array.isArray(contacts) || contacts.length === 0) {
+    return null;
+  }
+
+  return contacts[0];
+}
+
 export async function deleteLoopsContact(args: { email: string }) {
   if (!hasLoopsConfig()) {
     return { success: false, skipped: true as const };

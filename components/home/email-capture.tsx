@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
+import { getApiData, getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
 
 export function EmailCapture() {
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [alreadySubscribed, setAlreadySubscribed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,6 +30,8 @@ export function EmailCapture() {
         throw new Error(getApiErrorMessage(payload, 'Unable to subscribe.'));
       }
 
+      const data = getApiData<{ subscribed?: boolean; alreadySubscribed?: boolean }>(payload);
+      setAlreadySubscribed(Boolean(data?.alreadySubscribed));
       setSubmitted(true);
       setEmail('');
     } catch (err) {
@@ -41,7 +44,11 @@ export function EmailCapture() {
   if (submitted) {
     return (
       <div className="py-3">
-        <p className="text-sm text-[#F4F1EA]/80">Thanks — check your email for 10% off your first order.</p>
+        <p className="text-sm text-[#F4F1EA]/80">
+          {alreadySubscribed
+            ? "You're already subscribed — check your inbox for your welcome discount or our latest deal."
+            : 'Thanks — check your email for 10% off your first order.'}
+        </p>
       </div>
     );
   }

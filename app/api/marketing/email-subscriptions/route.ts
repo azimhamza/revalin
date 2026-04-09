@@ -3,12 +3,14 @@ import { z } from 'zod';
 import { createApiRoute } from '@/lib/api/route';
 import { apiError } from '@/lib/api/errors';
 import { createSwellCoupon } from '@/lib/checkout/swell-order-management';
-import { createOrUpdateContact, hasLoopsConfig, sendLoopsEvent } from '@/lib/email/loops';
-import { buildWelcomeDiscountContactProperties } from '@/lib/email/welcome-discount';
 import {
-  sendWelcomeDiscountIssuedEmail,
-  sendWelcomeDiscountSubscriberEmail,
-} from '@/lib/email/welcome-discount-emails';
+  createOrUpdateContact,
+  findLoopsContact,
+  hasLoopsConfig,
+  sendLoopsEvent,
+} from '@/lib/email/loops';
+import { buildWelcomeDiscountContactProperties } from '@/lib/email/welcome-discount';
+import { sendWelcomeDiscountSubscriberEmail } from '@/lib/email/welcome-discount-emails';
 
 const subscribeSchema = z.object({
   email: z.string().trim().email('Enter a valid email address.'),
@@ -34,6 +36,28 @@ export const POST = createApiRoute({
       throw apiError.providerUnavailable('Email service not configured.', {
         provider: 'loops',
       }, false);
+    }
+
+    // Each email can only claim the welcome discount once. Look the contact
+    // up in Loops before doing any work — if they already exist, short-circuit
+    // and tell the UI so it can render the "already subscribed" state without
+    // issuing a fresh coupon or firing another discount email.
+    try {
+      const existing = await findLoopsContact({ email: body.email });
+      if (existing) {
+        return {
+          data: {
+            subscribed: true,
+            alreadySubscribed: true,
+          },
+          status: 200,
+        };
+      }
+    } catch (lookupError) {
+      // Don't block a legitimate new subscriber on a transient Loops outage —
+      // log and fall through to the create flow, which will still dedupe via
+      // the 409 → updateContact fallback downstream.
+      console.error('[EMAIL-SUBSCRIBE] findLoopsContact failed, proceeding as new subscriber:', lookupError);
     }
 
     const discountCode = createDiscountCode();
@@ -81,12 +105,6 @@ export const POST = createApiRoute({
         source: body.source,
       },
     });
-
-    try {
-      await sendWelcomeDiscountIssuedEmail(discountCode);
-    } catch (notificationError) {
-      console.error('[EMAIL-SUBSCRIBE] Failed to send welcome discount notification:', notificationError);
-    }
 
     return {
       data: {

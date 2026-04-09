@@ -8,7 +8,7 @@ import { usePathname } from 'next/navigation';
 import { useAuthSession } from '@/components/auth/session-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
+import { getApiData, getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
 
 const POPUP_DELAY_MS = 10_000;
 const HIDDEN_PATHS = new Set(['/login', '/signup', '/verify-email']);
@@ -21,6 +21,7 @@ export function WelcomePopup() {
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [alreadySubscribed, setAlreadySubscribed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isHiddenRoute =
     HIDDEN_PATHS.has(pathname) || HIDDEN_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
@@ -31,6 +32,7 @@ export function WelcomePopup() {
       setOpen(false);
       setEmail('');
       setSubmitted(false);
+      setAlreadySubscribed(false);
       setError(null);
       return;
     }
@@ -59,6 +61,8 @@ export function WelcomePopup() {
           throw new Error(getApiErrorMessage(payload, 'Unable to subscribe.'));
         }
 
+        const data = getApiData<{ subscribed?: boolean; alreadySubscribed?: boolean }>(payload);
+        setAlreadySubscribed(Boolean(data?.alreadySubscribed));
         setSubmitted(true);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Something went wrong.');
@@ -85,7 +89,7 @@ export function WelcomePopup() {
             <div>
               <div className="flex items-start justify-between gap-3">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                  You&apos;re in
+                  {alreadySubscribed ? 'Already on the list' : "You're in"}
                 </p>
                 <Dialog.Close asChild>
                   <button
@@ -97,11 +101,28 @@ export function WelcomePopup() {
                   </button>
                 </Dialog.Close>
               </div>
-              <p className="mt-1.5 text-lg font-semibold text-foreground">Check your email</p>
-              <p className="mt-2 text-sm leading-5 text-muted-foreground">
-                We sent your 10% off code to{' '}
-                <span className="font-medium text-foreground">{email}</span>. It expires in 72 hours.
-              </p>
+              {alreadySubscribed ? (
+                <>
+                  <p className="mt-1.5 text-lg font-semibold text-foreground">
+                    You&apos;re already subscribed
+                  </p>
+                  <p className="mt-2 text-sm leading-5 text-muted-foreground">
+                    Looks like{' '}
+                    <span className="font-medium text-foreground">{email}</span> is already on our
+                    list, so we can&apos;t issue another welcome code. Check your inbox — your
+                    welcome discount or our latest deal is probably waiting for you.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="mt-1.5 text-lg font-semibold text-foreground">Check your email</p>
+                  <p className="mt-2 text-sm leading-5 text-muted-foreground">
+                    We sent your 10% off code to{' '}
+                    <span className="font-medium text-foreground">{email}</span>. It expires in 72
+                    hours.
+                  </p>
+                </>
+              )}
               <Button
                 type="button"
                 size="lg"
