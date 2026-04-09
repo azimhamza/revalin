@@ -13,6 +13,7 @@ import {
   accountPanelClass,
   accountPrimaryButtonClass,
 } from '../account-theme';
+import { getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
 
 export function PasswordForm({ hasPassword }: { hasPassword: boolean }) {
   const [passwordExists, setPasswordExists] = useState(hasPassword);
@@ -44,10 +45,10 @@ export function PasswordForm({ hasPassword }: { hasPassword: boolean }) {
           newPassword,
         }),
       });
-      const data = await response.json().catch(() => ({}));
+      const payload = await readJsonSafely(response);
 
       if (!response.ok) {
-        setError(data.error || 'Unable to update password.');
+        setError(getApiErrorMessage(payload, 'Unable to update password.'));
         return;
       }
 

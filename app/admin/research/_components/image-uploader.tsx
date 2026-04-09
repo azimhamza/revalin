@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Loader2, UploadCloud, X } from "lucide-react";
+import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 
 import {
   adminFieldClass,
@@ -31,13 +32,16 @@ export function ImageUploader({
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await fetch("/api/admin/research/upload", {
+      const res = await fetch("/api/admin/research/assets", {
         method: "POST",
         body: fd,
       });
-      const data = await res.json();
+      const payload = await readJsonSafely(res);
+      const data =
+        getApiData<{ url?: string }>(payload) ??
+        (payload as { url?: string });
       if (!res.ok) {
-        throw new Error(data?.error ?? `Upload failed (${res.status})`);
+        throw new Error(getApiErrorMessage(payload, `Upload failed (${res.status})`));
       }
       onChange(data.url ?? null);
     } catch (err) {

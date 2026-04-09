@@ -9,19 +9,18 @@ import {
 } from 'react';
 import { useSession } from '@/lib/auth-client';
 import { AFFILIATE_COOKIE_NAME } from '@/lib/checkout/affiliate-constants';
+import {
+  clearPostAuthPendingCookie,
+  readBrowserCookie,
+} from '@/lib/auth/post-auth-client';
+import { POST_AUTH_PENDING_COOKIE } from '@/lib/auth/post-auth-cookie';
 
 type SessionContext = ReturnType<typeof useSession>;
 
 const AuthSessionContext = createContext<SessionContext | null>(null);
 
 function readCookie(name: string) {
-  if (typeof document === 'undefined') return null;
-
-  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = document.cookie.match(
-    new RegExp(`(?:^|;\\s*)${escapedName}=([^;]+)`),
-  );
-  return match?.[1] ? decodeURIComponent(match[1]) : null;
+  return readBrowserCookie(name);
 }
 
 function getFirstName(name: string | null | undefined) {
@@ -101,11 +100,53 @@ function OpenPanelSessionSync({ session }: { session: SessionContext }) {
   return null;
 }
 
+function PostAuthReconcileBootstrap({ session }: { session: SessionContext }) {
+  const attemptedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (session.isPending) return;
+    const userId = session.data?.user?.id ?? null;
+    if (!userId) {
+      attemptedRef.current = null;
+      return;
+    }
+
+    const pending = readBrowserCookie(POST_AUTH_PENDING_COOKIE);
+    if (!pending) {
+      attemptedRef.current = null;
+      return;
+    }
+
+    if (attemptedRef.current === userId) {
+      return;
+    }
+
+    attemptedRef.current = userId;
+
+    fetch('/api/auth/reconcile', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+      .catch((error) => {
+        console.error('[POST-AUTH-RECONCILE]', error);
+      })
+      .finally(() => {
+        clearPostAuthPendingCookie();
+      });
+  }, [session.data?.user?.id, session.isPending]);
+
+  return null;
+}
+
 export function SessionProvider({ children }: { children: ReactNode }) {
   const session = useSession();
   return (
     <AuthSessionContext.Provider value={session}>
       <OpenPanelSessionSync session={session} />
+      <PostAuthReconcileBootstrap session={session} />
       {children}
     </AuthSessionContext.Provider>
   );

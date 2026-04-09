@@ -18,6 +18,7 @@ import {
   adminPrimaryButtonClass,
   adminSecondaryButtonClass,
 } from "../_components/admin-shell";
+import { getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 import type { ResearchPaperSummary } from "@/lib/research/queries";
 
 type PaperStatus = ResearchPaperSummary["status"];
@@ -63,9 +64,9 @@ export function ResearchManagement({
       const res = await fetch(`/api/admin/research/papers/${id}`, {
         method: "DELETE",
       });
+      const payload = await readJsonSafely(res);
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error ?? `Delete failed (${res.status})`);
+        throw new Error(getApiErrorMessage(payload, `Delete failed (${res.status})`));
       }
       setPapers((current) => current.filter((p) => p.id !== id));
       startTransition(() => router.refresh());
@@ -84,19 +85,19 @@ export function ResearchManagement({
           title="Research papers"
           description="Author, publish, and manage peptide research articles. All content is research-use only."
           action={
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Link
                 href="/admin/research/peptides"
-                className={adminSecondaryButtonClass}
+                className={`${adminSecondaryButtonClass} shrink-0`}
               >
                 Manage peptides
               </Link>
               <Link
                 href="/admin/research/new"
-                className={adminPrimaryButtonClass}
+                className={`${adminPrimaryButtonClass} shrink-0`}
               >
-                <Plus className="size-3" />
-                New paper
+                <Plus className="size-3 shrink-0" />
+                <span>New paper</span>
               </Link>
             </div>
           }

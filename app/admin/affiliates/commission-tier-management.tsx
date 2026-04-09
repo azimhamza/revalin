@@ -5,6 +5,7 @@ import { Loader2, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 import {
   Table,
   TableBody,
@@ -96,9 +97,16 @@ export function CommissionTierManagement({
         }),
       });
 
-      const data = await response.json().catch(() => ({}));
+      const payload = await readJsonSafely(response);
+      const data =
+        getApiData<{
+          tiers?: CommissionTierRow[];
+        }>(payload) ??
+        (payload as {
+          tiers?: CommissionTierRow[];
+        });
       if (!response.ok) {
-        throw new Error(data.error || "Failed to save commission tiers.");
+        throw new Error(getApiErrorMessage(payload, "Failed to save commission tiers."));
       }
 
       setTiers(

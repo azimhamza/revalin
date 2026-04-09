@@ -8,6 +8,7 @@ import {
   MAX_AFFILIATE_SOCIAL_PROFILES,
   type AffiliateSocialProfile,
 } from "@/lib/checkout/affiliate-social-profiles";
+import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 
 type AffiliateSignupFormProps = {
   initialName?: string;
@@ -42,7 +43,7 @@ export function AffiliateSignupForm({
     setIsSubmitting(true);
 
     try {
-      const response = await fetch("/api/affiliate/signup", {
+      const response = await fetch("/api/affiliate/application", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -50,17 +51,17 @@ export function AffiliateSignupForm({
         }),
       });
 
-      const data = (await response.json().catch(() => null)) as {
-        error?: string;
+      const payload = await readJsonSafely(response);
+      const data = getApiData<{
         application?: {
           id: string;
         };
-      } | null;
+      }>(payload);
 
       if (!response.ok || !data?.application) {
         setSubmission({
           status: "error",
-          message: data?.error || "Unable to submit your application.",
+          message: getApiErrorMessage(payload, "Unable to submit your application."),
         });
         return;
       }

@@ -2,6 +2,7 @@ import {
   SHIELDCLIMB_API_BASE_URL,
   SHIELDCLIMB_PAYMENT_BASE_URL,
 } from '@/lib/checkout/constants';
+import { providerFetch } from '@/lib/api/provider-client';
 
 export type ShieldClimbWalletResponse = {
   address_in: string;
@@ -55,7 +56,11 @@ export async function createShieldClimbWallet(args: {
   url.searchParams.set('address', args.payoutWallet);
   url.searchParams.set('callback', args.callbackUrl);
 
-  const response = await fetch(url.toString(), { cache: 'no-store' });
+  const response = await providerFetch(url.toString(), {
+    provider: 'shieldclimb',
+    operation: 'create-wallet',
+    cache: 'no-store',
+  });
 
   if (!response.ok) {
     const body = await response.text();
@@ -108,7 +113,11 @@ export async function checkShieldClimbPaymentStatus(
   const url = new URL('/control/payment-status.php', SHIELDCLIMB_API_BASE_URL);
   url.searchParams.set('ipn_token', ipnToken);
 
-  const response = await fetch(url.toString(), { cache: 'no-store' });
+  const response = await providerFetch(url.toString(), {
+    provider: 'shieldclimb',
+    operation: 'payment-status',
+    cache: 'no-store',
+  });
 
   if (!response.ok) {
     const body = await response.text();
@@ -133,7 +142,11 @@ export async function convertToUsd(args: {
   url.searchParams.set('from', args.fromCurrency.toUpperCase());
   url.searchParams.set('value', args.amount.toFixed(2));
 
-  const response = await fetch(url.toString(), { cache: 'no-store' });
+  const response = await providerFetch(url.toString(), {
+    provider: 'shieldclimb',
+    operation: 'convert-to-usd',
+    cache: 'no-store',
+  });
 
   if (!response.ok) {
     const body = await response.text();
@@ -151,4 +164,3 @@ export async function createWalletForOrder(args: {
     callbackUrl: args.callbackUrl,
   });
 }
-

@@ -9,10 +9,10 @@ export const adminFieldClass =
   "h-7 rounded-none border-border bg-background text-xs shadow-sm placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:ring-offset-0";
 
 export const adminPrimaryButtonClass =
-  "inline-flex h-7 items-center justify-center gap-1.5 whitespace-nowrap rounded-none border border-transparent bg-primary px-2.5 text-[10px] uppercase tracking-[0.14em] leading-none text-primary-foreground shadow-sm hover:bg-primary/92";
+  "inline-flex h-7 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-none border border-transparent bg-primary px-2.5 text-[10px] uppercase tracking-[0.14em] leading-none text-primary-foreground shadow-sm hover:bg-primary/92 [&>svg]:inline-block [&>svg]:shrink-0";
 
 export const adminSecondaryButtonClass =
-  "inline-flex h-7 items-center justify-center gap-1.5 whitespace-nowrap rounded-none border border-border bg-background px-2.5 text-[10px] uppercase tracking-[0.14em] leading-none text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground";
+  "inline-flex h-7 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-none border border-border bg-background px-2.5 text-[10px] uppercase tracking-[0.14em] leading-none text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground [&>svg]:inline-block [&>svg]:shrink-0";
 
 type AdminPanelProps = {
   children: ReactNode;

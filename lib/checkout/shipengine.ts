@@ -1,4 +1,5 @@
-import type { CheckoutShippingAddress, CheckoutShippingService } from '@/lib/checkout/types';
+import { providerFetch } from '../api/provider-client.ts';
+import type { CheckoutShippingAddress, CheckoutShippingService } from './types.ts';
 
 const SHIPENGINE_API_KEY = (process.env.SHIPENGINE_API_KEY || '').trim();
 const SHIPENGINE_API_BASE = (process.env.SHIPENGINE_API_BASE || 'https://api.shipengine.com').trim().replace(/\/$/, '');
@@ -210,7 +211,9 @@ function buildShipmentPayload(args: {
 }
 
 async function shipEngineRequest<T>(path: string, init: RequestInit): Promise<T> {
-  const response = await fetch(`${SHIPENGINE_API_BASE}${path}`, {
+  const response = await providerFetch(`${SHIPENGINE_API_BASE}${path}`, {
+    provider: 'shipengine',
+    operation: path,
     ...init,
     headers: {
       'API-Key': SHIPENGINE_API_KEY,

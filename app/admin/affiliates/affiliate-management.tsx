@@ -34,6 +34,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 
 import {
   adminFieldClass,
@@ -217,6 +218,10 @@ function formatCurrency(value: string | number) {
     currency: "USD",
     maximumFractionDigits: 2,
   }).format(Number.isFinite(numeric) ? numeric : 0);
+}
+
+function unwrapAdminPayload<T>(payload: unknown) {
+  return (getApiData<T>(payload) ?? payload) as T;
 }
 
 export function AffiliateManagement({
@@ -443,11 +448,13 @@ export function AffiliateManagement({
       )}`,
     )
       .then(async (response) => {
-        const data = await response.json().catch(() => ({}));
+        const payload = await readJsonSafely(response);
+        const data = unwrapAdminPayload<{
+          commission?: CommissionOverview | null;
+          discountHistory?: DiscountHistoryRow[];
+        }>(payload);
         if (!response.ok) {
-          throw new Error(
-            data.error || "Failed to load Growth Partner detail.",
-          );
+          throw new Error(getApiErrorMessage(payload, "Failed to load Growth Partner detail."));
         }
 
         if (cancelled) return;
@@ -520,9 +527,12 @@ export function AffiliateManagement({
           }),
         },
       );
-      const data = await response.json().catch(() => ({}));
+      const payload = await readJsonSafely(response);
+      const data = unwrapAdminPayload<{
+        availability?: AssignmentAvailability | null;
+      }>(payload);
       if (!response.ok) {
-        throw new Error(data.error || "Failed to check code availability.");
+        throw new Error(getApiErrorMessage(payload, "Failed to check code availability."));
       }
 
       setAvailability(data.availability ?? null);
@@ -571,11 +581,12 @@ export function AffiliateManagement({
           dryRun,
         }),
       });
-      const data = await response.json().catch(() => ({}));
+      const payload = await readJsonSafely(response);
+      const data = unwrapAdminPayload<{
+        summary?: BulkDiscountSummary | null;
+      }>(payload);
       if (!response.ok) {
-        throw new Error(
-          data.error || "Failed to run the bulk discount update.",
-        );
+        throw new Error(getApiErrorMessage(payload, "Failed to run the bulk discount update."));
       }
 
       setBulkPreview(data.summary ?? null);
@@ -614,11 +625,12 @@ export function AffiliateManagement({
           }),
         },
       );
-      const data = await response.json().catch(() => ({}));
+      const payload = await readJsonSafely(response);
+      const data = unwrapAdminPayload<{
+        commission?: CommissionOverview | null;
+      }>(payload);
       if (!response.ok) {
-        throw new Error(
-          data.error || "Failed to update the commission override.",
-        );
+        throw new Error(getApiErrorMessage(payload, "Failed to update the commission override."));
       }
 
       setCommissionOverview(data.commission ?? null);
@@ -657,9 +669,9 @@ export function AffiliateManagement({
         }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const payload = await readJsonSafely(res);
       if (!res.ok) {
-        throw new Error(data.error || "Failed to update Growth Partner.");
+        throw new Error(getApiErrorMessage(payload, "Failed to update Growth Partner."));
       }
 
       router.refresh();
@@ -718,9 +730,12 @@ export function AffiliateManagement({
         }),
       });
 
-      const data = await res.json();
+      const payload = await readJsonSafely(res);
+      const data = unwrapAdminPayload<{
+        assignment: AssignmentResult;
+      }>(payload);
       if (!res.ok) {
-        throw new Error(data.error || "Failed to save affiliate assignment.");
+        throw new Error(getApiErrorMessage(payload, "Failed to save affiliate assignment."));
       }
 
       setAssignmentResult({
@@ -764,9 +779,9 @@ export function AffiliateManagement({
         }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const payload = await readJsonSafely(res);
       if (!res.ok) {
-        throw new Error(data.error || "Failed to remove affiliate assignment.");
+        throw new Error(getApiErrorMessage(payload, "Failed to remove affiliate assignment."));
       }
 
       setAssignmentOpen(false);
@@ -797,11 +812,9 @@ export function AffiliateManagement({
         }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const payload = await readJsonSafely(res);
       if (!res.ok) {
-        throw new Error(
-          data.error || "Failed to delete the Growth Partner record.",
-        );
+        throw new Error(getApiErrorMessage(payload, "Failed to delete the Growth Partner record."));
       }
 
       setAssignmentOpen(false);
@@ -873,15 +886,18 @@ export function AffiliateManagement({
     setRepairingUserId(userId);
 
     try {
-      const res = await fetch(`/api/admin/affiliates/orphan-users/${userId}`, {
+      const res = await fetch(`/api/admin/affiliates/orphan-users/${userId}/repair`, {
         method: "POST",
       });
 
-      const data = await res.json().catch(() => ({}));
+      const payload = await readJsonSafely(res);
+      const data = unwrapAdminPayload<{
+        repair?: {
+          created?: boolean;
+        };
+      }>(payload);
       if (!res.ok) {
-        throw new Error(
-          data.error || "Failed to create the missing Growth Partner record.",
-        );
+        throw new Error(getApiErrorMessage(payload, "Failed to create the missing Growth Partner record."));
       }
 
       window.alert(

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Eye, Loader2, Pencil } from "lucide-react";
+import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 
 import {
   adminPrimaryButtonClass,
@@ -29,13 +30,16 @@ export function MdxEditor({ value, onChange }: MdxEditorProps) {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch("/api/admin/research/preview", {
+        const res = await fetch("/api/admin/research/preview-render", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ mdx: value }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error ?? "Preview failed");
+        const payload = await readJsonSafely(res);
+        const data =
+          getApiData<{ html?: string }>(payload) ??
+          (payload as { html?: string });
+        if (!res.ok) throw new Error(getApiErrorMessage(payload, "Preview failed"));
         setHtml(data.html ?? "");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Preview failed");

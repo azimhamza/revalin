@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
 
 export function EmailCapture() {
   const [email, setEmail] = useState('');
@@ -17,15 +18,15 @@ export function EmailCapture() {
     setError(null);
 
     try {
-      const response = await fetch('/api/email/subscribe', {
+      const response = await fetch('/api/marketing/email-subscriptions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim(), source: 'footer' }),
       });
+      const payload = await readJsonSafely(response);
 
       if (!response.ok) {
-        const payload = await response.json();
-        throw new Error(payload.error || 'Unable to subscribe.');
+        throw new Error(getApiErrorMessage(payload, 'Unable to subscribe.'));
       }
 
       setSubmitted(true);

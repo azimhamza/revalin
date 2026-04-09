@@ -1,25 +1,42 @@
 import { Suspense } from 'react';
+import { redirect } from 'next/navigation';
 import { LoginForm } from './login-form';
 import { Footer } from '@/components/layout/footer';
 import { FlaskConical, Truck, ShieldCheck, ClipboardCheck } from 'lucide-react';
+import { getServerSession } from '@/lib/auth-server';
 
 export const metadata = {
   title: 'Sign In | Revalin',
   description: 'Sign in to your Revalin account.',
 };
 
-export default function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ callbackUrl?: string }>;
+}) {
+  const session = await getServerSession();
+  const params = await searchParams;
+
+  if (session?.user) {
+    const continueUrl = params.callbackUrl
+      ? `/auth/continue?callbackUrl=${encodeURIComponent(params.callbackUrl)}`
+      : '/auth/continue';
+    redirect(continueUrl);
+  }
+
   return (
     <>
       <div className="min-h-screen md:grid md:grid-cols-2">
         {/* ── Left panel — sign-in form on cream ── */}
-        <div className="flex min-h-screen flex-col justify-center bg-background px-sides py-16 md:justify-start md:px-10 md:pt-top-spacing lg:px-16">
+        <div className="flex min-h-screen flex-col justify-center bg-background px-sides py-16 md:px-10 lg:px-16">
           <div className="mx-auto w-full max-w-[400px]">
             <div className="mb-8">
+              
+              <h1 className="mt-2 text-3xl font-semibold tracking-[-0.02em]">Sign in</h1>
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">
                 Welcome back
               </p>
-              <h1 className="mt-2 text-3xl font-semibold tracking-[-0.02em]">Sign in</h1>
             </div>
 
             <div className="rounded-[26px] border border-[#0B2E2F]/12 bg-card p-6 shadow-[0_20px_48px_rgba(11,46,47,0.05)]">

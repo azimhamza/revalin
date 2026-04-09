@@ -1,73 +1,76 @@
 import { and, eq } from 'drizzle-orm';
-import { NextResponse } from 'next/server';
-import { getServerSession } from '@/lib/auth-server';
+import { z } from 'zod';
+import { createApiRoute } from '@/lib/api/route';
+import { apiError } from '@/lib/api/errors';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { account } from '@/lib/db/schema';
 
-export async function POST(request: Request) {
-  const session = await getServerSession();
+const passwordSchema = z.object({
+  currentPassword: z.string().optional(),
+  newPassword: z.string().min(1, 'Enter a new password.'),
+});
 
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const dynamic = 'force-dynamic';
 
-  const body = await request.json().catch(() => null);
-  const currentPassword =
-    typeof body?.currentPassword === 'string' ? body.currentPassword : '';
-  const newPassword =
-    typeof body?.newPassword === 'string' ? body.newPassword : '';
+export const POST = createApiRoute({
+  route: '/api/account/password',
+  access: 'session',
+  bodySchema: passwordSchema,
+  cacheControl: 'no-store',
+  handler: async ({ request, session, body }) => {
+    const credentialAccounts = await db
+      .select({ id: account.id })
+      .from(account)
+      .where(
+        and(eq(account.userId, session.user.id), eq(account.providerId, 'credential')),
+      )
+      .limit(1);
 
-  if (!newPassword) {
-    return NextResponse.json({ error: 'Enter a new password.' }, { status: 400 });
-  }
+    const hasPassword = credentialAccounts.length > 0;
 
-  const credentialAccounts = await db
-    .select({ id: account.id })
-    .from(account)
-    .where(
-      and(eq(account.userId, session.user.id), eq(account.providerId, 'credential')),
-    )
-    .limit(1);
-
-  const hasPassword = credentialAccounts.length > 0;
-
-  if (hasPassword && !currentPassword) {
-    return NextResponse.json(
-      { error: 'Enter your current password.' },
-      { status: 400 },
-    );
-  }
-
-  try {
-    if (hasPassword) {
-      await auth.api.changePassword({
-        headers: request.headers,
-        body: {
-          currentPassword,
-          newPassword,
-        },
-      });
-    } else {
-      await auth.api.setPassword({
-        headers: request.headers,
-        body: {
-          newPassword,
-        },
-      });
+    if (hasPassword && !body.currentPassword) {
+      throw apiError.badRequest('Enter your current password.');
     }
 
-    return NextResponse.json({
-      success: true,
-      hasPassword: true,
-    });
-  } catch (error) {
-    return NextResponse.json(
-      { error: getAuthErrorMessage(error, 'Unable to update password.') },
-      { status: getAuthErrorStatus(error, 400) },
-    );
-  }
-}
+    try {
+      if (hasPassword) {
+        await auth.api.changePassword({
+          headers: request.headers,
+          body: {
+            currentPassword: body.currentPassword!,
+            newPassword: body.newPassword,
+          },
+        });
+      } else {
+        await auth.api.setPassword({
+          headers: request.headers,
+          body: {
+            newPassword: body.newPassword,
+          },
+        });
+      }
+    } catch (error) {
+      const status = getAuthErrorStatus(error, 400);
+      const message = getAuthErrorMessage(error, 'Unable to update password.');
+
+      if (status === 401) {
+        throw apiError.unauthenticated(message);
+      }
+      if (status === 403) {
+        throw apiError.forbidden(message);
+      }
+      throw apiError.badRequest(message);
+    }
+
+    return {
+      data: {
+        hasPassword: true,
+        updated: true,
+      },
+    };
+  },
+});
 
 function getAuthErrorStatus(error: unknown, fallback: number) {
   if (typeof error === 'object' && error && 'statusCode' in error) {

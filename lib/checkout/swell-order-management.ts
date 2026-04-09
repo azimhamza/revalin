@@ -3,6 +3,7 @@ import {
   getProduct as getSwellProduct,
 } from "@/lib/swell/swell";
 import type { SwellCart as StorefrontCart } from "@/lib/swell/types";
+import { providerFetch } from "@/lib/api/provider-client";
 
 type QueryValue =
   | string
@@ -410,11 +411,14 @@ async function swellBackendRequest<T>(
     const authHeaders = buildBackendHeaders(requestUrl);
 
     for (const headers of authHeaders) {
-      const response = await fetch(requestUrl, {
+      const response = await providerFetch(requestUrl, {
+        provider: 'swell',
+        operation: `${method} ${path}`,
         method,
         headers,
         cache: "no-store",
         body: options.body ? JSON.stringify(options.body) : undefined,
+        retryable: method === 'GET' || method === 'DELETE',
       });
 
       if (response.ok) {

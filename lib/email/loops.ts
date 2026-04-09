@@ -1,4 +1,5 @@
 import { LoopsClient, type APIError, type TransactionalVariables } from 'loops';
+import { withProviderTimeout } from '@/lib/api/provider-client';
 
 let client: LoopsClient | null = null;
 
@@ -33,12 +34,17 @@ export async function sendTransactionalEmail(args: {
 
   const loops = getLoopsClient();
 
-  const response = await loops.sendTransactionalEmail({
-    transactionalId: args.transactionalId,
-    email: args.email,
-    addToAudience: args.addToAudience,
-    dataVariables: args.dataVariables,
-    headers: args.headers,
+  const response = await withProviderTimeout({
+    provider: 'loops',
+    operation: 'sendTransactionalEmail',
+    task: () =>
+      loops.sendTransactionalEmail({
+        transactionalId: args.transactionalId,
+        email: args.email,
+        addToAudience: args.addToAudience,
+        dataVariables: args.dataVariables,
+        headers: args.headers,
+      }),
   });
 
   if (!response.success) {
@@ -57,12 +63,17 @@ export async function sendLoopsEvent(args: {
 }) {
   const loops = getLoopsClient();
 
-  const response = await loops.sendEvent({
-    email: args.email,
-    eventName: args.eventName,
-    contactProperties: args.contactProperties,
-    eventProperties: args.eventProperties,
-    mailingLists: args.mailingLists,
+  const response = await withProviderTimeout({
+    provider: 'loops',
+    operation: 'sendEvent',
+    task: () =>
+      loops.sendEvent({
+        email: args.email,
+        eventName: args.eventName,
+        contactProperties: args.contactProperties,
+        eventProperties: args.eventProperties,
+        mailingLists: args.mailingLists,
+      }),
   });
 
   if (!response.success) {
@@ -90,10 +101,15 @@ export async function createOrUpdateContact(args: {
   if (args.source !== undefined) contactProperties.source = args.source;
 
   try {
-    const response = await loops.createContact({
-      email: args.email,
-      properties: contactProperties,
-      mailingLists: args.mailingLists,
+    const response = await withProviderTimeout({
+      provider: 'loops',
+      operation: 'createContact',
+      task: () =>
+        loops.createContact({
+          email: args.email,
+          properties: contactProperties,
+          mailingLists: args.mailingLists,
+        }),
     });
 
     return response;
@@ -101,10 +117,15 @@ export async function createOrUpdateContact(args: {
     // If contact already exists (409), update instead
     const apiError = error as APIError;
     if (apiError?.statusCode === 409) {
-      const updateResponse = await loops.updateContact({
-        email: args.email,
-        properties: contactProperties,
-        mailingLists: args.mailingLists,
+      const updateResponse = await withProviderTimeout({
+        provider: 'loops',
+        operation: 'updateContact',
+        task: () =>
+          loops.updateContact({
+            email: args.email,
+            properties: contactProperties,
+            mailingLists: args.mailingLists,
+          }),
       });
 
       return updateResponse;

@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { NextResponse } from "next/server";
 
-import { getServerSession } from "@/lib/auth-server";
+import { createApiRoute } from "@/lib/api/route";
 import { bulkUpdateAffiliateDiscountPercent } from "@/lib/checkout/affiliate-code-service";
 
 const bulkSchema = z.object({
@@ -12,43 +11,27 @@ const bulkSchema = z.object({
   dryRun: z.boolean().optional(),
 });
 
-export async function POST(request: Request) {
-  try {
-    const session = await getServerSession();
-    if (!session?.user || (session.user as any).role !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+export const dynamic = "force-dynamic";
 
-    const body = await request.json();
-    const data = bulkSchema.parse(body);
-
+export const POST = createApiRoute({
+  route: "/api/admin/affiliates/bulk-discount",
+  access: "admin",
+  bodySchema: bulkSchema,
+  cacheControl: "no-store",
+  handler: async ({ body, session }) => {
     const summary = await bulkUpdateAffiliateDiscountPercent({
-      affiliateIds: data.affiliateIds,
-      discountPercent: data.discountPercent,
-      mode: data.mode,
+      affiliateIds: body.affiliateIds,
+      discountPercent: body.discountPercent,
+      mode: body.mode,
       changedByUserId: session.user.id,
-      changeReason: data.changeReason ?? null,
-      dryRun: data.dryRun,
+      changeReason: body.changeReason ?? null,
+      dryRun: body.dryRun,
     });
 
-    return NextResponse.json({ success: true, summary });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: error.issues.map((issue) => issue.message).join(" ") },
-        { status: 400 },
-      );
-    }
-
-    console.error("[ADMIN-AFFILIATE-BULK-DISCOUNT]", error);
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to run the bulk discount update.",
+    return {
+      data: {
+        summary,
       },
-      { status: 500 },
-    );
-  }
-}
+    };
+  },
+});

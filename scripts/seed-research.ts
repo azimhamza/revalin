@@ -351,10 +351,12 @@ async function main() {
   console.log("Seeding research tables…");
 
   await sql.begin(async (tx) => {
+    const txSql = tx as unknown as typeof sql;
+
     // Upsert peptides
     const peptideIdBySlug = new Map<string, string>();
     for (const peptide of PEPTIDES) {
-      const rows = await tx<{ id: string }[]>`
+      const rows = await txSql<{ id: string }[]>`
         insert into research_peptides
           (slug, name, full_name, sequence, description, molecular_weight, cas, product_slug, tags, sort_order, status)
         values
@@ -383,7 +385,7 @@ async function main() {
       const readingMinutes = roughReadingTimeMinutes(mdx);
       const publicationDate = new Date(paper.date);
 
-      const rows = await tx<{ id: string }[]>`
+      const rows = await txSql<{ id: string }[]>`
         insert into research_papers
           (slug, title, excerpt, authors, publication_date, mdx_content, reading_time_minutes, topics, status, published_at)
         values
@@ -408,7 +410,7 @@ async function main() {
         continue;
       }
 
-      await tx`
+      await txSql`
         insert into research_paper_peptides (paper_id, peptide_id, sort_order)
         values (${paperId}, ${peptideId}, 0)
         on conflict (paper_id, peptide_id) do nothing

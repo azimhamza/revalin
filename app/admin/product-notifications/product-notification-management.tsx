@@ -19,6 +19,7 @@ import type {
   ProductNotificationAdminProduct,
   ProductNotificationAdminTarget,
 } from "@/lib/back-in-stock/types";
+import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 import { buildProductNotificationSelectionKey } from "@/lib/back-in-stock/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -316,7 +317,7 @@ export function ProductNotificationManagement({
     }
 
     try {
-      const response = await fetch("/api/admin/product-notifications", {
+      const response = await fetch("/api/admin/product-notification-dispatches", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -325,17 +326,35 @@ export function ProductNotificationManagement({
           selections: buildSelections(targets),
         }),
       });
-      const payload = await response.json().catch(() => ({}));
+      const payload = await readJsonSafely(response);
+      const data =
+        getApiData<{
+          result?: {
+            notifiedCount: number;
+            failedCount: number;
+            discountCode: string;
+          };
+        }>(payload) ??
+        (payload as {
+          result?: {
+            notifiedCount: number;
+            failedCount: number;
+            discountCode: string;
+          };
+        });
 
       if (!response.ok) {
-        throw new Error(payload.error || "Failed to send restock notifications.");
+        throw new Error(getApiErrorMessage(payload, "Failed to send restock notifications."));
       }
 
       if (mode === "bulk") {
         setSelectedKeys(new Set());
       }
 
-      const result = payload.result;
+      const result = data.result;
+      if (!result) {
+        throw new Error("The notification dispatch response was missing a result.");
+      }
       window.alert(
         `Batch sent. ${result.notifiedCount} customer email(s) delivered, ${result.failedCount} failed, code ${result.discountCode} expires in 48 hours.`,
       );

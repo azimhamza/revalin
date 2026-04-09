@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import { NOWPAYMENTS_BASE_URL } from '@/lib/checkout/constants';
+import { providerFetch } from '@/lib/api/provider-client';
 
 type NowPaymentsRequestInit = RequestInit & {
   searchParams?: Record<string, string | number | boolean | undefined>;
@@ -82,8 +83,11 @@ function buildUrl(pathname: string, searchParams?: Record<string, string | numbe
 
 async function nowPaymentsRequest<T>(pathname: string, init: NowPaymentsRequestInit = {}) {
   const { searchParams, headers, ...rest } = init;
+  const method = (rest.method || 'GET').toUpperCase();
 
-  const response = await fetch(buildUrl(pathname, searchParams), {
+  const response = await providerFetch(buildUrl(pathname, searchParams), {
+    provider: 'nowpayments',
+    operation: pathname,
     ...rest,
     cache: 'no-store',
     headers: {
@@ -91,6 +95,7 @@ async function nowPaymentsRequest<T>(pathname: string, init: NowPaymentsRequestI
       'Content-Type': 'application/json',
       ...headers,
     },
+    retryable: method === 'GET' || method === 'HEAD',
   });
 
   if (!response.ok) {

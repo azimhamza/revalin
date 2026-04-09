@@ -42,6 +42,14 @@ export const payoutStatusEnum = pgEnum("payout_status", [
   "rejected",
 ]);
 
+export const checkoutSessionStatusEnum = pgEnum("checkout_session_status", [
+  "draft",
+  "quoted",
+  "finalizing",
+  "finalized",
+  "expired",
+]);
+
 export const productNotificationSubscriptionStatusEnum = pgEnum(
   "product_notification_subscription_status",
   ["pending", "notified"],
@@ -136,14 +144,21 @@ export const account = pgTable("account", {
     .defaultNow(),
 });
 
-export const verification = pgTable("verification", {
-  id: text("id").primaryKey(),
-  identifier: text("identifier").notNull(),
-  value: text("value").notNull(),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }),
-  updatedAt: timestamp("updated_at", { withTimezone: true }),
-});
+export const verification = pgTable(
+  "verification",
+  {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("verification_identifier_idx").on(table.identifier),
+    index("verification_expires_at_idx").on(table.expiresAt),
+  ],
+);
 
 // ── Existing app tables ──
 
@@ -154,6 +169,8 @@ export const checkoutOrders = pgTable(
     accessKey: varchar("access_key", { length: 128 }).notNull(),
     cartId: varchar("cart_id", { length: 128 }),
     userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    email: varchar("email", { length: 256 }),
+    paymentStatus: varchar("payment_status", { length: 64 }),
     currencyCode: varchar("currency_code", { length: 8 }).notNull(),
     shippingAddress: jsonb("shipping_address").notNull(),
     shippingService: jsonb("shipping_service"),
@@ -174,6 +191,13 @@ export const checkoutOrders = pgTable(
   },
   (table) => [
     index("checkout_orders_cart_id_idx").on(table.cartId),
+    index("checkout_orders_email_idx").on(table.email),
+    index("checkout_orders_payment_status_idx").on(table.paymentStatus),
+    index("checkout_orders_email_payment_status_user_id_idx").on(
+      table.email,
+      table.paymentStatus,
+      table.userId,
+    ),
     index("checkout_orders_updated_at_idx").on(table.updatedAt),
   ],
 );
@@ -238,6 +262,7 @@ export const affiliates = pgTable(
     uniqueIndex("affiliates_code_idx").on(table.code),
     uniqueIndex("affiliates_email_idx").on(table.email),
     index("affiliates_discount_code_idx").on(table.discountCode),
+    index("affiliates_user_id_idx").on(table.userId),
   ],
 );
 
@@ -377,7 +402,7 @@ export const affiliatePayouts = pgTable(
       .notNull(),
   },
   (table) => [
-    index("affiliate_payouts_order_id_idx").on(table.orderId),
+    uniqueIndex("affiliate_payouts_order_id_unique_idx").on(table.orderId),
     index("affiliate_payouts_affiliate_id_idx").on(table.affiliateId),
     index("affiliate_payouts_status_idx").on(table.status),
     index("affiliate_payouts_month_key_idx").on(table.commissionMonthKey),
@@ -518,13 +543,29 @@ export const checkoutDrafts = pgTable(
   {
     id: varchar("id", { length: 128 }).primaryKey(),
     email: varchar("email", { length: 256 }).notNull(),
+    normalizedEmail: varchar("normalized_email", { length: 256 })
+      .default("")
+      .notNull(),
+    sessionKey: varchar("session_key", { length: 128 }).default("").notNull(),
+    version: integer("version").default(1).notNull(),
+    status: checkoutSessionStatusEnum("status").default("draft").notNull(),
+    cartId: varchar("cart_id", { length: 128 }),
     cartSnapshot: jsonb("cart_snapshot").notNull(),
     shippingAddress: jsonb("shipping_address"),
-    totalsEstimate: jsonb("totals_estimate"),
-    paymentCompleted: timestamp("payment_completed", { withTimezone: true }),
-    abandonmentEventSent: timestamp("abandonment_event_sent", {
-      withTimezone: true,
+    selectedShippingServiceId: varchar("selected_shipping_service_id", {
+      length: 128,
     }),
+    paymentMethod: varchar("payment_method", { length: 32 }),
+    paymentCurrency: varchar("payment_currency", { length: 16 }),
+    sourceWalletAddress: text("source_wallet_address"),
+    discountCode: varchar("discount_code", { length: 128 }),
+    pricingSnapshot: jsonb("pricing_snapshot"),
+    providerQuoteCache: jsonb("provider_quote_cache"),
+    quoteExpiresAt: timestamp("quote_expires_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    finalizedOrderId: varchar("finalized_order_id", { length: 64 }),
+    finalizedAccessKey: varchar("finalized_access_key", { length: 128 }),
+    paymentCompleted: timestamp("payment_completed", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -534,7 +575,30 @@ export const checkoutDrafts = pgTable(
   },
   (table) => [
     index("checkout_drafts_email_idx").on(table.email),
+    index("checkout_drafts_normalized_email_idx").on(table.normalizedEmail),
+    index("checkout_drafts_cart_id_idx").on(table.cartId),
+    index("checkout_drafts_status_idx").on(table.status),
+    index("checkout_drafts_expires_at_idx").on(table.expiresAt),
     index("checkout_drafts_updated_at_idx").on(table.updatedAt),
+  ],
+);
+
+export const apiIdempotencyKeys = pgTable(
+  "api_idempotency_keys",
+  {
+    key: varchar("key", { length: 160 }).primaryKey(),
+    scope: varchar("scope", { length: 64 }).notNull(),
+    resourceId: varchar("resource_id", { length: 128 }),
+    response: jsonb("response"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("api_idempotency_keys_scope_idx").on(table.scope),
+    index("api_idempotency_keys_resource_id_idx").on(table.resourceId),
+    index("api_idempotency_keys_expires_at_idx").on(table.expiresAt),
   ],
 );
 

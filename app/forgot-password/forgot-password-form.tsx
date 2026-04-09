@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { getApiData, getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
 
 const RESEND_COOLDOWN = 60;
 
@@ -46,28 +47,29 @@ export function ForgotPasswordForm() {
     setNotice(null);
 
     try {
-      const response = await fetch('/api/auth/forgot-password/send-code', {
+      const response = await fetch('/api/auth/password-reset/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       });
-      const data = await response.json().catch(() => ({}));
+      const payload = await readJsonSafely(response);
+      const data = getApiData<{ message?: string }>(payload);
 
       if (response.status === 429) {
         setCooldown(RESEND_COOLDOWN);
-        setError(data.error || 'Please wait before requesting another code.');
+        setError(getApiErrorMessage(payload, 'Please wait before requesting another code.'));
         return;
       }
 
       if (!response.ok) {
-        setError(data.error || 'Unable to send a reset code.');
+        setError(getApiErrorMessage(payload, 'Unable to send a reset code.'));
         return;
       }
 
       setCooldown(RESEND_COOLDOWN);
       setStep('verify');
       setNotice(
-        data.message ||
+        data?.message ||
           'If an account exists for that email, we sent a 6-digit code.',
       );
     } catch {
@@ -89,19 +91,20 @@ export function ForgotPasswordForm() {
     setNotice(null);
 
     try {
-      const response = await fetch('/api/auth/forgot-password/verify-code', {
+      const response = await fetch('/api/auth/password-reset/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, code }),
       });
-      const data = await response.json().catch(() => ({}));
+      const payload = await readJsonSafely(response);
+      const data = getApiData<{ resetToken: string }>(payload);
 
       if (!response.ok) {
-        setError(data.error || 'Unable to verify that code.');
+        setError(getApiErrorMessage(payload, 'Unable to verify that code.'));
         return;
       }
 
-      setResetToken(data.resetToken as string);
+      setResetToken(data?.resetToken || '');
       setStep('reset');
       setNotice('Code verified. Choose a new password below.');
     } catch {
@@ -124,15 +127,15 @@ export function ForgotPasswordForm() {
     setIsResetting(true);
 
     try {
-      const response = await fetch('/api/auth/forgot-password/reset', {
+      const response = await fetch('/api/auth/password-reset/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: resetToken, newPassword }),
       });
-      const data = await response.json().catch(() => ({}));
+      const payload = await readJsonSafely(response);
 
       if (!response.ok) {
-        setError(data.error || 'Unable to reset password.');
+        setError(getApiErrorMessage(payload, 'Unable to reset password.'));
         return;
       }
 

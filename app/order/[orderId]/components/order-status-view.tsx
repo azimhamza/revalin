@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, Clock, ExternalLink, Package, Truck } from 'lucide-react';
 import type { CheckoutOrderPublic } from '@/lib/checkout/types';
 import { getCheckoutDiscounts } from '@/lib/checkout/pricing';
+import { getApiData, readJsonSafely } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 
 type Props = {
@@ -112,12 +113,15 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
     const interval = setInterval(async () => {
       try {
         const response = await fetch(
-          `/api/checkout/order/${encodeURIComponent(order.orderId)}?key=${encodeURIComponent(accessKey)}`,
+          `/api/checkout/v2/orders/${encodeURIComponent(order.orderId)}?key=${encodeURIComponent(accessKey)}`,
           { cache: 'no-store' }
         );
         if (!response.ok) return;
-        const payload = await response.json();
-        setOrder(payload.order);
+        const payload = await readJsonSafely(response);
+        const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
+        if (data?.order) {
+          setOrder(data.order);
+        }
       } catch {
         // Silent fail
       }

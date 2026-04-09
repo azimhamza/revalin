@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
+import { getApiData, getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
+import { setPostAuthPendingCookie } from '@/lib/auth/post-auth-client';
 
 const RESEND_COOLDOWN = 60;
 
@@ -19,12 +21,12 @@ export function VerifyEmailForm({ callbackUrl }: { callbackUrl: string }) {
     setIsSending(true);
     setError(null);
     try {
-      const res = await fetch('/api/auth/send-verification-code', { method: 'POST' });
+      const res = await fetch('/api/auth/email-verification/request', { method: 'POST' });
+      const payload = await readJsonSafely(res);
       if (res.status === 429) {
         setCooldown(RESEND_COOLDOWN);
       } else if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || 'Failed to send code.');
+        setError(getApiErrorMessage(payload, 'Failed to send code.'));
       } else {
         setCooldown(RESEND_COOLDOWN);
       }
@@ -55,22 +57,26 @@ export function VerifyEmailForm({ callbackUrl }: { callbackUrl: string }) {
     setIsVerifying(true);
 
     try {
-      const res = await fetch('/api/auth/verify-code', {
+      const res = await fetch('/api/auth/email-verification/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code }),
       });
 
-      const data = await res.json();
+      const payload = await readJsonSafely(res);
+      const data = getApiData<{ verified: boolean }>(payload);
 
       if (!res.ok) {
-        setError(data.error || 'Verification failed.');
+        setError(getApiErrorMessage(payload, 'Verification failed.'));
         setIsVerifying(false);
         return;
       }
 
-      router.push(callbackUrl);
-      router.refresh();
+      void data;
+      setPostAuthPendingCookie();
+      router.replace(
+        `/auth/continue?callbackUrl=${encodeURIComponent(callbackUrl)}`,
+      );
     } catch {
       setError('Something went wrong. Please try again.');
       setIsVerifying(false);

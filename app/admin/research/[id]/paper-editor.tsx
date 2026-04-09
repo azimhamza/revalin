@@ -21,6 +21,7 @@ import {
   adminPrimaryButtonClass,
   adminSecondaryButtonClass,
 } from "../../_components/admin-shell";
+import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 import { ImageUploader } from "../_components/image-uploader";
 import { MdxEditor } from "../_components/mdx-editor";
 import { slugify } from "@/lib/research/slug";
@@ -220,9 +221,12 @@ export function PaperEditor({ initialPaper, peptideOptions }: PaperEditorProps) 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json().catch(() => ({}));
+      const payloadData = await readJsonSafely(res);
+      const data =
+        getApiData<{ paper?: { id?: string } }>(payloadData) ??
+        (payloadData as { paper?: { id?: string } });
       if (!res.ok) {
-        throw new Error(data?.error ?? `Save failed (${res.status})`);
+        throw new Error(getApiErrorMessage(payloadData, `Save failed (${res.status})`));
       }
       setDirty(false);
       if (!isEdit && data?.paper?.id) {
@@ -250,9 +254,9 @@ export function PaperEditor({ initialPaper, peptideOptions }: PaperEditorProps) 
           method: "DELETE",
         },
       );
+      const payload = await readJsonSafely(res);
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error ?? `Delete failed (${res.status})`);
+        throw new Error(getApiErrorMessage(payload, `Delete failed (${res.status})`));
       }
       setDirty(false);
       router.replace("/admin/research");

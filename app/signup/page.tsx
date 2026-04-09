@@ -1,14 +1,30 @@
 import { Suspense } from 'react';
+import { redirect } from 'next/navigation';
 import { SignupForm } from './signup-form';
 import { Footer } from '@/components/layout/footer';
 import { FlaskConical, Truck, ShieldCheck, ClipboardCheck } from 'lucide-react';
+import { getServerSession } from '@/lib/auth-server';
 
 export const metadata = {
   title: 'Create Account | Revalin',
   description: 'Create a Revalin account to track orders and manage your profile.',
 };
 
-export default function SignupPage() {
+export default async function SignupPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ callbackUrl?: string }>;
+}) {
+  const session = await getServerSession();
+  const params = await searchParams;
+
+  if (session?.user) {
+    const continueUrl = params.callbackUrl
+      ? `/auth/continue?callbackUrl=${encodeURIComponent(params.callbackUrl)}`
+      : '/auth/continue';
+    redirect(continueUrl);
+  }
+
   return (
     <>
       <div className="min-h-screen md:grid md:grid-cols-2">

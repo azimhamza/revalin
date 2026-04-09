@@ -21,6 +21,7 @@ import {
   affiliatePrimaryButtonClass,
 } from "../_components/affiliate-shell";
 import { getConfiguredWallet } from "../wallet-utils";
+import { getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 
 export function WalletForm({ currentWallet }: { currentWallet: string }) {
   const [address, setAddress] = useState(getConfiguredWallet(currentWallet));
@@ -66,15 +67,15 @@ function WalletFormContent({
     setLastSavedAction(null);
 
     try {
-      const res = await fetch("/api/affiliate/update-wallet", {
-        method: "POST",
+      const res = await fetch("/api/affiliate/payout-settings", {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ walletAddress: normalizedAddress }),
       });
+      const payload = await readJsonSafely(res);
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to update wallet.");
+        throw new Error(getApiErrorMessage(payload, "Failed to update wallet."));
       }
 
       setAddress(normalizedAddress);

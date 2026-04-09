@@ -1,50 +1,26 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { signIn } from '@/lib/auth-client';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
-import {
-  getAccountDestinationForRole,
-  getSafeAppDestination,
-} from '@/lib/account-destination';
-import { linkAffiliateWithTimeout } from '@/lib/link-affiliate-client';
-import { useAuthSession } from '@/components/auth/session-provider';
+import { setPostAuthPendingCookie } from '@/lib/auth/post-auth-client';
 
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedCallbackUrl = searchParams.get('callbackUrl');
   const resetState = searchParams.get('reset');
-  const { data: session, isPending: isSessionPending } = useAuthSession();
-  const redirectStartedRef = useRef(false);
+  const signupHref = requestedCallbackUrl
+    ? `/signup?callbackUrl=${encodeURIComponent(requestedCallbackUrl)}`
+    : '/signup';
 
   const [email, setEmail] = useState(() => searchParams.get('email')?.trim() ?? '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    if (isSessionPending || !session?.user || redirectStartedRef.current) {
-      return;
-    }
-
-    redirectStartedRef.current = true;
-
-    const role = (session.user as any)?.role;
-    const destination = getSafeAppDestination(
-      requestedCallbackUrl || getAccountDestinationForRole(role),
-    );
-
-    if (!session.user.emailVerified) {
-      router.push('/verify-email?callbackUrl=' + encodeURIComponent(destination));
-    } else {
-      router.push(destination);
-    }
-    router.refresh();
-  }, [isSessionPending, requestedCallbackUrl, router, session?.user]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -63,26 +39,11 @@ export function LoginForm() {
         return;
       }
 
-      // Link pre-existing orders to this user
-      fetch('/api/account/link-orders', { method: 'POST' }).catch(() => {});
-      // Best-effort only. Never let affiliate linking stall the login redirect.
-      const linkAffiliateResult = await linkAffiliateWithTimeout();
-
-      const role = (result.data?.user as any)?.role;
-      const destination = getSafeAppDestination(
-        requestedCallbackUrl ||
-          (linkAffiliateResult.linked
-            ? '/affiliate/dashboard'
-            : getAccountDestinationForRole(role)),
-      );
-
-      // Redirect unverified users to email verification
-      if (!result.data?.user?.emailVerified) {
-        router.push('/verify-email?callbackUrl=' + encodeURIComponent(destination));
-      } else {
-        router.push(destination);
-      }
-      router.refresh();
+      const continueUrl = requestedCallbackUrl
+        ? `/auth/continue?callbackUrl=${encodeURIComponent(requestedCallbackUrl)}`
+        : '/auth/continue';
+      setPostAuthPendingCookie();
+      router.replace(continueUrl);
     } catch {
       setError('Something went wrong. Please try again.');
       setIsLoading(false);
@@ -157,7 +118,7 @@ export function LoginForm() {
 
       <p className="text-center text-sm text-foreground/60">
         Don&apos;t have an account?{' '}
-        <Link href="/signup" className="font-semibold text-[#0B2E2F] underline underline-offset-2">
+        <Link href={signupHref} className="font-semibold text-[#0B2E2F] underline underline-offset-2">
           Create one
         </Link>
       </p>

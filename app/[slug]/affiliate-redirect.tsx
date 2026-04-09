@@ -30,7 +30,7 @@ export function AffiliateRedirect({
     const recordVisit = async () => {
       try {
         await Promise.race([
-          fetch("/api/affiliate/visit", {
+          fetch("/api/affiliate/visits", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",

@@ -8,6 +8,7 @@ import { usePathname } from 'next/navigation';
 import { useAuthSession } from '@/components/auth/session-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
 
 const POPUP_DELAY_MS = 10_000;
 const HIDDEN_PATHS = new Set(['/login', '/signup', '/verify-email']);
@@ -47,15 +48,15 @@ export function WelcomePopup() {
       setError(null);
 
       try {
-        const response = await fetch('/api/email/subscribe', {
+        const response = await fetch('/api/marketing/email-subscriptions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: email.trim(), source: 'popup' }),
         });
+        const payload = await readJsonSafely(response);
 
         if (!response.ok) {
-          const payload = await response.json();
-          throw new Error(payload.error || 'Unable to subscribe.');
+          throw new Error(getApiErrorMessage(payload, 'Unable to subscribe.'));
         }
 
         setSubmitted(true);
@@ -80,21 +81,22 @@ export function WelcomePopup() {
           <VisuallyHidden>
             <Dialog.Title>Welcome to Revalin</Dialog.Title>
           </VisuallyHidden>
-          <Dialog.Close asChild>
-            <button
-              type="button"
-              className="absolute right-3 top-3 rounded-full p-1 text-muted-foreground transition-colors hover:text-foreground"
-              aria-label="Close"
-            >
-              <X className="size-4" />
-            </button>
-          </Dialog.Close>
-
           {submitted ? (
-            <div className="pr-6">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                You&apos;re in
-              </p>
+            <div>
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  You&apos;re in
+                </p>
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="-mr-1 -mt-1 shrink-0 rounded-full p-1 text-muted-foreground transition-colors hover:text-foreground"
+                    aria-label="Close"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </Dialog.Close>
+              </div>
               <p className="mt-1.5 text-lg font-semibold text-foreground">Check your email</p>
               <p className="mt-2 text-sm leading-5 text-muted-foreground">
                 We sent your 10% off code to{' '}
@@ -111,10 +113,21 @@ export function WelcomePopup() {
               </Button>
             </div>
           ) : (
-            <div className="pr-6">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Welcome to Revalin
-              </p>
+            <div>
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Welcome to Revalin
+                </p>
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="-mr-1 -mt-1 shrink-0 rounded-full p-1 text-muted-foreground transition-colors hover:text-foreground"
+                    aria-label="Close"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </Dialog.Close>
+              </div>
               <p className="mt-1.5 text-lg font-semibold text-foreground">
                 10% off your first order
               </p>

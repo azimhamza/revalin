@@ -38,6 +38,14 @@ export type AffiliateUserSetupResult = {
   roleUpdated: boolean;
 };
 
+export type ApprovedAffiliateSyncResult = {
+  affiliateCode?: string;
+  hasApprovedAffiliate: boolean;
+  linked: boolean;
+  roleUpdated: boolean;
+  role: string | null;
+};
+
 function decryptRow(row: typeof affiliates.$inferSelect): AffiliateRecord {
   const walletAddress = decrypt({
     ciphertext: row.encryptedWalletAddress,
@@ -200,6 +208,78 @@ export async function getAffiliateByUserIdentity(args: {
   }
 
   return null;
+}
+
+export async function syncApprovedAffiliateForUser(args: {
+  userId: string;
+  email: string;
+  currentRole?: string | null;
+}): Promise<ApprovedAffiliateSyncResult> {
+  const normalizedEmail = args.email.trim().toLowerCase();
+  const currentRole = args.currentRole ?? null;
+
+  if (!normalizedEmail) {
+    return {
+      hasApprovedAffiliate: false,
+      linked: false,
+      roleUpdated: false,
+      role: currentRole,
+    };
+  }
+
+  const rows = await db
+    .select()
+    .from(affiliates)
+    .where(eq(affiliates.email, normalizedEmail))
+    .limit(1);
+
+  const affiliate = rows[0];
+  if (!affiliate || affiliate.status !== "approved") {
+    return {
+      hasApprovedAffiliate: false,
+      linked: false,
+      roleUpdated: false,
+      role: currentRole,
+    };
+  }
+
+  if (affiliate.userId && affiliate.userId !== args.userId) {
+    return {
+      affiliateCode: affiliate.code,
+      hasApprovedAffiliate: true,
+      linked: false,
+      roleUpdated: false,
+      role: currentRole,
+    };
+  }
+
+  let linked = false;
+  if (!affiliate.userId) {
+    await db
+      .update(affiliates)
+      .set({ userId: args.userId, updatedAt: new Date() })
+      .where(eq(affiliates.id, affiliate.id));
+    linked = true;
+  }
+
+  let roleUpdated = false;
+  let role = currentRole;
+  if (currentRole === "customer") {
+    await db
+      .update(user)
+      .set({ role: "affiliate", updatedAt: new Date() })
+      .where(eq(user.id, args.userId));
+    roleUpdated = true;
+    role = "affiliate";
+  }
+
+  return {
+    affiliateCode: affiliate.code,
+    hasApprovedAffiliate: true,
+    linked,
+    roleUpdated,
+    role,
+  };
 }
 
 export async function listAffiliateRoleOrphans(

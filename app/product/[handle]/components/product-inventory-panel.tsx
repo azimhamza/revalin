@@ -7,6 +7,7 @@ import { useSelectedVariant } from '@/components/products/variant-selector';
 import { getInventoryState } from '@/lib/inventory';
 import { cn } from '@/lib/utils';
 import { Loader } from '@/components/ui/loader';
+import { getApiData, getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
 
 export function ProductInventoryPanel({ product }: { product: Product }) {
   const selectedVariant = useSelectedVariant(product);
@@ -37,7 +38,7 @@ export function ProductInventoryPanel({ product }: { product: Product }) {
     setFeedback(null);
 
     try {
-      const response = await fetch('/api/back-in-stock/subscribe', {
+      const response = await fetch('/api/product-notifications/subscriptions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -47,15 +48,16 @@ export function ProductInventoryPanel({ product }: { product: Product }) {
         }),
       });
 
-      const payload = await response.json();
+      const payload = await readJsonSafely(response);
+      const data = getApiData<{ message?: string }>(payload);
 
       if (!response.ok) {
-        throw new Error(payload.error || 'Unable to save your request.');
+        throw new Error(getApiErrorMessage(payload, 'Unable to save your request.'));
       }
 
       setEmail('');
       setSubscribed(true);
-      setFeedback(payload.message || `We'll notify you when ${itemLabel} is back.`);
+      setFeedback(data?.message || `We'll notify you when ${itemLabel} is back.`);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : 'Something went wrong. Try again.');
     } finally {

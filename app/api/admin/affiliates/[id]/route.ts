@@ -1,7 +1,8 @@
-import { z } from "zod";
 import { eq } from "drizzle-orm";
-import { NextResponse } from "next/server";
-import { getServerSession } from "@/lib/auth-server";
+import { z } from "zod";
+
+import { createApiRoute } from "@/lib/api/route";
+import { apiError } from "@/lib/api/errors";
 import { db } from "@/lib/db";
 import { affiliates } from "@/lib/db/schema";
 import {
@@ -20,6 +21,18 @@ import {
   setAffiliateCommissionOverride,
   updateAffiliateBaselineCommission,
 } from "@/lib/checkout/commission-service";
+
+const paramsSchema = z.object({
+  id: z.string().trim().min(1),
+});
+
+const querySchema = z.object({
+  monthKey: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}$/)
+    .optional(),
+});
 
 const patchSchema = z.object({
   status: z.enum(["pending", "approved", "rejected", "suspended"]).optional(),
@@ -51,15 +64,6 @@ const deleteSchema = z.object({
   removalReason: z.string().trim().optional(),
 });
 
-async function assertAdmin() {
-  const session = await getServerSession();
-  if (!session?.user || (session.user as any).role !== "admin") {
-    throw new Error("forbidden");
-  }
-
-  return session;
-}
-
 async function getAffiliateRow(id: string) {
   const rows = await db
     .select()
@@ -70,269 +74,250 @@ async function getAffiliateRow(id: string) {
   return rows[0] || null;
 }
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  try {
-    await assertAdmin();
-    const { id } = await params;
-    const monthKey =
-      new URL(request.url).searchParams.get("monthKey") || undefined;
+function normalizeAffiliateError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return apiError.internal("Failed to update affiliate.");
+  }
+
+  if (error.name === "ApiError") {
+    return error;
+  }
+
+  if (/Affiliate not found\./i.test(error.message)) {
+    return apiError.notFound(error.message);
+  }
+
+  if (/payout history and cannot be permanently deleted/i.test(error.message)) {
+    return apiError.conflict(error.message);
+  }
+
+  if (
+    /requires a Swell discount code|already linked|already exists|must be/i.test(
+      error.message,
+    )
+  ) {
+    return apiError.badRequest(error.message);
+  }
+
+  return apiError.internal(error.message);
+}
+
+export const dynamic = "force-dynamic";
+
+export const GET = createApiRoute({
+  route: "/api/admin/affiliates/:id",
+  access: "admin",
+  paramsSchema,
+  querySchema,
+  cacheControl: "no-store",
+  handler: async ({ params, query }) => {
     const [assignment, commission, discountHistory] = await Promise.all([
-      getAffiliateCodeAssignment(id),
-      getAffiliateCommissionOverview({ affiliateId: id, monthKey }),
-      listAffiliateDiscountChangesForAffiliate(id, 10),
+      getAffiliateCodeAssignment(params.id),
+      getAffiliateCommissionOverview({
+        affiliateId: params.id,
+        monthKey: query.monthKey,
+      }),
+      listAffiliateDiscountChangesForAffiliate(params.id, 10),
     ]);
 
-    return NextResponse.json({ assignment, commission, discountHistory });
-  } catch (error) {
-    if (error instanceof Error && error.message === "forbidden") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    return {
+      data: {
+        assignment,
+        commission,
+        discountHistory,
+      },
+    };
+  },
+});
 
-    console.error("[ADMIN-AFFILIATE-GET]", error);
-    return NextResponse.json(
-      { error: "Failed to load affiliate assignment." },
-      { status: 500 },
-    );
-  }
-}
-
-export async function PATCH(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  try {
-    const session = await assertAdmin();
-
-    const { id } = await params;
-    const current = await getAffiliateRow(id);
-    if (!current) {
-      return NextResponse.json(
-        { error: "Affiliate not found." },
-        { status: 404 },
-      );
-    }
-
-    const body = await request.json();
-    const data = patchSchema.parse(body);
-
-    if (data.removeAssignment) {
-      const assignment = await removeAffiliateCodeAssignment({
-        affiliateId: id,
-        changedByUserId: session.user.id,
-        changeReason: data.changeReason ?? null,
-      });
-      return NextResponse.json({ success: true, assignment });
-    }
-
-    if (data.commissionOverrideMonthKey) {
-      const commission = await setAffiliateCommissionOverride({
-        affiliateId: id,
-        monthKey: data.commissionOverrideMonthKey,
-        overrideRate:
-          data.clearCommissionOverride ||
-          data.commissionOverrideRate === undefined
-            ? null
-            : data.commissionOverrideRate,
-        reason: data.changeReason ?? null,
-        actorUserId: session.user.id,
-      });
-
-      return NextResponse.json({ success: true, commission });
-    }
-
-    const hasAssignmentMutation =
-      data.affiliateCode !== undefined ||
-      data.discountCode !== undefined ||
-      data.discountPercent !== undefined ||
-      data.sendApprovalEmail !== undefined;
-
-    if (hasAssignmentMutation || data.status === "approved") {
-      const effectiveDiscountCode = data.discountCode ?? current.discountCode;
-      const effectiveDiscountPercent =
-        data.discountPercent ??
-        current.discountPercent ??
-        DEFAULT_AFFILIATE_DISCOUNT_PERCENT;
-
-      if (!effectiveDiscountCode) {
-        return NextResponse.json(
-          {
-            error: "Approving an affiliate requires a Swell discount code.",
-          },
-          { status: 400 },
-        );
+export const PATCH = createApiRoute<
+  "admin",
+  typeof patchSchema,
+  undefined,
+  typeof paramsSchema,
+  Record<string, unknown>
+>({
+  route: "/api/admin/affiliates/:id",
+  access: "admin",
+  paramsSchema,
+  bodySchema: patchSchema,
+  cacheControl: "no-store",
+  handler: async ({ params, body, session }) => {
+    try {
+      const current = await getAffiliateRow(params.id);
+      if (!current) {
+        throw apiError.notFound("Affiliate not found.");
       }
 
-      const assignment = await saveAffiliateCodeAssignment({
-        affiliateId: id,
-        affiliateCode: data.affiliateCode ?? current.code,
-        discountCode: effectiveDiscountCode,
-        discountPercent: effectiveDiscountPercent,
-        commissionRate:
-          data.commissionRate ??
-          current.commissionRate ??
-          DEFAULT_AFFILIATE_COMMISSION_RATE,
-        approve: data.status === "approved",
-        sendEmail: data.sendApprovalEmail ?? data.status === "approved",
-        changedByUserId: session.user.id,
-        changeReason: data.changeReason ?? null,
-        reinstatementReason: data.reinstatementReason ?? null,
-      });
-
-      return NextResponse.json({ success: true, assignment });
-    }
-
-    if (data.status) {
-      const assignment = await setAffiliateCodeAssignmentActive({
-        affiliateId: id,
-        active: false,
-        status: data.status,
-        changedByUserId: session.user.id,
-        changeReason: data.changeReason ?? null,
-        suspensionReason: data.suspensionReason ?? null,
-      });
-
-      if (data.commissionRate !== undefined) {
-        await updateAffiliateBaselineCommission({
-          affiliateId: id,
-          commissionRate: data.commissionRate,
-          actorUserId: session.user.id,
-          notes: data.changeReason ?? null,
+      if (body.removeAssignment) {
+        const assignment = await removeAffiliateCodeAssignment({
+          affiliateId: params.id,
+          changedByUserId: session.user.id,
+          changeReason: body.changeReason ?? null,
         });
+
+        return {
+          data: {
+            assignment,
+          },
+        };
       }
 
-      return NextResponse.json({ success: true, assignment });
+      if (body.commissionOverrideMonthKey) {
+        const commission = await setAffiliateCommissionOverride({
+          affiliateId: params.id,
+          monthKey: body.commissionOverrideMonthKey,
+          overrideRate:
+            body.clearCommissionOverride ||
+            body.commissionOverrideRate === undefined
+              ? null
+              : body.commissionOverrideRate,
+          reason: body.changeReason ?? null,
+          actorUserId: session.user.id,
+        });
+
+        return {
+          data: {
+            commission,
+          },
+        };
+      }
+
+      const hasAssignmentMutation =
+        body.affiliateCode !== undefined ||
+        body.discountCode !== undefined ||
+        body.discountPercent !== undefined ||
+        body.sendApprovalEmail !== undefined;
+
+      if (hasAssignmentMutation || body.status === "approved") {
+        const effectiveDiscountCode = body.discountCode ?? current.discountCode;
+        const effectiveDiscountPercent =
+          body.discountPercent ??
+          current.discountPercent ??
+          DEFAULT_AFFILIATE_DISCOUNT_PERCENT;
+
+        if (!effectiveDiscountCode) {
+          throw apiError.badRequest(
+            "Approving an affiliate requires a Swell discount code.",
+          );
+        }
+
+        const assignment = await saveAffiliateCodeAssignment({
+          affiliateId: params.id,
+          affiliateCode: body.affiliateCode ?? current.code,
+          discountCode: effectiveDiscountCode,
+          discountPercent: effectiveDiscountPercent,
+          commissionRate:
+            body.commissionRate ??
+            current.commissionRate ??
+            DEFAULT_AFFILIATE_COMMISSION_RATE,
+          approve: body.status === "approved",
+          sendEmail: body.sendApprovalEmail ?? body.status === "approved",
+          changedByUserId: session.user.id,
+          changeReason: body.changeReason ?? null,
+          reinstatementReason: body.reinstatementReason ?? null,
+        });
+
+        return {
+          data: {
+            assignment,
+          },
+        };
+      }
+
+      if (body.status) {
+        const assignment = await setAffiliateCodeAssignmentActive({
+          affiliateId: params.id,
+          active: false,
+          status: body.status,
+          changedByUserId: session.user.id,
+          changeReason: body.changeReason ?? null,
+          suspensionReason: body.suspensionReason ?? null,
+        });
+
+        if (body.commissionRate !== undefined) {
+          await updateAffiliateBaselineCommission({
+            affiliateId: params.id,
+            commissionRate: body.commissionRate,
+            actorUserId: session.user.id,
+            notes: body.changeReason ?? null,
+          });
+        }
+
+        return {
+          data: {
+            assignment,
+          },
+        };
+      }
+
+      if (body.commissionRate !== undefined) {
+        const commissionRate = await updateAffiliateBaselineCommission({
+          affiliateId: params.id,
+          commissionRate: body.commissionRate,
+          actorUserId: session.user.id,
+          notes: body.changeReason ?? null,
+        });
+
+        return {
+          data: {
+            commissionRate,
+          },
+        };
+      }
+
+      return {
+        data: {
+          assignment: await getAffiliateCodeAssignment(params.id),
+        },
+      };
+    } catch (error) {
+      throw normalizeAffiliateError(error);
     }
+  },
+});
 
-    if (data.commissionRate !== undefined) {
-      const normalizedRate = await updateAffiliateBaselineCommission({
-        affiliateId: id,
-        commissionRate: data.commissionRate,
-        actorUserId: session.user.id,
-        notes: data.changeReason ?? null,
-      });
-
-      return NextResponse.json({
-        success: true,
-        commissionRate: normalizedRate,
-      });
-    }
-
-    return NextResponse.json({
-      success: true,
-      assignment: await getAffiliateCodeAssignment(id),
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message === "forbidden") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: error.issues.map((i) => i.message).join(" ") },
-        { status: 400 },
-      );
-    }
-
-    console.error("[ADMIN-AFFILIATE-PATCH]", error);
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to update affiliate.",
-      },
-      { status: 500 },
-    );
-  }
-}
-
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  try {
-    await assertAdmin();
-
-    const { id } = await params;
-    const body = await request.json();
-    const data = postSchema.parse(body);
-
+export const POST = createApiRoute({
+  route: "/api/admin/affiliates/:id",
+  access: "admin",
+  paramsSchema,
+  bodySchema: postSchema,
+  cacheControl: "no-store",
+  handler: async ({ params, body }) => {
     const availability = await checkAffiliateAssignmentAvailability({
-      affiliateId: id,
-      affiliateCode: data.affiliateCode,
-      discountCode: data.discountCode,
+      affiliateId: params.id,
+      affiliateCode: body.affiliateCode,
+      discountCode: body.discountCode,
     });
 
-    return NextResponse.json({ availability });
-  } catch (error) {
-    if (error instanceof Error && error.message === "forbidden") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: error.issues.map((issue) => issue.message).join(" ") },
-        { status: 400 },
-      );
-    }
-
-    console.error("[ADMIN-AFFILIATE-POST]", error);
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to check Growth Partner code availability.",
+    return {
+      data: {
+        availability,
       },
-      { status: 500 },
-    );
-  }
-}
+    };
+  },
+});
 
-export async function DELETE(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  try {
-    await assertAdmin();
+export const DELETE = createApiRoute({
+  route: "/api/admin/affiliates/:id",
+  access: "admin",
+  paramsSchema,
+  bodySchema: deleteSchema,
+  cacheControl: "no-store",
+  handler: async ({ params, body }) => {
+    try {
+      const result = await deleteAffiliateRecord({
+        affiliateId: params.id,
+        removalReason: body.removalReason ?? null,
+      });
 
-    const { id } = await params;
-    const body = await request.json().catch(() => ({}));
-    const data = deleteSchema.parse(body);
-    const result = await deleteAffiliateRecord({
-      affiliateId: id,
-      removalReason: data.removalReason ?? null,
-    });
-
-    return NextResponse.json({ success: true, result });
-  } catch (error) {
-    if (error instanceof Error && error.message === "forbidden") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return {
+        data: {
+          result,
+        },
+      };
+    } catch (error) {
+      throw normalizeAffiliateError(error);
     }
-
-    if (error instanceof Error && error.message === "Affiliate not found.") {
-      return NextResponse.json({ error: error.message }, { status: 404 });
-    }
-
-    if (
-      error instanceof Error &&
-      /payout history and cannot be permanently deleted/i.test(error.message)
-    ) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
-    }
-
-    console.error("[ADMIN-AFFILIATE-DELETE]", error);
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to delete affiliate.",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+});

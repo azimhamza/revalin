@@ -12,7 +12,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "db:seed:research": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/seed-research.ts"
+    "db:seed:research": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/seed-research.ts",
+    "db:reset:v2-runtime": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/reset-v2-runtime-data.ts"
   },
   "dependencies": {
     "@emotion/is-prop-valid": "latest",

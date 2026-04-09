@@ -1,17 +1,18 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import {
-  getSafeAppDestination,
-  isTemporarilyHiddenAppRoute,
-} from '@/lib/account-destination';
+import { isTemporarilyHiddenAppRoute } from '@/lib/account-destination';
 
 const AUTH_COOKIES = [
   'better-auth.session_token',
   '__Secure-better-auth.session_token',
 ];
 
-const PROTECTED_PREFIXES = ['/account', '/admin', '/affiliate/dashboard'];
-const AUTH_PAGES = ['/login', '/signup'];
+const PROTECTED_PREFIXES = [
+  '/account',
+  '/admin',
+  '/affiliate/dashboard',
+  '/affiliate/signup',
+];
 const VERIFY_PAGE = '/verify-email';
 
 export function middleware(request: NextRequest) {
@@ -26,26 +27,23 @@ export function middleware(request: NextRequest) {
   if (PROTECTED_PREFIXES.some(prefix => pathname.startsWith(prefix))) {
     if (!hasSession) {
       const loginUrl = new URL('/login', request.url);
-      loginUrl.searchParams.set('callbackUrl', pathname);
-      return NextResponse.redirect(loginUrl);
-    }
-  }
-
-  // Auth pages: redirect to account if already logged in
-  if (AUTH_PAGES.includes(pathname)) {
-    if (hasSession) {
-      const callbackUrl = request.nextUrl.searchParams.get('callbackUrl');
-      const destination = getSafeAppDestination(callbackUrl, '/account');
-      return NextResponse.redirect(
-        new URL(destination, request.url),
+      loginUrl.searchParams.set(
+        'callbackUrl',
+        `${request.nextUrl.pathname}${request.nextUrl.search}`,
       );
+      return NextResponse.redirect(loginUrl);
     }
   }
 
   // Verify-email page: require session (redirect to login if none)
   if (pathname === VERIFY_PAGE) {
     if (!hasSession) {
-      return NextResponse.redirect(new URL('/login', request.url));
+      const loginUrl = new URL('/login', request.url);
+      loginUrl.searchParams.set(
+        'callbackUrl',
+        `${request.nextUrl.pathname}${request.nextUrl.search}`,
+      );
+      return NextResponse.redirect(loginUrl);
     }
   }
 
@@ -57,8 +55,7 @@ export const config = {
     '/account/:path*',
     '/admin/:path*',
     '/affiliate/dashboard/:path*',
-    '/login',
-    '/signup',
+    '/affiliate/signup',
     '/verify-email',
   ],
 };

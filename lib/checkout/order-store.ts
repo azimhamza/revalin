@@ -39,11 +39,18 @@ function deserializeCheckoutOrderPayment(
 }
 
 function recordToRow(order: CheckoutOrderRecord) {
+  const normalizedEmail =
+    typeof order.shippingAddress.email === 'string'
+      ? order.shippingAddress.email.trim().toLowerCase()
+      : null;
+
   return {
     orderId: order.orderId,
     accessKey: order.accessKey,
     cartId: order.cartId,
     userId: order.userId ?? null,
+    email: normalizedEmail,
+    paymentStatus: order.payment.status?.toLowerCase() || null,
     currencyCode: order.currencyCode,
     shippingAddress: order.shippingAddress,
     shippingService: order.shippingService ?? null,
@@ -131,6 +138,8 @@ export async function saveCheckoutOrder(order: CheckoutOrderRecord): Promise<Che
         accessKey: row.accessKey,
         cartId: row.cartId,
         userId: row.userId,
+        email: row.email,
+        paymentStatus: row.paymentStatus,
         currencyCode: row.currencyCode,
         shippingAddress: row.shippingAddress,
         shippingService: row.shippingService,
@@ -176,6 +185,8 @@ export async function updateCheckoutOrder(
         accessKey: row.accessKey,
         cartId: row.cartId,
         userId: row.userId,
+        email: row.email,
+        paymentStatus: row.paymentStatus,
         currencyCode: row.currencyCode,
         shippingAddress: row.shippingAddress,
         shippingService: row.shippingService,

@@ -33,6 +33,7 @@ import {
   type AccountCryptoPreferences,
   type AccountShippingAddress,
 } from "../account-utils";
+import { getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 
 type ShippingAddress = AccountShippingAddress;
 
@@ -145,8 +146,8 @@ export function ProfileForm({
     setSuccess(false);
 
     try {
-      const res = await fetch("/api/account/update-address", {
-        method: "POST",
+      const res = await fetch("/api/account/profile", {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...address,
@@ -154,10 +155,10 @@ export function ProfileForm({
           cryptoWalletAddress,
         }),
       });
+      const payload = await readJsonSafely(res);
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to save profile.");
+        throw new Error(getApiErrorMessage(payload, "Failed to save profile."));
       }
 
       setSuccess(true);

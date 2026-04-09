@@ -37,6 +37,7 @@ import {
   AdminSectionHeader,
   AdminStatCard,
 } from "../_components/admin-shell";
+import { getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 
 type WeeklyPayoutRow = {
   id: string;
@@ -190,7 +191,7 @@ export function PayoutManagement({
   async function handleGenerate() {
     setLoading(true);
     try {
-      const response = await fetch("/api/admin/payouts", {
+      const response = await fetch("/api/admin/payout-batches", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -198,10 +199,10 @@ export function PayoutManagement({
           periodDate: selectedPeriodDate,
         }),
       });
+      const payload = await readJsonSafely(response);
 
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to generate weekly payout batches.");
+        throw new Error(getApiErrorMessage(payload, "Failed to generate weekly payout batches."));
       }
 
       await refreshWithPeriod(selectedPeriodDate);
@@ -219,15 +220,15 @@ export function PayoutManagement({
   ) {
     setLoading(true);
     try {
-      const response = await fetch(`/api/admin/payouts/${batchId}`, {
+      const response = await fetch(`/api/admin/payout-batches/${batchId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, ...extra }),
       });
+      const payload = await readJsonSafely(response);
 
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to update weekly payout batch.");
+        throw new Error(getApiErrorMessage(payload, "Failed to update weekly payout batch."));
       }
 
       setMarkPaidOpen(false);

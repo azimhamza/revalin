@@ -1,59 +1,49 @@
-import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { assertAdmin, isForbiddenError } from "@/lib/auth/assert-admin";
+import { createApiListRoute, createApiRoute } from "@/lib/api/route";
+import { apiError } from "@/lib/api/errors";
 import { createPeptide, listPeptides } from "@/lib/research/queries";
 import { createPeptideSchema } from "@/lib/research/schemas";
 
-export async function GET() {
-  try {
-    await assertAdmin();
-    const peptides = await listPeptides({ includeDraft: true });
-    return NextResponse.json({ peptides });
-  } catch (error) {
-    if (isForbiddenError(error)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    console.error("[ADMIN-RESEARCH-PEPTIDES-GET]", error);
-    return NextResponse.json(
-      { error: "Failed to load peptides." },
-      { status: 500 },
-    );
-  }
-}
+export const dynamic = "force-dynamic";
 
-export async function POST(request: Request) {
-  try {
-    await assertAdmin();
-    const body = await request.json();
-    const data = createPeptideSchema.parse(body);
-    const peptide = await createPeptide(data);
-    return NextResponse.json({ peptide }, { status: 201 });
-  } catch (error) {
-    if (isForbiddenError(error)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+export const GET = createApiListRoute({
+  route: "/api/admin/research/peptides",
+  access: "admin",
+  cacheControl: "no-store",
+  handler: async () => {
+    const peptides = await listPeptides({ includeDraft: true });
+
+    return {
+      data: peptides,
+      page: 1,
+      pageSize: peptides.length,
+      total: peptides.length,
+    };
+  },
+});
+
+export const POST = createApiRoute({
+  route: "/api/admin/research/peptides",
+  access: "admin",
+  bodySchema: createPeptideSchema,
+  cacheControl: "no-store",
+  handler: async ({ body }) => {
+    try {
+      const peptide = await createPeptide(body);
+
+      return {
+        data: {
+          peptide,
+        },
+        status: 201,
+      };
+    } catch (error) {
+      if (error instanceof Error && /duplicate key/i.test(error.message)) {
+        throw apiError.conflict("Slug already exists — choose a different slug.");
+      }
+
+      throw error;
     }
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: error.issues.map((i) => i.message).join(" ") },
-        { status: 400 },
-      );
-    }
-    if (error instanceof Error && /duplicate key/i.test(error.message)) {
-      return NextResponse.json(
-        { error: "Slug already exists — choose a different slug." },
-        { status: 409 },
-      );
-    }
-    console.error("[ADMIN-RESEARCH-PEPTIDES-POST]", error);
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to create peptide.",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+});

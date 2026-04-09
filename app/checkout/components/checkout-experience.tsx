@@ -34,6 +34,7 @@ import type { Product } from '@/lib/swell/types';
 import { formatPrice, getDiscountPercentage, getDisplayCompareAtPrice, getDisplayPrice } from '@/lib/swell/utils';
 import { useAuthSession } from '@/components/auth/session-provider';
 import { CheckoutAuthBanner } from './checkout-auth-banner';
+import { getApiData, getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
 
 type CheckoutExperienceProps = {
   quickAddProducts: Product[];
@@ -42,6 +43,19 @@ type CheckoutExperienceProps = {
 type CheckoutSession = {
   accessKey: string;
   order: CheckoutOrderPublic;
+};
+
+type CheckoutApiSession = {
+  sessionId: string;
+  sessionKey: string;
+  version: number;
+};
+
+type CheckoutApiSessionState = CheckoutApiSession & {
+  state?: {
+    expiresAt?: string | null;
+    status?: string | null;
+  };
 };
 
 type CheckoutQuote = {
@@ -79,6 +93,7 @@ type CheckoutDraft = {
   sourceWalletAddress: string;
   discountCode: string;
   appliedDiscount: AppliedDiscount | null;
+  apiSession: CheckoutApiSession | null;
 };
 
 const CHECKOUT_DRAFT_KEY = 'revalin_checkout_draft';
@@ -204,10 +219,48 @@ function parseCheckoutDraft(rawDraft: string | null): CheckoutDraft | null {
               currencyCode: parsed.appliedDiscount.currencyCode,
             }
           : null,
+      apiSession:
+        parsed.apiSession &&
+        typeof parsed.apiSession.sessionId === 'string' &&
+        typeof parsed.apiSession.sessionKey === 'string' &&
+        typeof parsed.apiSession.version === 'number'
+          ? {
+              sessionId: parsed.apiSession.sessionId,
+              sessionKey: parsed.apiSession.sessionKey,
+              version: parsed.apiSession.version,
+            }
+          : null,
     };
   } catch {
     return null;
   }
+}
+
+function toCheckoutApiSession(value: unknown): CheckoutApiSession | null {
+  if (!value || typeof value !== 'object') return null;
+
+  const sessionId =
+    typeof (value as { sessionId?: unknown }).sessionId === 'string'
+      ? (value as { sessionId: string }).sessionId
+      : null;
+  const sessionKey =
+    typeof (value as { sessionKey?: unknown }).sessionKey === 'string'
+      ? (value as { sessionKey: string }).sessionKey
+      : null;
+  const version =
+    typeof (value as { version?: unknown }).version === 'number'
+      ? (value as { version: number }).version
+      : null;
+
+  if (!sessionId || !sessionKey || version === null) {
+    return null;
+  }
+
+  return {
+    sessionId,
+    sessionKey,
+    version,
+  };
 }
 
 function PaymentBrandIcons({ className }: { className?: string }) {
@@ -596,6 +649,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const [countryOptions, setCountryOptions] = useState(SHIPPING_COUNTRIES);
   const [selectedShippingServiceId, setSelectedShippingServiceId] = useState('');
   const [quote, setQuote] = useState<CheckoutQuote | null>(null);
+  const [checkoutApiSession, setCheckoutApiSession] = useState<CheckoutApiSession | null>(null);
   const [checkoutSession, setCheckoutSession] = useState<CheckoutSession | null>(null);
   const [isLoadingOrder, setIsLoadingOrder] = useState(false);
   const [isLoadingQuote, setIsLoadingQuote] = useState(false);
@@ -810,13 +864,15 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   useEffect(() => {
     if (!retryOrderId || !retryKey || orderId) return;
 
-    fetch(`/api/checkout/order/${encodeURIComponent(retryOrderId)}?key=${encodeURIComponent(retryKey)}`, {
+    fetch(`/api/checkout/v2/orders/${encodeURIComponent(retryOrderId)}?key=${encodeURIComponent(retryKey)}`, {
       cache: 'no-store',
     })
       .then(async response => {
         if (!response.ok) return;
-        const payload = await response.json();
-        const retryOrder = payload.order as CheckoutOrderPublic;
+        const payload = await readJsonSafely(response);
+        const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
+        const retryOrder = data?.order;
+        if (!retryOrder) return;
         if (retryOrder.shippingAddress) {
           setShippingAddress(retryOrder.shippingAddress);
         }
@@ -863,6 +919,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         setPaymentMethod(checkoutDraft.paymentMethod);
         setPaymentCurrency(checkoutDraft.paymentCurrency);
         setSourceWalletAddress(checkoutDraft.sourceWalletAddress);
+        setCheckoutApiSession(checkoutDraft.apiSession);
         const hydratedDiscountCode = initialDiscountCode || checkoutDraft.discountCode;
         const hydratedAppliedDiscount =
           checkoutDraft.appliedDiscount?.code === hydratedDiscountCode ? checkoutDraft.appliedDiscount : null;
@@ -948,6 +1005,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         sourceWalletAddress,
         discountCode,
         appliedDiscount,
+        apiSession: checkoutApiSession,
       };
 
       window.localStorage.setItem(CHECKOUT_DRAFT_KEY, JSON.stringify(nextDraft));
@@ -955,7 +1013,16 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     } catch {
       // Best effort only.
     }
-  }, [appliedDiscount, discountCode, isDraftHydrated, paymentCurrency, paymentMethod, shippingAddress, sourceWalletAddress]);
+  }, [
+    appliedDiscount,
+    checkoutApiSession,
+    discountCode,
+    isDraftHydrated,
+    paymentCurrency,
+    paymentMethod,
+    shippingAddress,
+    sourceWalletAddress,
+  ]);
 
   useEffect(() => {
     if (previousCartSignature.current === null) {
@@ -986,30 +1053,34 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     let cancelled = false;
     setIsLoadingOrder(true);
 
-    fetch(`/api/checkout/order/${encodeURIComponent(orderId)}?key=${encodeURIComponent(accessKey)}`, {
+    fetch(`/api/checkout/v2/orders/${encodeURIComponent(orderId)}?key=${encodeURIComponent(accessKey)}`, {
       cache: 'no-store',
     })
       .then(async response => {
-        const payload = await response.json();
+        const payload = await readJsonSafely(response);
         if (!response.ok) {
-          throw new Error(payload.error || 'Unable to restore checkout session.');
+          throw new Error(getApiErrorMessage(payload, 'Unable to restore checkout session.'));
+        }
+        const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
+        if (!data?.order) {
+          throw new Error('Unable to restore checkout session.');
         }
 
         if (cancelled) return;
 
-        setCheckoutSession({ accessKey, order: payload.order });
-        setShippingAddress(payload.order.shippingAddress);
-        if (isNowPaymentsOrder(payload.order.payment)) {
+        setCheckoutSession({ accessKey, order: data.order });
+        setShippingAddress(data.order.shippingAddress);
+        if (isNowPaymentsOrder(data.order.payment)) {
           setPaymentMethod('crypto');
-          setPaymentCurrency(payload.order.payment.paymentCurrency);
-          setSourceWalletAddress(payload.order.payment.sourceWalletAddress || '');
+          setPaymentCurrency(data.order.payment.paymentCurrency);
+          setSourceWalletAddress(data.order.payment.sourceWalletAddress || '');
         } else {
           setPaymentMethod('card');
           setSourceWalletAddress('');
         }
-        setDiscountCode(payload.order.totals.discountCode || discountParam || '');
+        setDiscountCode(data.order.totals.discountCode || discountParam || '');
         setQuote(null);
-        setSelectedShippingServiceId(payload.order.shippingService?.id || '');
+        setSelectedShippingServiceId(data.order.shippingService?.id || '');
         setError(null);
       })
       .catch((fetchError: unknown) => {
@@ -1041,15 +1112,17 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
     const interval = window.setInterval(async () => {
       const response = await fetch(
-        `/api/checkout/payment-status/${encodeURIComponent(pollingId)}?orderId=${encodeURIComponent(
+        `/api/checkout/v2/payments/${encodeURIComponent(pollingId)}/status?orderId=${encodeURIComponent(
           currentOrderId
         )}&key=${encodeURIComponent(currentAccessKey)}`,
         { cache: 'no-store' }
       );
 
       if (!response.ok) return;
-      const payload = await response.json();
-      setCheckoutSession(current => (current ? { ...current, order: payload.order } : current));
+      const payload = await readJsonSafely(response);
+      const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
+      if (!data?.order) return;
+      setCheckoutSession(current => (current ? { ...current, order: data.order } : current));
     }, 12000);
 
     return () => {
@@ -1114,6 +1187,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
   const resetCheckoutSession = useCallback(() => {
     resetQuoteState();
+    setCheckoutApiSession(null);
     setCheckoutSession(null);
     setError(null);
     previousPaymentSnapshot.current = null;
@@ -1142,6 +1216,65 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     }
   };
 
+  const buildCheckoutSessionPayload = useCallback(
+    (overrides?: Partial<{
+      shippingAddress: CheckoutShippingAddress;
+      discountCode: string;
+      selectedShippingServiceId: string;
+    }>) => ({
+      cartSnapshot: cartSnapshot || undefined,
+      shippingAddress: overrides?.shippingAddress || shippingAddress,
+      paymentMethod,
+      paymentCurrency,
+      sourceWalletAddress: sourceWalletAddress.trim() || undefined,
+      discountCode:
+        overrides?.discountCode !== undefined
+          ? overrides.discountCode || undefined
+          : appliedDiscount?.code || discountCode || undefined,
+      selectedShippingServiceId:
+        overrides?.selectedShippingServiceId || selectedShippingServiceId || undefined,
+    }),
+    [
+      appliedDiscount?.code,
+      cartSnapshot,
+      discountCode,
+      paymentCurrency,
+      paymentMethod,
+      selectedShippingServiceId,
+      shippingAddress,
+      sourceWalletAddress,
+    ],
+  );
+
+  const ensureCheckoutApiSession = useCallback(async () => {
+    if (checkoutApiSession) {
+      return checkoutApiSession;
+    }
+
+    const response = await fetch('/api/checkout/v2/sessions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(buildCheckoutSessionPayload()),
+    });
+    const payload = await readJsonSafely(response);
+
+    if (!response.ok) {
+      throw new Error(getApiErrorMessage(payload, 'Unable to create checkout session.'));
+    }
+
+    const data = getApiData<CheckoutApiSessionState>(payload);
+    const nextSession = toCheckoutApiSession(data);
+
+    if (!nextSession) {
+      throw new Error('Unable to create checkout session.');
+    }
+
+    setCheckoutApiSession(nextSession);
+    return nextSession;
+  }, [buildCheckoutSessionPayload, checkoutApiSession]);
+
   const applyDiscountCode = useCallback(async (rawCode: string) => {
     const code = rawCode.trim().toUpperCase();
     if (!code) return;
@@ -1161,37 +1294,68 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     setShouldAutoApplyDiscount(false);
 
     try {
-      const response = await fetch('/api/checkout/validate-discount', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          discountCode: code,
-          shippingAddress,
-          cartSnapshot,
-        }),
-      });
+      const session = await ensureCheckoutApiSession();
+      const response = await fetch(
+        `/api/checkout/v2/sessions/${encodeURIComponent(session.sessionId)}/reprice`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...buildCheckoutSessionPayload({
+              shippingAddress,
+              discountCode: code,
+            }),
+            sessionKey: session.sessionKey,
+            version: session.version,
+          }),
+        },
+      );
 
-      const payload = await response.json();
+      const payload = await readJsonSafely(response);
 
       if (!response.ok) {
-        throw new Error(payload.error || 'Invalid discount code.');
+        throw new Error(getApiErrorMessage(payload, 'Invalid discount code.'));
       }
 
-      setDiscountCode(payload.discountCode);
+      const data = getApiData<{
+        session: CheckoutApiSessionState;
+        quote: CheckoutQuote;
+      }>(payload);
+      const nextSession = toCheckoutApiSession(data?.session);
+      if (nextSession) {
+        setCheckoutApiSession(nextSession);
+      }
+      if (!data?.quote) {
+        throw new Error('Invalid discount code.');
+      }
+
+      setQuote(data.quote);
+      setSelectedShippingServiceId((current) =>
+        data.quote.services.some((service: CheckoutShippingService) => service.id === current)
+          ? current
+          : data.quote.selectedServiceId,
+      );
+      setDiscountCode(code);
       setAppliedDiscount({
-        code: payload.discountCode,
-        amount: payload.discountAmount.amount,
-        currencyCode: payload.discountAmount.currencyCode,
+        code,
+        amount: data.quote.discountAmount?.amount || '0.00',
+        currencyCode: data.quote.discountAmount?.currencyCode || data.quote.currencyCode,
       });
       setDiscountError(null);
-      resetQuoteState();
     } catch (applyError: unknown) {
       setDiscountError(applyError instanceof Error ? applyError.message : 'Invalid discount code.');
       setAppliedDiscount(null);
+      setQuote(null);
+      setSelectedShippingServiceId('');
     } finally {
       setIsValidatingDiscount(false);
     }
-  }, [cartSnapshot, resetQuoteState, shippingAddress]);
+  }, [
+    buildCheckoutSessionPayload,
+    cartSnapshot,
+    ensureCheckoutApiSession,
+    shippingAddress,
+  ]);
 
   const handleApplyDiscount = async () => {
     await applyDiscountCode(discountCode);
@@ -1260,34 +1424,51 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       setError(null);
 
       try {
-        const response = await fetch('/api/checkout/quote', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+        const session = await ensureCheckoutApiSession();
+        const response = await fetch(
+          `/api/checkout/v2/sessions/${encodeURIComponent(session.sessionId)}/reprice`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            signal: controller.signal,
+            body: JSON.stringify({
+              ...buildCheckoutSessionPayload({
+                shippingAddress: nextShippingAddress,
+              }),
+              sessionKey: session.sessionKey,
+              version: session.version,
+            }),
           },
-          signal: controller.signal,
-          body: JSON.stringify({
-            ...nextShippingAddress,
-            cartSnapshot,
-            discountCode: appliedDiscount?.code || undefined,
-            paymentMethod,
-          }),
-        });
+        );
 
-        const payload = await response.json();
+        const payload = await readJsonSafely(response);
         if (controller.signal.aborted) {
           return;
         }
 
         if (!response.ok) {
-          throw new Error(payload.error || 'Unable to fetch shipping options.');
+          throw new Error(getApiErrorMessage(payload, 'Unable to fetch shipping options.'));
         }
 
-        setQuote(payload.quote);
+        const data = getApiData<{
+          session: CheckoutApiSessionState;
+          quote: CheckoutQuote;
+        }>(payload);
+        const nextSession = toCheckoutApiSession(data?.session);
+        if (nextSession) {
+          setCheckoutApiSession(nextSession);
+        }
+        if (!data?.quote) {
+          throw new Error('Unable to fetch shipping options.');
+        }
+
+        setQuote(data.quote);
         setSelectedShippingServiceId(current =>
-          payload.quote.services.some((service: CheckoutShippingService) => service.id === current)
+          data.quote.services.some((service: CheckoutShippingService) => service.id === current)
             ? current
-            : payload.quote.selectedServiceId
+            : data.quote.selectedServiceId
         );
       } catch (quoteError: unknown) {
         if (quoteError instanceof Error && quoteError.name === 'AbortError') {
@@ -1304,7 +1485,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         }
       }
     },
-    [cartSnapshot, appliedDiscount, paymentMethod]
+    [buildCheckoutSessionPayload, cartSnapshot, ensureCheckoutApiSession]
   );
 
   const handleFetchQuote = async () => {
@@ -1339,52 +1520,68 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     setError(null);
 
     try {
-      const response = await fetch('/api/checkout/create-payment', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const session = await ensureCheckoutApiSession();
+      const response = await fetch(
+        `/api/checkout/v2/sessions/${encodeURIComponent(session.sessionId)}/finalize`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ...buildCheckoutSessionPayload({
+              selectedShippingServiceId,
+            }),
+            sessionKey: session.sessionKey,
+            version: session.version,
+          }),
         },
-        body: JSON.stringify({
-          paymentMethod,
-          paymentCurrency,
-          sourceWalletAddress: sourceWalletAddress.trim() || undefined,
-          selectedShippingServiceId,
-          discountCode: appliedDiscount?.code || undefined,
-          shippingAddress,
-          cartSnapshot,
-        }),
-      });
+      );
 
-      const payload = await response.json();
+      const payload = await readJsonSafely(response);
 
       if (!response.ok) {
         console.error('[CHECKOUT] create-payment failed:', response.status, payload);
-        throw new Error(`[${payload.code || response.status}] ${payload.error || 'Unable to create payment.'}`);
+        throw new Error(getApiErrorMessage(payload, 'Unable to create payment.'));
+      }
+
+      const data = getApiData<{
+        session: CheckoutApiSessionState;
+        accessKey: string;
+        order: CheckoutOrderPublic;
+        redirectUrl?: string | null;
+      }>(payload);
+      const nextSession = toCheckoutApiSession(data?.session);
+      if (nextSession) {
+        setCheckoutApiSession(nextSession);
+      }
+      if (!data?.order || !data.accessKey) {
+        throw new Error('Unable to create payment.');
       }
 
       setCheckoutSession({
-        accessKey: payload.accessKey,
-        order: payload.order,
+        accessKey: data.accessKey,
+        order: data.order,
       });
 
-      if (isNowPaymentsOrder(payload.order.payment)) {
-        setPaymentCurrency(payload.order.payment.paymentCurrency);
-        setSourceWalletAddress(payload.order.payment.sourceWalletAddress || '');
+      if (isNowPaymentsOrder(data.order.payment)) {
+        setPaymentCurrency(data.order.payment.paymentCurrency);
+        setSourceWalletAddress(data.order.payment.sourceWalletAddress || '');
       } else {
         setSourceWalletAddress('');
       }
-      if (payload.order.totals.discountCode) {
-        setDiscountCode(payload.order.totals.discountCode);
+      if (data.order.totals.discountCode) {
+        setDiscountCode(data.order.totals.discountCode);
       }
 
-      syncCheckoutUrlImmediately(payload.order.orderId, payload.accessKey);
+      syncCheckoutUrlImmediately(data.order.orderId, data.accessKey);
 
       // ShieldClimb card payments redirect to hosted checkout
-      if (payload.redirectUrl) {
-        window.location.href = payload.redirectUrl;
+      if (data.redirectUrl) {
+        window.location.href = data.redirectUrl;
         return;
       }
-      updateCheckoutUrl(payload.order.orderId, payload.accessKey);
+      updateCheckoutUrl(data.order.orderId, data.accessKey);
     } catch (submitError: unknown) {
       setError(submitError instanceof Error ? submitError.message : 'Unable to create payment.');
     } finally {
@@ -1399,21 +1596,26 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
     try {
       const response = await fetch(
-        `/api/checkout/payment-status/${encodeURIComponent(
+        `/api/checkout/v2/payments/${encodeURIComponent(
           pollingId
-        )}?orderId=${encodeURIComponent(checkoutSession!.order.orderId)}&key=${encodeURIComponent(checkoutSession!.accessKey)}`,
+        )}/status?orderId=${encodeURIComponent(checkoutSession!.order.orderId)}&key=${encodeURIComponent(checkoutSession!.accessKey)}`,
         {
           cache: 'no-store',
         }
       );
 
-      const payload = await response.json();
+      const payload = await readJsonSafely(response);
+      const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
 
       if (!response.ok) {
-        throw new Error(payload.error || 'Unable to refresh payment status.');
+        throw new Error(getApiErrorMessage(payload, 'Unable to refresh payment status.'));
       }
 
-      setCheckoutSession(current => (current ? { ...current, order: payload.order } : current));
+      if (!data?.order) {
+        throw new Error('Unable to refresh payment status.');
+      }
+
+      setCheckoutSession(current => (current ? { ...current, order: data.order } : current));
       setError(null);
     } catch (refreshError: unknown) {
       setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh payment status.');
@@ -1499,17 +1701,17 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       try {
         const preservedShippingServiceId = activeOrder.shippingService?.id || '';
         const response = await fetch(
-          `/api/checkout/order/${encodeURIComponent(activeOrder.orderId)}?key=${encodeURIComponent(
+          `/api/checkout/v2/orders/${encodeURIComponent(activeOrder.orderId)}?key=${encodeURIComponent(
             checkoutSession.accessKey
           )}&reason=switch_payment`,
           {
             method: 'DELETE',
           }
         );
-        const payload = await response.json();
+        const payload = await readJsonSafely(response);
 
         if (!response.ok) {
-          throw new Error(payload.error || 'Unable to release the current payment attempt.');
+          throw new Error(getApiErrorMessage(payload, 'Unable to release the current payment attempt.'));
         }
 
         quoteAbortController.current?.abort();

@@ -19,6 +19,7 @@ import {
   adminPrimaryButtonClass,
   adminSecondaryButtonClass,
 } from "../../_components/admin-shell";
+import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 import { ImageUploader } from "../_components/image-uploader";
 import { slugify } from "@/lib/research/slug";
 
@@ -195,9 +196,12 @@ export function PeptideManagement({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json().catch(() => ({}));
+      const payloadData = await readJsonSafely(res);
+      const data =
+        getApiData<{ peptide: PeptideRow }>(payloadData) ??
+        (payloadData as { peptide: PeptideRow });
       if (!res.ok) {
-        throw new Error(data?.error ?? `Save failed (${res.status})`);
+        throw new Error(getApiErrorMessage(payloadData, `Save failed (${res.status})`));
       }
 
       const existingPaperCount = editingId
@@ -255,9 +259,9 @@ export function PeptideManagement({
     try {
       const url = `/api/admin/research/peptides/${peptide.id}${peptide.paperCount > 0 ? "?force=true" : ""}`;
       const res = await fetch(url, { method: "DELETE" });
+      const payload = await readJsonSafely(res);
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error ?? `Delete failed (${res.status})`);
+        throw new Error(getApiErrorMessage(payload, `Delete failed (${res.status})`));
       }
       setPeptides((current) => current.filter((p) => p.id !== peptide.id));
       startTransition(() => router.refresh());
@@ -287,20 +291,20 @@ export function PeptideManagement({
           title="Peptide library"
           description="Manage the peptides shown on the research hub and linked to papers."
           action={
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Link
                 href="/admin/research"
-                className={adminSecondaryButtonClass}
+                className={`${adminSecondaryButtonClass} shrink-0`}
               >
                 Back to papers
               </Link>
               <button
                 type="button"
-                className={adminPrimaryButtonClass}
+                className={`${adminPrimaryButtonClass} shrink-0`}
                 onClick={openNew}
               >
-                <Plus className="size-3" />
-                New peptide
+                <Plus className="size-3 shrink-0" />
+                <span>New peptide</span>
               </button>
             </div>
           }

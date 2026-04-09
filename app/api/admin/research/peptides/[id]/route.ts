@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { assertAdmin, isForbiddenError } from "@/lib/auth/assert-admin";
+import { createApiRoute } from "@/lib/api/route";
+import { apiError } from "@/lib/api/errors";
 import {
   deletePeptide,
   getPeptideByIdAdmin,
@@ -9,89 +9,81 @@ import {
 } from "@/lib/research/queries";
 import { updatePeptideSchema } from "@/lib/research/schemas";
 
-type Params = { params: Promise<{ id: string }> };
+const paramsSchema = z.object({
+  id: z.string().trim().min(1),
+});
 
-export async function GET(_request: Request, { params }: Params) {
-  try {
-    await assertAdmin();
-    const { id } = await params;
-    const peptide = await getPeptideByIdAdmin(id);
+const querySchema = z.object({
+  force: z.string().trim().optional(),
+});
+
+export const dynamic = "force-dynamic";
+
+export const GET = createApiRoute({
+  route: "/api/admin/research/peptides/:id",
+  access: "admin",
+  paramsSchema,
+  cacheControl: "no-store",
+  handler: async ({ params }) => {
+    const peptide = await getPeptideByIdAdmin(params.id);
     if (!peptide) {
-      return NextResponse.json({ error: "Peptide not found" }, { status: 404 });
+      throw apiError.notFound("Peptide not found");
     }
-    return NextResponse.json({ peptide });
-  } catch (error) {
-    if (isForbiddenError(error)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    console.error("[ADMIN-RESEARCH-PEPTIDE-GET]", error);
-    return NextResponse.json(
-      { error: "Failed to load peptide." },
-      { status: 500 },
-    );
-  }
-}
 
-export async function PATCH(request: Request, { params }: Params) {
-  try {
-    await assertAdmin();
-    const { id } = await params;
-    const body = await request.json();
-    const data = updatePeptideSchema.parse(body);
-    const peptide = await updatePeptide(id, data);
-    return NextResponse.json({ peptide });
-  } catch (error) {
-    if (isForbiddenError(error)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: error.issues.map((i) => i.message).join(" ") },
-        { status: 400 },
-      );
-    }
-    if (error instanceof Error && /duplicate key/i.test(error.message)) {
-      return NextResponse.json(
-        { error: "Slug already exists — choose a different slug." },
-        { status: 409 },
-      );
-    }
-    console.error("[ADMIN-RESEARCH-PEPTIDE-PATCH]", error);
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to update peptide.",
+    return {
+      data: {
+        peptide,
       },
-      { status: 500 },
-    );
-  }
-}
+    };
+  },
+});
 
-export async function DELETE(request: Request, { params }: Params) {
-  try {
-    await assertAdmin();
-    const { id } = await params;
-    const force = new URL(request.url).searchParams.get("force") === "true";
-    await deletePeptide(id, { force });
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    if (isForbiddenError(error)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+export const PATCH = createApiRoute({
+  route: "/api/admin/research/peptides/:id",
+  access: "admin",
+  paramsSchema,
+  bodySchema: updatePeptideSchema,
+  cacheControl: "no-store",
+  handler: async ({ params, body }) => {
+    try {
+      const peptide = await updatePeptide(params.id, body);
+
+      return {
+        data: {
+          peptide,
+        },
+      };
+    } catch (error) {
+      if (error instanceof Error && /duplicate key/i.test(error.message)) {
+        throw apiError.conflict("Slug already exists — choose a different slug.");
+      }
+
+      throw error;
     }
-    if (error instanceof Error && /linked paper/i.test(error.message)) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
+  },
+});
+
+export const DELETE = createApiRoute({
+  route: "/api/admin/research/peptides/:id",
+  access: "admin",
+  paramsSchema,
+  querySchema,
+  cacheControl: "no-store",
+  handler: async ({ params, query }) => {
+    try {
+      await deletePeptide(params.id, { force: query.force === "true" });
+
+      return {
+        data: {
+          success: true,
+        },
+      };
+    } catch (error) {
+      if (error instanceof Error && /linked paper/i.test(error.message)) {
+        throw apiError.conflict(error.message);
+      }
+
+      throw error;
     }
-    console.error("[ADMIN-RESEARCH-PEPTIDE-DELETE]", error);
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to delete peptide.",
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+});

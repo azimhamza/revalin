@@ -4,7 +4,6 @@ import { Footer } from '@/components/layout/footer';
 import { VerifyEmailForm } from './verify-email-form';
 import {
   getAccountDestinationForRole,
-  getSafeAppDestination,
 } from '@/lib/account-destination';
 
 export const metadata = {
@@ -25,20 +24,25 @@ export default async function VerifyEmailPage({
   searchParams: Promise<{ callbackUrl?: string }>;
 }) {
   const session = await getServerSession();
+  const params = await searchParams;
 
   if (!session?.user) {
-    redirect('/login');
+    const callbackSuffix = params.callbackUrl
+      ? `?callbackUrl=${encodeURIComponent(params.callbackUrl)}`
+      : '';
+    redirect(`/login${callbackSuffix}`);
   }
 
   if (session.user.emailVerified) {
-    redirect(getAccountDestinationForRole((session.user as any)?.role));
+    const continueUrl = params.callbackUrl
+      ? `/auth/continue?callbackUrl=${encodeURIComponent(params.callbackUrl)}`
+      : '/auth/continue';
+    redirect(continueUrl);
   }
 
-  const params = await searchParams;
-  const callbackUrl = getSafeAppDestination(
-    params.callbackUrl,
-    getAccountDestinationForRole((session.user as any)?.role),
-  );
+  const callbackUrl =
+    params.callbackUrl ||
+    getAccountDestinationForRole((session.user as any)?.role);
   const maskedEmail = maskEmail(session.user.email);
 
   return (

@@ -6,6 +6,7 @@ import { Loader2, MoreHorizontal } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { authClient } from "@/lib/auth-client";
+import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -107,17 +108,30 @@ export function UserManagement({ users }: { users: UserRow[] }) {
 
     setLoadingId(entry.id);
     try {
-      const res = await fetch(`/api/admin/users/${entry.id}/affiliate`, {
+      const res = await fetch(`/api/admin/users/${entry.id}/affiliate-assignment`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ affiliateCode: suggestedCode }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const payload = await readJsonSafely(res);
+      const data =
+        getApiData<{
+          setup?: {
+            affiliate?: {
+              id: string;
+            };
+          };
+        }>(payload) ??
+        (payload as {
+          setup?: {
+            affiliate?: {
+              id: string;
+            };
+          };
+        });
       if (!res.ok) {
-        throw new Error(
-          data.error || "Failed to prepare Growth Partner setup.",
-        );
+        throw new Error(getApiErrorMessage(payload, "Failed to prepare Growth Partner setup."));
       }
 
       const affiliateId = data?.setup?.affiliate?.id;
