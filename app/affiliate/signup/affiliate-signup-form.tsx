@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client
 type AffiliateSignupFormProps = {
   initialName?: string;
   initialEmail?: string;
+  promoterFirstName?: string | null;
 };
 
 type SubmissionState =
@@ -27,7 +29,10 @@ function createEmptySocialProfile(): AffiliateSocialProfile {
 export function AffiliateSignupForm({
   initialName = "",
   initialEmail = "",
+  promoterFirstName = null,
 }: AffiliateSignupFormProps) {
+  const searchParams = useSearchParams();
+  const promoterReferralCode = searchParams.get("promoter")?.trim() || "";
   const [socialProfiles, setSocialProfiles] = useState<
     AffiliateSocialProfile[]
   >([createEmptySocialProfile()]);
@@ -48,6 +53,7 @@ export function AffiliateSignupForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           socialProfiles,
+          promoterReferralCode: promoterReferralCode || undefined,
         }),
       });
 
@@ -133,6 +139,16 @@ export function AffiliateSignupForm({
         <p className="text-sm text-foreground/60">
           {initialEmail || "No email available"}
         </p>
+        {promoterReferralCode ? (
+          <p className="mt-3 border-t border-border pt-3 text-xs text-foreground/60">
+            {promoterFirstName
+              ? `${promoterFirstName} invited you to join the Growth Partner Program.`
+              : "You were invited to join the Growth Partner Program."}{" "}
+            <span className="font-mono font-semibold text-foreground">
+              {promoterReferralCode}
+            </span>
+          </p>
+        ) : null}
       </div>
 
       <div className="space-y-3">

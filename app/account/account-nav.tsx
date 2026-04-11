@@ -1,12 +1,13 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { KeyRound, LayoutGrid, Package, Shield, UserRound, Users } from "lucide-react";
+import { KeyRound, LayoutGrid, Megaphone, Package, Shield, UserRound, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { IntentLink } from "@/components/navigation/intent-link";
 import {
   ACCOUNT_ADMIN_ROUTE,
   ACCOUNT_AFFILIATE_ROUTE,
+  ACCOUNT_PROMOTER_ROUTE,
   ACCOUNT_NAV_ROUTES,
 } from "@/lib/app-routes";
 
@@ -29,9 +30,11 @@ function isActivePath(pathname: string, href: string) {
 
 export function AccountNav({
   showAffiliate = false,
+  showPromoter = false,
   showAdmin = false,
 }: {
   showAffiliate?: boolean;
+  showPromoter?: boolean;
   showAdmin?: boolean;
 }) {
   const pathname = usePathname();
@@ -41,6 +44,13 @@ export function AccountNav({
     navItems.push({
       ...ACCOUNT_AFFILIATE_ROUTE,
       icon: Users,
+    });
+  }
+
+  if (showPromoter) {
+    navItems.push({
+      ...ACCOUNT_PROMOTER_ROUTE,
+      icon: Megaphone,
     });
   }
 
@@ -55,7 +65,9 @@ export function AccountNav({
     <nav
       className={cn(
         "grid gap-3",
-        navItems.length >= 5
+        navItems.length >= 6
+          ? "lg:grid-cols-6"
+          : navItems.length === 5
           ? "lg:grid-cols-5"
           : navItems.length === 4
             ? "lg:grid-cols-4"

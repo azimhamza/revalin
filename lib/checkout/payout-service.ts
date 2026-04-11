@@ -11,6 +11,7 @@ import {
   getAllAffiliateEarnings,
   type AffiliateEarningRecord,
 } from "@/lib/checkout/affiliate-earnings-service";
+import { createPromoterEarningFromOrder } from "@/lib/checkout/promoter-earnings-service";
 import {
   getCommissionMonthKey,
   getPayoutApprovalPreview,
@@ -24,7 +25,15 @@ export type PayoutWithWallet = PayoutRecord & {
 };
 
 export async function createPayoutFromOrder(orderId: string, provider: string) {
-  return createAffiliateEarningFromOrder(orderId, provider);
+  const [affiliate, promoter] = await Promise.all([
+    createAffiliateEarningFromOrder(orderId, provider),
+    createPromoterEarningFromOrder(orderId, provider),
+  ]);
+
+  return {
+    affiliate,
+    promoter,
+  };
 }
 
 export async function getPayoutByOrderId(orderId: string) {

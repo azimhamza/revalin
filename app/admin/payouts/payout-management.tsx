@@ -41,6 +41,9 @@ import { getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 
 type WeeklyPayoutRow = {
   id: string;
+  partnerType: "affiliate" | "promoter";
+  partnerId: string;
+  partnerCode: string;
   affiliateId: string;
   affiliateCode: string;
   commissionMonthKey: string;
@@ -67,6 +70,38 @@ type WeeklyPayoutRow = {
   updatedAt: string;
 };
 
+type WeeklyPayoutEarningRow = {
+  id: string;
+  orderId: string;
+  affiliateCode: string;
+  orderTotal: string;
+  normalizedOrderTotal: string | null;
+  commissionRate: string;
+  commissionAmount: string;
+  normalizedCommissionAmount: string | null;
+  payoutCurrencyCode: string;
+  currencyCode: string;
+  paymentProvider: string;
+  earnedAt: string | null;
+  status: WeeklyPayoutRow["status"];
+  txHash: string | null;
+  growthPartnerName?: string | null;
+  growthPartnerEmail?: string | null;
+};
+
+type WeeklyPayoutBatchDetail = WeeklyPayoutRow & {
+  affiliateName?: string;
+  affiliateEmail?: string;
+  promoterName?: string;
+  promoterEmail?: string;
+  earnings: WeeklyPayoutEarningRow[];
+};
+
+type SelectedBatchDetail = {
+  partnerType: WeeklyPayoutRow["partnerType"];
+  batch: WeeklyPayoutBatchDetail;
+};
+
 type SerializedWeeklyPayoutPeriod = {
   periodKey: string;
   timezone: string;
@@ -77,7 +112,14 @@ type SerializedWeeklyPayoutPeriod = {
   label: string;
 };
 
-type StatusFilter = "all" | "pending" | "approved" | "paid" | "rejected";
+type StatusFilter =
+  | "all"
+  | "pending"
+  | "approved"
+  | "paid"
+  | "rejected"
+  | "affiliate"
+  | "promoter";
 
 function statusBadgeVariant(
   status: WeeklyPayoutRow["status"],
@@ -105,6 +147,11 @@ function formatDate(value: string | null) {
   return new Date(value).toLocaleDateString();
 }
 
+function formatDateTime(value: string | null) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString();
+}
+
 export function PayoutManagement({
   periodDate,
   period,
@@ -122,6 +169,11 @@ export function PayoutManagement({
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [markPaidOpen, setMarkPaidOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
+  const [selectedBatchDetail, setSelectedBatchDetail] =
+    useState<SelectedBatchDetail | null>(null);
   const [txHashInput, setTxHashInput] = useState("");
   const [notesInput, setNotesInput] = useState("");
 
@@ -160,10 +212,20 @@ export function PayoutManagement({
     const normalizedQuery = query.trim().toLowerCase();
 
     return batches.filter((entry) => {
-      if (filter !== "all" && entry.status !== filter) return false;
+      if (filter === "affiliate" && entry.partnerType !== "affiliate") return false;
+      if (filter === "promoter" && entry.partnerType !== "promoter") return false;
+      if (
+        filter !== "all" &&
+        filter !== "affiliate" &&
+        filter !== "promoter" &&
+        entry.status !== filter
+      ) {
+        return false;
+      }
       if (!normalizedQuery) return true;
 
       return (
+        entry.partnerCode.toLowerCase().includes(normalizedQuery) ||
         entry.affiliateCode.toLowerCase().includes(normalizedQuery) ||
         entry.commissionMonthKey.toLowerCase().includes(normalizedQuery) ||
         entry.walletAddress.toLowerCase().includes(normalizedQuery) ||
@@ -181,6 +243,16 @@ export function PayoutManagement({
     { key: "approved", label: "Ready", count: counts.approved },
     { key: "paid", label: "Paid", count: counts.paid },
     { key: "rejected", label: "Rejected", count: counts.rejected },
+    {
+      key: "affiliate",
+      label: "Growth Partners",
+      count: batches.filter((entry) => entry.partnerType === "affiliate").length,
+    },
+    {
+      key: "promoter",
+      label: "Promoters",
+      count: batches.filter((entry) => entry.partnerType === "promoter").length,
+    },
   ];
 
   async function refreshWithPeriod(nextPeriodDate = selectedPeriodDate) {
@@ -241,6 +313,49 @@ export function PayoutManagement({
       console.error("[ADMIN-WEEKLY-PAYOUTS-ACTION]", error);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function openBatchDetail(batch: WeeklyPayoutRow) {
+    setDetailOpen(true);
+    setDetailLoading(true);
+    setDetailError("");
+    setSelectedBatchDetail(null);
+
+    try {
+      const response = await fetch(`/api/admin/payout-batches/${batch.id}`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      });
+      const payload = await readJsonSafely(response);
+
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, "Failed to load payout earnings."));
+      }
+
+      const detail = payload as {
+        data?: {
+          batch?: WeeklyPayoutBatchDetail;
+        };
+      };
+
+      if (!detail.data?.batch) {
+        throw new Error("Payout batch details were not returned.");
+      }
+
+      setSelectedBatchDetail({
+        partnerType: batch.partnerType,
+        batch: {
+          ...batch,
+          ...detail.data.batch,
+        },
+      });
+    } catch (error) {
+      setDetailError(
+        error instanceof Error ? error.message : "Failed to load payout earnings.",
+      );
+    } finally {
+      setDetailLoading(false);
     }
   }
 
@@ -320,7 +435,7 @@ export function PayoutManagement({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Affiliate</TableHead>
+              <TableHead>Partner</TableHead>
               <TableHead>Commission month</TableHead>
               <TableHead>Earnings</TableHead>
               <TableHead>Payout</TableHead>
@@ -337,9 +452,10 @@ export function PayoutManagement({
                 <TableCell>
                   <div className="space-y-1">
                     <p className="text-xs font-semibold text-foreground">
-                      {batch.affiliateCode}
+                      {batch.partnerCode}
                     </p>
                     <p className="text-[11px] text-muted-foreground">
+                      {batch.partnerType === "promoter" ? "Promoter" : "Growth Partner"} •{" "}
                       {formatDate(batch.approvedAt || batch.createdAt)}
                     </p>
                   </div>
@@ -361,7 +477,7 @@ export function PayoutManagement({
                       {formatUsd(batch.totalNormalizedCommissionAmount)}
                     </p>
                     <p className="text-[11px] text-muted-foreground">
-                      Rate {formatRate(batch.effectiveRate)}
+                      {batch.effectiveRate ? `Rate ${formatRate(batch.effectiveRate)}` : "Promoter commission"}
                     </p>
                   </div>
                 </TableCell>
@@ -373,7 +489,9 @@ export function PayoutManagement({
                     <p className="text-[11px] text-muted-foreground">
                       {batch.nextTierLabel
                         ? `${formatUsd(batch.amountToNextTier || "0")} to ${batch.nextTierLabel}`
-                        : "Top tier reached"}
+                        : batch.partnerType === "promoter"
+                          ? "Flat promoter rate"
+                          : "Top tier reached"}
                     </p>
                   </div>
                 </TableCell>
@@ -414,9 +532,14 @@ export function PayoutManagement({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="rounded-none">
+                      <DropdownMenuItem onClick={() => openBatchDetail(batch)}>
+                        View earnings
+                      </DropdownMenuItem>
                       {batch.status !== "paid" && batch.status !== "rejected" ? (
                         <DropdownMenuItem
+                          disabled={batch.partnerType === "promoter" && !batch.walletAddress}
                           onClick={() => {
+                            if (batch.partnerType === "promoter" && !batch.walletAddress) return;
                             setSelectedBatchId(batch.id);
                             setTxHashInput("");
                             setMarkPaidOpen(true);
@@ -449,7 +572,7 @@ export function PayoutManagement({
                   className="py-10 text-center text-sm text-muted-foreground"
                 >
                   No weekly payout batches for this period yet. Generate the period to batch
-                  eligible affiliate earnings.
+                  eligible partner earnings.
                 </TableCell>
               </TableRow>
             ) : null}
@@ -490,6 +613,9 @@ export function PayoutManagement({
                   selectedBatchId
                     ? handleBatchAction(selectedBatchId, "mark_paid", {
                         txHash: txHashInput.trim(),
+                        partnerType:
+                          batches.find((batch) => batch.id === selectedBatchId)
+                            ?.partnerType || "affiliate",
                       })
                     : undefined
                 }
@@ -499,6 +625,154 @@ export function PayoutManagement({
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="max-w-5xl rounded-none">
+          <DialogHeader>
+            <DialogTitle>Payout earnings</DialogTitle>
+          </DialogHeader>
+          {detailLoading ? (
+            <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+              Loading payout earnings...
+            </div>
+          ) : detailError ? (
+            <p className="py-8 text-sm text-destructive">{detailError}</p>
+          ) : selectedBatchDetail ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-4">
+                <AdminStatCard
+                  label="Partner"
+                  value={
+                    selectedBatchDetail.partnerType === "promoter"
+                      ? selectedBatchDetail.batch.promoterName ||
+                        selectedBatchDetail.batch.partnerCode
+                      : selectedBatchDetail.batch.affiliateName ||
+                        selectedBatchDetail.batch.partnerCode
+                  }
+                  size="compact"
+                />
+                <AdminStatCard
+                  label="Payout amount"
+                  value={formatUsd(
+                    selectedBatchDetail.batch.totalNormalizedCommissionAmount,
+                  )}
+                  size="compact"
+                />
+                <AdminStatCard
+                  label="Earnings"
+                  value={selectedBatchDetail.batch.earnings.length}
+                  size="compact"
+                />
+                <AdminStatCard
+                  label="Status"
+                  value={selectedBatchDetail.batch.status}
+                  size="compact"
+                />
+              </div>
+
+              <div className="overflow-auto border border-border/70">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Sale</TableHead>
+                      <TableHead>Growth Partner</TableHead>
+                      <TableHead>Order total</TableHead>
+                      <TableHead>Commission</TableHead>
+                      <TableHead>Provider</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {selectedBatchDetail.batch.earnings.map((earning) => (
+                      <TableRow key={earning.id}>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <a
+                              href={`/order/${earning.orderId}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-mono text-xs font-semibold text-foreground underline underline-offset-4"
+                            >
+                              {earning.orderId}
+                            </a>
+                            <p className="text-[11px] text-muted-foreground">
+                              {formatDateTime(earning.earnedAt)}
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <p className="text-xs font-semibold text-foreground">
+                              {earning.growthPartnerName ||
+                                selectedBatchDetail.batch.affiliateName ||
+                                earning.affiliateCode}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {earning.growthPartnerEmail ||
+                                selectedBatchDetail.batch.affiliateEmail ||
+                                earning.affiliateCode}
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <p className="text-xs font-semibold text-foreground">
+                              {formatUsd(earning.normalizedOrderTotal || earning.orderTotal)}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              Paid order total
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <p className="text-xs font-semibold text-foreground">
+                              {formatUsd(
+                                earning.normalizedCommissionAmount ||
+                                  earning.commissionAmount,
+                              )}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              Rate {formatRate(earning.commissionRate)}
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <p className="text-xs font-semibold text-foreground">
+                              {earning.paymentProvider}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {earning.payoutCurrencyCode}
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={statusBadgeVariant(earning.status)}>
+                            {earning.status}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+
+                    {selectedBatchDetail.batch.earnings.length === 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={6}
+                          className="py-8 text-center text-sm text-muted-foreground"
+                        >
+                          No earnings are attached to this payout batch.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
 
@@ -535,6 +809,9 @@ export function PayoutManagement({
                   selectedBatchId
                     ? handleBatchAction(selectedBatchId, "reject", {
                         notes: notesInput.trim(),
+                        partnerType:
+                          batches.find((batch) => batch.id === selectedBatchId)
+                            ?.partnerType || "affiliate",
                       })
                     : undefined
                 }

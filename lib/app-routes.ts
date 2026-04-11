@@ -12,7 +12,7 @@ export const SITE_SECONDARY_ROUTES: NavItem[] = [
   { label: "FAQ", href: "/faq" },
   { label: "Shipping & Returns", href: "/shipping" },
   { label: "Contact", href: "/contact" },
-  { label: "Growth Partner", href: "/affiliate/signup" },
+  { label: "Grow", href: "/grow" },
 ];
 
 export const SITE_LEGAL_ROUTES: NavItem[] = [
@@ -32,6 +32,11 @@ export const ACCOUNT_AFFILIATE_ROUTE: NavItem = {
   label: "Growth Partner",
 };
 
+export const ACCOUNT_PROMOTER_ROUTE: NavItem = {
+  href: "/promoter/dashboard",
+  label: "Promoter",
+};
+
 export const ACCOUNT_ADMIN_ROUTE: NavItem = {
   href: "/admin",
   label: "Admin",
@@ -42,6 +47,7 @@ export const ADMIN_NAV_ROUTES: NavItem[] = [
   { href: "/admin/product-notifications", label: "Restock Alerts" },
   { href: "/admin/users", label: "Users" },
   { href: "/admin/affiliates", label: "Growth Partners" },
+  { href: "/admin/promoters", label: "Promoters" },
   { href: "/admin/payouts", label: "Payouts" },
 ];
 

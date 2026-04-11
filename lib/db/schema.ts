@@ -35,6 +35,21 @@ export const affiliateStatusEnum = pgEnum("affiliate_status", [
   "suspended",
 ]);
 
+export const promoterStatusEnum = pgEnum("promoter_status", [
+  "pending",
+  "approved",
+  "rejected",
+  "suspended",
+]);
+
+export const promoterInviteStatusEnum = pgEnum("promoter_invite_status", [
+  "invited",
+  "applied",
+  "successful",
+  "rejected",
+  "cancelled",
+]);
+
 export const payoutStatusEnum = pgEnum("payout_status", [
   "pending",
   "approved",
@@ -186,6 +201,7 @@ export const checkoutOrders = pgTable(
     swell: jsonb("swell").notNull(),
     shipengine: jsonb("shipengine"),
     affiliate: jsonb("affiliate"),
+    promoter: jsonb("promoter"),
     ipnEvents: jsonb("ipn_events"),
     latestError: text("latest_error"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -414,6 +430,218 @@ export const affiliatePayouts = pgTable(
     index("affiliate_payouts_month_key_idx").on(table.commissionMonthKey),
     index("affiliate_payouts_weekly_payout_id_idx").on(table.weeklyPayoutId),
     index("affiliate_payouts_period_start_idx").on(table.payoutPeriodStart),
+  ],
+);
+
+export const promoters = pgTable(
+  "promoters",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    code: varchar("code", { length: 64 }).notNull(),
+    name: varchar("name", { length: 256 }).notNull(),
+    email: varchar("email", { length: 256 }).notNull(),
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    encryptedWalletAddress: text("encrypted_wallet_address").notNull(),
+    walletIv: varchar("wallet_iv", { length: 64 }).notNull(),
+    walletTag: varchar("wallet_tag", { length: 64 }).notNull(),
+    defaultCommissionRate: varchar("default_commission_rate", { length: 16 })
+      .default("0.025")
+      .notNull(),
+    status: promoterStatusEnum("status").default("approved").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("promoters_code_idx").on(table.code),
+    uniqueIndex("promoters_email_idx").on(table.email),
+    index("promoters_user_id_idx").on(table.userId),
+    index("promoters_status_idx").on(table.status),
+  ],
+);
+
+export const promoterInvites = pgTable(
+  "promoter_invites",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    promoterId: uuid("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    invitedAffiliateId: uuid("invited_affiliate_id").references(
+      () => affiliates.id,
+      { onDelete: "set null" },
+    ),
+    invitedName: varchar("invited_name", { length: 256 }),
+    invitedEmail: varchar("invited_email", { length: 256 }).notNull(),
+    normalizedInvitedEmail: varchar("normalized_invited_email", {
+      length: 256,
+    }).notNull(),
+    socialProfiles: jsonb("social_profiles")
+      .$type<AffiliateSocialProfile[]>()
+      .default([])
+      .notNull(),
+    notes: text("notes"),
+    referralCode: varchar("referral_code", { length: 64 }),
+    commissionRate: varchar("commission_rate", { length: 16 }),
+    status: promoterInviteStatusEnum("status").default("invited").notNull(),
+    inviteEmailSentAt: timestamp("invite_email_sent_at", {
+      withTimezone: true,
+    }),
+    inviteEmailError: text("invite_email_error"),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+    successfulAt: timestamp("successful_at", { withTimezone: true }),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    successfulByUserId: text("successful_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("promoter_invites_promoter_id_idx").on(table.promoterId),
+    index("promoter_invites_status_idx").on(table.status),
+    index("promoter_invites_invited_email_idx").on(table.normalizedInvitedEmail),
+    index("promoter_invites_invited_affiliate_id_idx").on(
+      table.invitedAffiliateId,
+    ),
+    index("promoter_invites_referral_code_idx").on(table.referralCode),
+    uniqueIndex("promoter_invites_active_affiliate_idx")
+      .on(table.invitedAffiliateId)
+      .where(sql`${table.status} IN ('invited', 'applied', 'successful') AND ${table.invitedAffiliateId} IS NOT NULL`),
+    uniqueIndex("promoter_invites_successful_affiliate_idx")
+      .on(table.invitedAffiliateId)
+      .where(sql`${table.status} = 'successful' AND ${table.invitedAffiliateId} IS NOT NULL`),
+  ],
+);
+
+export const promoterWeeklyPayouts = pgTable(
+  "promoter_weekly_payouts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    promoterId: uuid("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    commissionMonthKey: varchar("commission_month_key", { length: 7 }).notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    periodTimezone: varchar("period_timezone", { length: 64 })
+      .default("America/Toronto")
+      .notNull(),
+    earningCount: integer("earning_count").default(0).notNull(),
+    totalNormalizedCommissionAmount: varchar(
+      "total_normalized_commission_amount",
+      { length: 32 },
+    )
+      .default("0.00")
+      .notNull(),
+    payoutCurrencyCode: varchar("payout_currency_code", { length: 8 })
+      .default("USD")
+      .notNull(),
+    encryptedWalletAddress: text("encrypted_wallet_address"),
+    walletIv: varchar("wallet_iv", { length: 64 }),
+    walletTag: varchar("wallet_tag", { length: 64 }),
+    txHash: varchar("tx_hash", { length: 128 }),
+    adminNotes: text("admin_notes"),
+    status: payoutStatusEnum("status").default("pending").notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("promoter_weekly_payouts_period_idx").on(
+      table.promoterId,
+      table.commissionMonthKey,
+      table.periodStart,
+      table.periodEnd,
+    ),
+    index("promoter_weekly_payouts_promoter_id_idx").on(table.promoterId),
+    index("promoter_weekly_payouts_status_idx").on(table.status),
+    index("promoter_weekly_payouts_period_start_idx").on(table.periodStart),
+  ],
+);
+
+export const promoterPayouts = pgTable(
+  "promoter_payouts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orderId: varchar("order_id", { length: 64 })
+      .notNull()
+      .references(() => checkoutOrders.orderId),
+    promoterId: uuid("promoter_id")
+      .notNull()
+      .references(() => promoters.id),
+    promoterInviteId: uuid("promoter_invite_id")
+      .notNull()
+      .references(() => promoterInvites.id),
+    affiliateId: uuid("affiliate_id")
+      .notNull()
+      .references(() => affiliates.id),
+    affiliateCode: varchar("affiliate_code", { length: 64 }).notNull(),
+    orderTotal: varchar("order_total", { length: 32 }).notNull(),
+    commissionMonthKey: varchar("commission_month_key", { length: 7 }),
+    commissionRate: varchar("commission_rate", { length: 16 }).notNull(),
+    commissionAmount: varchar("commission_amount", { length: 32 }).notNull(),
+    normalizedOrderTotal: varchar("normalized_order_total", { length: 32 }),
+    normalizedCommissionAmount: varchar("normalized_commission_amount", {
+      length: 32,
+    }),
+    payoutCurrencyCode: varchar("payout_currency_code", { length: 8 })
+      .default("USD")
+      .notNull(),
+    currencyCode: varchar("currency_code", { length: 8 }).notNull(),
+    paymentProvider: varchar("payment_provider", { length: 32 }).notNull(),
+    earnedAt: timestamp("earned_at", { withTimezone: true }),
+    payoutPeriodStart: timestamp("payout_period_start", { withTimezone: true }),
+    payoutPeriodEnd: timestamp("payout_period_end", { withTimezone: true }),
+    payoutPeriodTimezone: varchar("payout_period_timezone", { length: 64 })
+      .default("America/Toronto")
+      .notNull(),
+    weeklyPayoutId: uuid("weekly_payout_id").references(
+      () => promoterWeeklyPayouts.id,
+      { onDelete: "set null" },
+    ),
+    earnedEmailSentAt: timestamp("earned_email_sent_at", {
+      withTimezone: true,
+    }),
+    status: payoutStatusEnum("status").default("pending").notNull(),
+    txHash: varchar("tx_hash", { length: 128 }),
+    adminNotes: text("admin_notes"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("promoter_payouts_order_id_unique_idx").on(table.orderId),
+    index("promoter_payouts_promoter_id_idx").on(table.promoterId),
+    index("promoter_payouts_invite_id_idx").on(table.promoterInviteId),
+    index("promoter_payouts_affiliate_id_idx").on(table.affiliateId),
+    index("promoter_payouts_status_idx").on(table.status),
+    index("promoter_payouts_month_key_idx").on(table.commissionMonthKey),
+    index("promoter_payouts_weekly_payout_id_idx").on(table.weeklyPayoutId),
+    index("promoter_payouts_period_start_idx").on(table.payoutPeriodStart),
   ],
 );
 

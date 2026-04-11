@@ -237,6 +237,66 @@ test("applyVerifiedPaymentStatus runs the verified-success lifecycle once and re
   ]);
 });
 
+test("applyVerifiedPaymentStatus keeps promoter payouts on the affiliate payout processing step", async () => {
+  const harness = createLifecycleHarness(
+    buildNowPaymentsOrder({
+      affiliate: {
+        id: "affiliate_123",
+        code: "growth",
+        commissionRate: "0.1",
+        source: "url",
+      },
+      promoter: {
+        id: "promoter_123",
+        inviteId: "invite_123",
+        affiliateId: "affiliate_123",
+        affiliateCode: "growth",
+        commissionRate: "0.025",
+        source: "promoter_invite",
+      },
+    }),
+  );
+
+  await harness.lifecycle.applyVerifiedPaymentStatus({
+    orderId: "RVL-LIFECYCLE",
+    provider: "nowpayments",
+    targetStatus: "finished",
+    source: "nowpayments_ipn",
+    paymentUpdater: current => ({
+      ...current.payment,
+      status: "finished",
+    }),
+  });
+
+  assert.deepEqual(harness.calls, [
+    "swellPayment",
+    "paymentCompletedEvent",
+    "purchaseTelemetry",
+    "affiliatePayout",
+    "confirmationEmail",
+    "labelPurchase",
+    "shippingLabelEmail",
+    "shippedEmail",
+  ]);
+  assert.equal(harness.getOrder().processing?.affiliatePayout.status, "completed");
+
+  await harness.lifecycle.applyVerifiedPaymentStatus({
+    orderId: "RVL-LIFECYCLE",
+    provider: "nowpayments",
+    targetStatus: "finished",
+    source: "nowpayments_poll",
+    paymentUpdater: current => ({
+      ...current.payment,
+      status: "finished",
+    }),
+  });
+
+  assert.equal(
+    harness.calls.filter((call) => call === "affiliatePayout").length,
+    1,
+  );
+});
+
 test("applyVerifiedPaymentStatus does not revive immutable terminal orders or emit success telemetry", async () => {
   const harness = createLifecycleHarness(
     buildNowPaymentsOrder({

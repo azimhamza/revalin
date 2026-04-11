@@ -27,6 +27,16 @@ test('getAuthenticatedAppDestination prevents approved affiliates from bouncing 
   assert.equal(destination, '/affiliate/dashboard');
 });
 
+test('getAuthenticatedAppDestination preserves promoter dashboard callbacks', () => {
+  const destination = getAuthenticatedAppDestination({
+    path: '/promoter/dashboard',
+    fallback: '/account',
+    role: 'customer',
+  });
+
+  assert.equal(destination, '/promoter/dashboard');
+});
+
 test('getSafeAppDestination rejects non-app redirects', () => {
   assert.equal(getSafeAppDestination('https://example.com', '/account'), '/account');
 });

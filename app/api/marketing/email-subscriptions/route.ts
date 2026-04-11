@@ -109,6 +109,7 @@ export const POST = createApiRoute({
     return {
       data: {
         subscribed: true,
+        alreadySubscribed: false,
       },
       status: 201,
     };

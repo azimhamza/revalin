@@ -45,9 +45,14 @@ type UserRow = {
     status: "pending" | "approved" | "rejected" | "suspended";
     userId: string | null;
   } | null;
+  promoter: {
+    id: string;
+    status: "pending" | "approved" | "rejected" | "suspended";
+    userId: string | null;
+  } | null;
 };
 
-type UserFilter = "all" | "customer" | "affiliate" | "admin" | "banned";
+type UserFilter = "all" | "customer" | "affiliate" | "promoter" | "admin" | "banned";
 
 const ROLES = ["customer", "admin"] as const;
 
@@ -79,6 +84,10 @@ function hasGrowthPartnerRecord(entry: UserRow) {
   return entry.role === "affiliate" || Boolean(entry.affiliate);
 }
 
+function hasPromoterRecord(entry: UserRow) {
+  return Boolean(entry.promoter);
+}
+
 export function UserManagement({
   users,
   canDeleteUsers = false,
@@ -98,6 +107,15 @@ export function UserManagement({
     }
 
     router.push(`/admin/affiliates?openUser=${entry.id}`);
+  }
+
+  async function handleOpenPromoterSetup(entry: UserRow) {
+    if (entry.promoter) {
+      router.push(`/admin/promoters?openPromoter=${entry.promoter.id}`);
+      return;
+    }
+
+    router.push(`/admin/promoters?openUser=${entry.id}`);
   }
 
   async function handleSetRole(userId: string, role: string) {
@@ -196,6 +214,7 @@ export function UserManagement({
     customer: users.filter((entry) => (entry.role ?? "customer") === "customer")
       .length,
     affiliate: users.filter((entry) => hasGrowthPartnerRecord(entry)).length,
+    promoter: users.filter((entry) => hasPromoterRecord(entry)).length,
     admin: users.filter((entry) => entry.role === "admin").length,
     banned: users.filter((entry) => Boolean(entry.banned)).length,
   };
@@ -206,8 +225,10 @@ export function UserManagement({
         ? true
         : filter === "banned"
           ? Boolean(entry.banned)
-          : filter === "affiliate"
+        : filter === "affiliate"
             ? hasGrowthPartnerRecord(entry)
+          : filter === "promoter"
+            ? hasPromoterRecord(entry)
             : (entry.role ?? "customer") === filter;
 
     if (!matchesFilter) return false;
@@ -226,6 +247,7 @@ export function UserManagement({
     { key: "all", label: "All", count: counts.all },
     { key: "customer", label: "Customers", count: counts.customer },
     { key: "affiliate", label: "Growth Partners", count: counts.affiliate },
+    { key: "promoter", label: "Promoters", count: counts.promoter },
     { key: "admin", label: "Admins", count: counts.admin },
     { key: "banned", label: "Banned", count: counts.banned },
   ];
@@ -335,6 +357,11 @@ export function UserManagement({
                         Growth Partner
                       </Badge>
                     ) : null}
+                    {entry.promoter ? (
+                      <Badge variant="secondary">
+                        Promoter
+                      </Badge>
+                    ) : null}
                   </div>
                 </TableCell>
                 <TableCell className="px-3 py-2.5 align-top">
@@ -372,6 +399,12 @@ export function UserManagement({
                         className="rounded-none px-2.5 py-1.5 text-xs focus:bg-accent"
                       >
                         {getAffiliateActionLabel(entry)}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => handleOpenPromoterSetup(entry)}
+                        className="rounded-none px-2.5 py-1.5 text-xs focus:bg-accent"
+                      >
+                        {entry.promoter ? "Manage Promoter" : "Enable Promoter access"}
                       </DropdownMenuItem>
                       {entry.role !== "affiliate"
                         ? ROLES.filter((role) => role !== entry.role).map(

@@ -12,6 +12,10 @@ import { Footer } from "@/components/layout/footer";
 import { getServerSession } from "@/lib/auth-server";
 import { isTemporarilyHiddenAppRoute } from "@/lib/account-destination";
 import { getAffiliateByUserIdentity } from "@/lib/checkout/affiliate-service";
+import {
+  recordPromoterApplicationFromReferralCode,
+  resolveApprovedPromoterReferralCode,
+} from "@/lib/checkout/promoter-service";
 
 import { AffiliateSignupForm } from "./affiliate-signup-form";
 
@@ -37,14 +41,37 @@ function getStatusCopy(status: string) {
   return "Your application is already in the admin approval queue. We’ll email you once the code and dashboard access are ready.";
 }
 
-export default async function AffiliateSignupPage() {
+function getFirstName(name?: string | null) {
+  const normalized = name?.trim();
+  if (!normalized) return null;
+  return normalized.split(/\s+/)[0] || normalized;
+}
+
+export default async function AffiliateSignupPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{
+    promoter?: string | string[] | undefined;
+  }>;
+}) {
   if (isTemporarilyHiddenAppRoute("/affiliate/signup")) {
     notFound();
   }
 
+  const params = (await searchParams) || {};
+  const promoterReferralCode = Array.isArray(params.promoter)
+    ? params.promoter[0]
+    : params.promoter;
+  const promoterResolution = promoterReferralCode
+    ? await resolveApprovedPromoterReferralCode(promoterReferralCode)
+    : null;
+  const promoterFirstName = getFirstName(promoterResolution?.promoter.name);
+  const callbackPath = promoterReferralCode
+    ? `/affiliate/signup?promoter=${encodeURIComponent(promoterReferralCode)}`
+    : "/affiliate/signup";
   const session = await getServerSession();
   if (!session?.user) {
-    redirect("/login?callbackUrl=/affiliate/signup");
+    redirect(`/login?callbackUrl=${encodeURIComponent(callbackPath)}`);
   }
 
   const affiliateRecord = session?.user
@@ -54,6 +81,25 @@ export default async function AffiliateSignupPage() {
       })
     : null;
   const hasConfiguredWallet = Boolean(affiliateRecord?.walletAddress?.trim());
+
+  if (
+    affiliateRecord &&
+    promoterReferralCode &&
+    affiliateRecord.status !== "approved" &&
+    affiliateRecord.status !== "rejected"
+  ) {
+    try {
+      await recordPromoterApplicationFromReferralCode({
+        referralCode: promoterReferralCode,
+        affiliateId: affiliateRecord.id,
+        applicantName: session.user.name,
+        applicantEmail: session.user.email.toLowerCase(),
+        socialProfiles: affiliateRecord.socialProfiles,
+      });
+    } catch (error) {
+      console.error("[PROMOTER-AFFILIATE-SIGNUP-ATTRIBUTION]", error);
+    }
+  }
 
   if (affiliateRecord?.status === "approved") {
     redirect(
@@ -107,6 +153,11 @@ export default async function AffiliateSignupPage() {
                   </div>
 
                   <div className="rounded-xl border border-border bg-background/70 p-4 text-sm leading-6 text-foreground/70">
+                    {promoterFirstName ? (
+                      <p className="mb-2 border-b border-border pb-2 text-xs text-foreground/60">
+                        {promoterFirstName} invited you to join the Growth Partner Program.
+                      </p>
+                    ) : null}
                     <p>
                       Status:{" "}
                       <span className="font-semibold capitalize text-foreground">
@@ -146,6 +197,7 @@ export default async function AffiliateSignupPage() {
                 <AffiliateSignupForm
                   initialName={session?.user?.name}
                   initialEmail={session?.user?.email}
+                  promoterFirstName={promoterFirstName}
                 />
               )}
             </div>

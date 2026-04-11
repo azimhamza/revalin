@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { apiError } from '@/lib/api/errors';
 import { optionalSession } from '@/lib/api/auth';
 import { getApprovedAffiliateByCode, getApprovedAffiliateByDiscountCode } from '@/lib/checkout/affiliate-service';
+import { getSuccessfulPromoterForAffiliate } from '@/lib/checkout/promoter-service';
 import {
   FREE_SHIPPING_THRESHOLD,
   isTerminalPaymentStatus,
@@ -50,6 +51,7 @@ import {
 import type {
   CheckoutOrderAffiliate,
   CheckoutOrderLine,
+  CheckoutOrderPromoter,
   CheckoutOrderPublic,
   CheckoutOrderRecord,
   CheckoutShippingAddress,
@@ -225,6 +227,24 @@ function buildAffiliateData(args: {
     discountPercentAtPurchase: args.resolvedAffiliate.discountPercent,
     source: args.affiliateSource,
   } satisfies CheckoutOrderAffiliate;
+}
+
+function buildPromoterData(args: {
+  promoterAttribution: Awaited<ReturnType<typeof getSuccessfulPromoterForAffiliate>>;
+  affiliateData: CheckoutOrderAffiliate | null;
+}) {
+  if (!args.promoterAttribution || !args.affiliateData) {
+    return null;
+  }
+
+  return {
+    id: args.promoterAttribution.id,
+    inviteId: args.promoterAttribution.inviteId,
+    affiliateId: args.promoterAttribution.affiliateId,
+    affiliateCode: args.affiliateData.code,
+    commissionRate: args.promoterAttribution.commissionRate,
+    source: 'promoter_invite',
+  } satisfies CheckoutOrderPromoter;
 }
 
 function buildNowPaymentsOrderRecord(args: {
@@ -485,6 +505,13 @@ export async function finalizeCheckoutSession(
       affiliateSource,
       commissionSnapshot,
     });
+    const promoterAttribution = affiliateData
+      ? await getSuccessfulPromoterForAffiliate(affiliateData.id)
+      : null;
+    const promoterData = buildPromoterData({
+      promoterAttribution,
+      affiliateData,
+    });
 
     const existingOrder = await findCheckoutOrderByCartId(fallbackCartId);
     if (existingOrder) {
@@ -701,6 +728,7 @@ export async function finalizeCheckoutSession(
           paymentStatus: 'initializing',
         }),
         affiliate: affiliateData,
+        promoter: promoterData,
       });
       checkoutOrderId = initializingOrder.orderId;
 
@@ -765,6 +793,13 @@ export async function finalizeCheckoutSession(
                 status: 'pending',
               }
             : null,
+          promoter: promoterData
+            ? {
+                ...promoterData,
+                paymentProvider: 'shieldclimb',
+                status: 'pending',
+              }
+            : null,
         },
       });
 
@@ -801,6 +836,7 @@ export async function finalizeCheckoutSession(
           paymentStatus: 'unpaid',
         }),
         affiliate: affiliateData,
+        promoter: promoterData,
       });
       checkoutOrderId = checkoutOrder.orderId;
 
@@ -906,6 +942,17 @@ export async function finalizeCheckoutSession(
               status: 'pending',
             }
           : null,
+        promoter: promoterData
+          ? {
+              ...promoterData,
+              commissionOwed: (
+                orderTotal * Number(promoterData.commissionRate)
+              ).toFixed(2),
+              currencyCode: fiatCurrency.toUpperCase(),
+              paymentProvider: 'nowpayments',
+              status: 'pending',
+            }
+          : null,
       },
     });
 
@@ -939,6 +986,7 @@ export async function finalizeCheckoutSession(
         ipnCallbackEnabled,
       }),
       affiliate: affiliateData,
+      promoter: promoterData,
     });
     checkoutOrderId = checkoutOrder.orderId;
 

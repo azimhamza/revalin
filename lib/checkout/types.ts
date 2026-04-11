@@ -190,6 +190,15 @@ export type CheckoutOrderAffiliate = {
   source: 'url' | 'discount_code' | null;
 };
 
+export type CheckoutOrderPromoter = {
+  id: string;
+  inviteId: string;
+  affiliateId: string;
+  affiliateCode: string;
+  commissionRate: string;
+  source: 'promoter_invite';
+};
+
 export type CheckoutOrderRecord = {
   orderId: string;
   accessKey: string;
@@ -206,6 +215,7 @@ export type CheckoutOrderRecord = {
   swell: CheckoutOrderSwell;
   shipengine?: CheckoutOrderShipEngine;
   affiliate?: CheckoutOrderAffiliate | null;
+  promoter?: CheckoutOrderPromoter | null;
   processing?: CheckoutOrderProcessing;
   latestError?: string | null;
   ipnEvents?: CheckoutIpnEvent[];

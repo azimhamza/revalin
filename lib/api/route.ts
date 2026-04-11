@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { requireAdmin, requireAffiliateOrAdmin, requireSession, optionalSession } from '@/lib/api/auth';
+import { requireAdmin, requireAffiliateOrAdmin, requirePromoterOrAdmin, requireSession, optionalSession } from '@/lib/api/auth';
 import type { AuthenticatedSession } from '@/lib/api/auth';
 import { apiError, normalizeApiError } from '@/lib/api/errors';
 import { assertRateLimit, type RateLimitProfile } from '@/lib/api/rate-limit';
@@ -12,7 +12,8 @@ type AccessPolicy =
   | 'session'
   | 'fresh-session'
   | 'admin'
-  | 'affiliate-or-admin';
+  | 'affiliate-or-admin'
+  | 'promoter-or-admin';
 
 type HandlerResult<T> =
   | Response
@@ -94,6 +95,9 @@ async function resolveSession(access: AccessPolicy) {
   }
   if (access === 'admin') {
     return requireAdmin();
+  }
+  if (access === 'promoter-or-admin') {
+    return requirePromoterOrAdmin();
   }
   return requireAffiliateOrAdmin();
 }

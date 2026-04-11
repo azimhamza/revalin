@@ -4,6 +4,7 @@ import {
   type ServerSession,
 } from '@/lib/auth-server';
 import { apiError } from '@/lib/api/errors';
+import { getPromoterByUserIdentity } from '@/lib/checkout/promoter-service';
 
 type AuthenticatedSession = NonNullable<ServerSession>;
 
@@ -39,6 +40,24 @@ export async function requireAffiliateOrAdmin(args?: { fresh?: boolean }) {
   if (role !== 'affiliate' && role !== 'admin') {
     throw apiError.forbidden();
   }
+  return session;
+}
+
+export async function requirePromoterOrAdmin(args?: { fresh?: boolean }) {
+  const session = await requireSession(args);
+  const role = getRole(session);
+  if (role === 'admin') {
+    return session;
+  }
+
+  const promoter = await getPromoterByUserIdentity({
+    userId: session.user.id,
+    email: session.user.email,
+  });
+  if (promoter?.status !== 'approved') {
+    throw apiError.forbidden();
+  }
+
   return session;
 }
 

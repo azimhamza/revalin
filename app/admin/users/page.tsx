@@ -2,7 +2,7 @@ import { desc, inArray, or } from "drizzle-orm";
 
 import { UserManagement } from "./user-management";
 import { db } from "@/lib/db";
-import { affiliates, user } from "@/lib/db/schema";
+import { affiliates, promoters, user } from "@/lib/db/schema";
 
 export const metadata = {
   title: "User Management | Revalin Admin",
@@ -25,24 +25,40 @@ export default async function UsersPage() {
   const normalizedEmails = users.map((entry) => entry.email.toLowerCase());
   const userIds = users.map((entry) => entry.id);
 
-  const affiliateRows =
+  const [affiliateRows, promoterRows] =
     users.length > 0
-      ? await db
-          .select({
-            id: affiliates.id,
-            code: affiliates.code,
-            email: affiliates.email,
-            userId: affiliates.userId,
-            status: affiliates.status,
-          })
-          .from(affiliates)
-          .where(
-            or(
-              inArray(affiliates.userId, userIds),
-              inArray(affiliates.email, normalizedEmails),
+      ? await Promise.all([
+          db
+            .select({
+              id: affiliates.id,
+              code: affiliates.code,
+              email: affiliates.email,
+              userId: affiliates.userId,
+              status: affiliates.status,
+            })
+            .from(affiliates)
+            .where(
+              or(
+                inArray(affiliates.userId, userIds),
+                inArray(affiliates.email, normalizedEmails),
+              ),
             ),
-          )
-      : [];
+          db
+            .select({
+              id: promoters.id,
+              email: promoters.email,
+              userId: promoters.userId,
+              status: promoters.status,
+            })
+            .from(promoters)
+            .where(
+              or(
+                inArray(promoters.userId, userIds),
+                inArray(promoters.email, normalizedEmails),
+              ),
+            ),
+        ])
+      : [[], []];
 
   const affiliatesByUserId = new Map(
     affiliateRows
@@ -55,11 +71,25 @@ export default async function UsersPage() {
       .filter((entry) => !entry.userId)
       .map((entry) => [entry.email.toLowerCase(), entry]),
   );
+  const promotersByUserId = new Map(
+    promoterRows
+      .filter((entry) => Boolean(entry.userId))
+      .map((entry) => [entry.userId!, entry]),
+  );
+  const promotersByEmail = new Map(
+    promoterRows
+      .filter((entry) => !entry.userId)
+      .map((entry) => [entry.email.toLowerCase(), entry]),
+  );
 
   const usersWithAffiliates = users.map((entry) => {
     const affiliateMatch =
       affiliatesByUserId.get(entry.id) ||
       affiliatesByEmail.get(entry.email.toLowerCase()) ||
+      null;
+    const promoterMatch =
+      promotersByUserId.get(entry.id) ||
+      promotersByEmail.get(entry.email.toLowerCase()) ||
       null;
 
     return {
@@ -70,6 +100,13 @@ export default async function UsersPage() {
             code: affiliateMatch.code,
             status: affiliateMatch.status,
             userId: affiliateMatch.userId,
+          }
+        : null,
+      promoter: promoterMatch
+        ? {
+            id: promoterMatch.id,
+            status: promoterMatch.status,
+            userId: promoterMatch.userId,
           }
         : null,
     };

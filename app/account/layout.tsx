@@ -6,6 +6,7 @@ import { Shield, ShoppingBag, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AccountNav } from "./account-nav";
 import { getAffiliateByUserIdentity } from "@/lib/checkout/affiliate-service";
+import { getPromoterByUserIdentity } from "@/lib/checkout/promoter-service";
 import {
   accountPrimaryButtonClass,
   accountSecondaryButtonClass,
@@ -32,16 +33,23 @@ export default async function AccountLayout({
   }
 
   const role = (session.user as any).role;
-  const affiliateRecord = await getAffiliateByUserIdentity({
-    userId: session.user.id,
-    email: session.user.email,
-  });
+  const [affiliateRecord, promoterRecord] = await Promise.all([
+    getAffiliateByUserIdentity({
+      userId: session.user.id,
+      email: session.user.email,
+    }),
+    getPromoterByUserIdentity({
+      userId: session.user.id,
+      email: session.user.email,
+    }),
+  ]);
   const showAffiliate =
     role === "affiliate" ||
     role === "admin" ||
     affiliateRecord?.status === "approved";
   const showAffiliateShortcut =
     role === "affiliate" || affiliateRecord?.status === "approved";
+  const showPromoter = promoterRecord?.status === "approved" || role === "admin";
   const showAdmin = role === "admin";
 
   return (
@@ -113,12 +121,28 @@ export default async function AccountLayout({
                       </Link>
                     </Button>
                   ) : null}
+                  {showPromoter && role !== "admin" ? (
+                    <Button
+                      asChild
+                      variant="outline"
+                      className={`h-11 px-5 text-sm font-semibold ${accountSecondaryButtonClass}`}
+                    >
+                      <Link href="/promoter/dashboard">
+                        Promoter dashboard
+                        <Users className="size-4" />
+                      </Link>
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             </div>
           </section>
 
-          <AccountNav showAffiliate={showAffiliate} showAdmin={showAdmin} />
+          <AccountNav
+            showAffiliate={showAffiliate}
+            showPromoter={showPromoter}
+            showAdmin={showAdmin}
+          />
 
           {children}
         </div>

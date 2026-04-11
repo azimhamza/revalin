@@ -67,6 +67,13 @@ function canAccessDestination(args: {
     );
   }
 
+  if (
+    pathname === '/promoter/dashboard' ||
+    pathname.startsWith('/promoter/dashboard/')
+  ) {
+    return true;
+  }
+
   if (pathname === '/affiliate/signup' && args.canAccessAffiliateDashboard) {
     return false;
   }

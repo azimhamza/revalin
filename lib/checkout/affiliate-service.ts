@@ -1,6 +1,6 @@
 import { and, desc, eq, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { affiliates, user } from "@/lib/db/schema";
+import { affiliates, promoters, user } from "@/lib/db/schema";
 import { encrypt, decrypt } from "@/lib/db/encryption";
 import { RESERVED_SLUGS } from "@/lib/checkout/affiliate-constants";
 import { shouldPromoteToAffiliateRole } from "@/lib/checkout/affiliate-role";
@@ -126,6 +126,18 @@ export async function assertAffiliateCodeAvailable(args: {
   if (rows[0]) {
     throw new Error(
       "That partner code is already assigned to another affiliate.",
+    );
+  }
+
+  const promoterRows = await db
+    .select({ id: promoters.id })
+    .from(promoters)
+    .where(eq(promoters.code, normalizedCode))
+    .limit(1);
+
+  if (promoterRows[0]) {
+    throw new Error(
+      "That partner code is already assigned to another promoter.",
     );
   }
 

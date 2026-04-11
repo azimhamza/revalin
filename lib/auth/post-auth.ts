@@ -8,6 +8,7 @@ import {
 } from '@/lib/checkout/affiliate-service';
 import { stampUserReferralFromCookie } from '@/lib/checkout/affiliate-user-referral';
 import { linkOrdersToUser } from '@/lib/checkout/link-orders-to-user';
+import { syncPromoterForUser } from '@/lib/checkout/promoter-service';
 
 type PostAuthUser = {
   email: string;
@@ -17,7 +18,7 @@ type PostAuthUser = {
 };
 
 export async function reconcilePostAuthUser(user: PostAuthUser) {
-  const [linkedOrders, affiliateSync, referralStamp] = await Promise.allSettled([
+  const [linkedOrders, affiliateSync, referralStamp, promoterSync] = await Promise.allSettled([
     linkOrdersToUser(user.id, user.email),
     syncApprovedAffiliateForUser({
       userId: user.id,
@@ -27,6 +28,10 @@ export async function reconcilePostAuthUser(user: PostAuthUser) {
     stampUserReferralFromCookie({
       userId: user.id,
       userEmail: user.email,
+    }),
+    syncPromoterForUser({
+      userId: user.id,
+      email: user.email,
     }),
   ]);
 
@@ -48,6 +53,10 @@ export async function reconcilePostAuthUser(user: PostAuthUser) {
           ? getLinkedOrdersCount(linkedOrders.value)
           : 0,
       affiliateCode: affiliateSync.value.affiliateCode ?? null,
+      canAccessPromoterDashboard:
+        promoterSync.status === 'fulfilled'
+          ? promoterSync.value.hasApprovedPromoter
+          : false,
       roleUpdated: affiliateSync.value.roleUpdated,
       role: affiliateSync.value.role,
     };
@@ -58,6 +67,10 @@ export async function reconcilePostAuthUser(user: PostAuthUser) {
       user.role === 'affiliate' || user.role === 'admin',
     linkedOrdersCount: 0,
     affiliateCode: null,
+    canAccessPromoterDashboard:
+      promoterSync.status === 'fulfilled'
+        ? promoterSync.value.hasApprovedPromoter
+        : false,
     roleUpdated: false,
     role: user.role ?? null,
   };

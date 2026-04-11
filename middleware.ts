@@ -12,6 +12,8 @@ const PROTECTED_PREFIXES = [
   '/admin',
   '/affiliate/dashboard',
   '/affiliate/signup',
+  '/promoter/dashboard',
+  '/promoter/signup',
 ];
 const VERIFY_PAGE = '/verify-email';
 
@@ -56,6 +58,8 @@ export const config = {
     '/admin/:path*',
     '/affiliate/dashboard/:path*',
     '/affiliate/signup',
+    '/promoter/dashboard/:path*',
+    '/promoter/signup',
     '/verify-email',
   ],
 };

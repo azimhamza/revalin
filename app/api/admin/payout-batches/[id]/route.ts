@@ -3,12 +3,18 @@ import { z } from "zod";
 import { createApiRoute } from "@/lib/api/route";
 import { apiError } from "@/lib/api/errors";
 import { getWeeklyPayoutBatchById, markWeeklyPayoutBatchPaid, rejectWeeklyPayoutBatch } from "@/lib/checkout/weekly-payout-service";
+import {
+  getPromoterWeeklyPayoutBatchById,
+  markPromoterWeeklyPayoutBatchPaid,
+  rejectPromoterWeeklyPayoutBatch,
+} from "@/lib/checkout/promoter-weekly-payout-service";
 
 const paramsSchema = z.object({
   id: z.string().trim().min(1),
 });
 
 const patchSchema = z.object({
+  partnerType: z.enum(["affiliate", "promoter"]).default("affiliate"),
   action: z.enum(["mark_paid", "reject"]),
   txHash: z.string().trim().min(1).optional(),
   notes: z.string().trim().optional(),
@@ -27,7 +33,7 @@ function normalizeBatchError(error: unknown) {
     return apiError.notFound(error.message);
   }
 
-  if (/already been marked paid|cannot be marked paid|cannot be rejected/i.test(error.message)) {
+  if (/already been marked paid|cannot be marked paid|cannot be rejected|wallet is missing/i.test(error.message)) {
     return apiError.conflict(error.message);
   }
 
@@ -42,7 +48,9 @@ export const GET = createApiRoute({
   paramsSchema,
   cacheControl: "no-store",
   handler: async ({ params }) => {
-    const batch = await getWeeklyPayoutBatchById(params.id);
+    const batch =
+      (await getWeeklyPayoutBatchById(params.id)) ||
+      (await getPromoterWeeklyPayoutBatchById(params.id));
 
     if (!batch) {
       throw apiError.notFound("Weekly payout batch not found.");
@@ -69,9 +77,17 @@ export const PATCH = createApiRoute({
           throw apiError.badRequest("txHash is required for mark_paid.");
         }
 
-        await markWeeklyPayoutBatchPaid(params.id, body.txHash);
+        if (body.partnerType === "promoter") {
+          await markPromoterWeeklyPayoutBatchPaid(params.id, body.txHash);
+        } else {
+          await markWeeklyPayoutBatchPaid(params.id, body.txHash);
+        }
       } else {
-        await rejectWeeklyPayoutBatch(params.id, body.notes);
+        if (body.partnerType === "promoter") {
+          await rejectPromoterWeeklyPayoutBatch(params.id, body.notes);
+        } else {
+          await rejectWeeklyPayoutBatch(params.id, body.notes);
+        }
       }
 
       return {
