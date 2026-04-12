@@ -19,11 +19,20 @@ export const dynamic = 'force-dynamic';
 
 export const POST = createApiRoute({
   route: '/api/auth/email-verification/confirm',
-  access: 'session',
+  access: 'fresh-session',
   rateLimit: 'auth',
   bodySchema: confirmSchema,
   cacheControl: 'no-store',
   handler: async ({ session, body }) => {
+    if (session.user.emailVerified) {
+      return {
+        data: {
+          verified: true,
+          alreadyVerified: true,
+        },
+      };
+    }
+
     const identifier = buildAuthCodeIdentifier(
       EMAIL_VERIFICATION_CODE_PURPOSE,
       session.user.email,
@@ -44,6 +53,7 @@ export const POST = createApiRoute({
     return {
       data: {
         verified: true,
+        alreadyVerified: false,
       },
     };
   },

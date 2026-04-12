@@ -1,17 +1,15 @@
 import { hasLoopsConfig, sendTransactionalEmail } from '@/lib/email/loops';
 
-// Sends the 10% welcome discount code directly to the shopper who just
-// subscribed. Using a transactional template (rather than relying on a Loops
-// dashboard event-triggered automation) guarantees the email actually fires
-// for every successful subscription.
-export async function sendWelcomeDiscountSubscriberEmail(args: {
+// Sends the 10% welcome discount code directly through a Loops transactional
+// template. This is used for both newsletter captures and account signups.
+export async function sendWelcomeDiscountEmail(args: {
   email: string;
   discountCode: string;
   discountPercent: number;
   discountExpiresAt: string;
 }) {
   if (!hasLoopsConfig()) {
-    console.warn('Skipping subscriber welcome discount email: Loops not configured.');
+    console.warn('Skipping welcome discount email: Loops not configured.');
     return null;
   }
 
@@ -36,4 +34,13 @@ export async function sendWelcomeDiscountSubscriberEmail(args: {
       discount_expires_at: args.discountExpiresAt,
     },
   });
+}
+
+export async function sendWelcomeDiscountSubscriberEmail(args: {
+  email: string;
+  discountCode: string;
+  discountPercent: number;
+  discountExpiresAt: string;
+}) {
+  return sendWelcomeDiscountEmail(args);
 }

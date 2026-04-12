@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 
 export const POST = createApiRoute({
   route: '/api/auth/reconcile',
-  access: 'session',
+  access: 'fresh-session',
   cacheControl: 'no-store',
   handler: async ({ session }) => {
     const reconciliation = await reconcilePostAuthUser({

@@ -4,6 +4,7 @@ import {
   BookOpen,
   Handshake,
   LayoutDashboard,
+  Megaphone,
   Users,
   Wallet,
 } from "lucide-react";
@@ -45,6 +46,12 @@ export const ADMIN_NAVIGATION_ITEMS: AdminNavigationItem[] = [
     href: "/admin/affiliates",
     description: "Approve partners, sync codes, and repair affiliate records.",
     icon: Handshake,
+  },
+  {
+    title: "Promoters",
+    href: "/admin/promoters",
+    description: "Approve promoters, manage invites, and activate partner mappings.",
+    icon: Megaphone,
   },
   {
     title: "Payouts",

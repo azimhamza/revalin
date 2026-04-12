@@ -45,7 +45,7 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `LOOPS_TRANSACTIONAL_SHIPPING_LABEL` (optional Loops template ID for the internal shipping-label email with a label URL)
 - `LOOPS_TRANSACTIONAL_EMAIL_VERIFICATION` (optional Loops template ID for 6-digit email verification codes)
 - `LOOPS_TRANSACTIONAL_PASSWORD_RESET` (optional Loops template ID for 6-digit password reset codes; falls back to `LOOPS_TRANSACTIONAL_EMAIL_VERIFICATION`)
-- `LOOPS_TRANSACTIONAL_WELCOME_DISCOUNT_SUBSCRIBER` (**required** Loops template ID for the customer-facing welcome-discount email containing the 10% off code; must expose `discount_code`, `discount_percent`, and `discount_expires_at` data variables)
+- `LOOPS_TRANSACTIONAL_WELCOME_DISCOUNT_SUBSCRIBER` (**required** Loops template ID for the customer-facing welcome-discount email sent after newsletter signup or account creation; must expose `discount_code`, `discount_percent`, and `discount_expires_at` data variables)
 - `LOOPS_TRANSACTIONAL_PRODUCT_NOTIFICATION_SIGNUP` (optional Loops template ID for customer restock-signup confirmation emails)
 - `LOOPS_WELCOME_DISCOUNT_CODE_PROPERTY_KEY` (optional Loops contact property API key for storing the issued welcome code; defaults to `initCode`)
 - `LOOPS_WELCOME_DISCOUNT_USED_PROPERTY_KEY` (optional Loops contact property API key for marking welcome-code redemption; defaults to `initCodeUsed`)

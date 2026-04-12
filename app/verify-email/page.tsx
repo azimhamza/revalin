@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { getServerSession } from '@/lib/auth-server';
+import { getFreshServerSession } from '@/lib/auth-server';
 import { Footer } from '@/components/layout/footer';
 import { VerifyEmailForm } from './verify-email-form';
 import {
@@ -23,7 +23,7 @@ export default async function VerifyEmailPage({
 }: {
   searchParams: Promise<{ callbackUrl?: string }>;
 }) {
-  const session = await getServerSession();
+  const session = await getFreshServerSession();
   const params = await searchParams;
 
   if (!session?.user) {

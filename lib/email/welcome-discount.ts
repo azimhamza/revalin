@@ -1,10 +1,12 @@
-import { createOrUpdateContact, hasLoopsConfig } from '@/lib/email/loops';
+import crypto from 'node:crypto';
 
 const DEFAULT_WELCOME_DISCOUNT_CODE_PREFIX = 'W10';
 const LEGACY_WELCOME_DISCOUNT_CODE_PREFIX = 'WELCOME10';
 const DEFAULT_WELCOME_DISCOUNT_USED_PROPERTY_KEY = 'initCodeUsed';
 const DEFAULT_WELCOME_DISCOUNT_CODE_PROPERTY_KEY = 'initCode';
 const WELCOME_DISCOUNT_SUFFIX_PATTERN = /^[A-Z0-9]{6,8}$/;
+export const WELCOME_DISCOUNT_PERCENT = 10;
+export const WELCOME_DISCOUNT_WINDOW_HOURS = 72;
 
 function normalizeWelcomeDiscountCode(value: string) {
   return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -21,6 +23,13 @@ function getWelcomeDiscountCodePrefixes() {
     .filter(Boolean);
 
   return Array.from(new Set(prefixes));
+}
+
+function getWelcomeDiscountCodeCreationPrefix() {
+  return normalizeWelcomeDiscountCode(
+    process.env.WELCOME_DISCOUNT_CODE_PREFIX?.trim() ||
+      DEFAULT_WELCOME_DISCOUNT_CODE_PREFIX,
+  );
 }
 
 function matchesWelcomeDiscountPrefix(code: string, prefix: string) {
@@ -47,6 +56,41 @@ function getWelcomeDiscountCodePropertyKey() {
     process.env.LOOPS_WELCOME_DISCOUNT_CODE_PROPERTY_KEY?.trim() ||
     DEFAULT_WELCOME_DISCOUNT_CODE_PROPERTY_KEY
   );
+}
+
+export function createWelcomeDiscountCode() {
+  return `${getWelcomeDiscountCodeCreationPrefix()}${crypto
+    .randomBytes(3)
+    .toString('hex')
+    .toUpperCase()}`;
+}
+
+export function getWelcomeDiscountContactCode(
+  contact?: Record<string, unknown> | null,
+) {
+  if (!contact) {
+    return null;
+  }
+
+  const codePropertyKey = getWelcomeDiscountCodePropertyKey();
+  const candidates = [
+    contact.welcomeDiscountCode,
+    contact[codePropertyKey],
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
+
+export function contactHasWelcomeDiscount(
+  contact?: Record<string, unknown> | null,
+) {
+  return Boolean(getWelcomeDiscountContactCode(contact));
 }
 
 export function isWelcomeDiscountCode(discountCode?: string | null) {
@@ -90,6 +134,8 @@ export async function markWelcomeDiscountUsed(args: {
   email: string;
   discountCode?: string | null;
 }) {
+  const { createOrUpdateContact, hasLoopsConfig } = await import('@/lib/email/loops');
+
   if (!hasLoopsConfig()) {
     console.warn('Skipping welcome discount usage update: Loops not configured.');
     return null;

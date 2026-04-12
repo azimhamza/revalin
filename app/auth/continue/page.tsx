@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 
-import { getServerSession } from '@/lib/auth-server';
+import { getFreshServerSession } from '@/lib/auth-server';
 import { resolvePostAuthDestination } from '@/lib/auth/post-auth';
 
 export default async function AuthContinuePage({
@@ -8,7 +8,7 @@ export default async function AuthContinuePage({
 }: {
   searchParams: Promise<{ callbackUrl?: string }>;
 }) {
-  const session = await getServerSession();
+  const session = await getFreshServerSession();
   const params = await searchParams;
 
   if (!session?.user) {

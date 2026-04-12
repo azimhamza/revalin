@@ -1,5 +1,5 @@
 import { notFound, redirect } from "next/navigation";
-import { getServerSession } from "@/lib/auth-server";
+import { getFreshServerSession } from "@/lib/auth-server";
 import { PageLayout } from "@/components/layout/page-layout";
 import Link from "next/link";
 import { Shield, ShoppingBag, Users } from "lucide-react";
@@ -22,7 +22,7 @@ export default async function AccountLayout({
     notFound();
   }
 
-  const session = await getServerSession();
+  const session = await getFreshServerSession();
 
   if (!session?.user) {
     redirect("/login?callbackUrl=/account");

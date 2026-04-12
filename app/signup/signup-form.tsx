@@ -9,6 +9,24 @@ import { Loader2 } from 'lucide-react';
 import { RESEARCH_USE_MINIMUM_AGE } from '@/lib/compliance';
 import { setPostAuthPendingCookie } from '@/lib/auth/post-auth-client';
 
+async function sendAccountWelcomeDiscount() {
+  try {
+    const response = await fetch('/api/marketing/account-welcome-discount', {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+
+    if (!response.ok) {
+      console.error(
+        '[SIGNUP-WELCOME-DISCOUNT] Failed to issue welcome discount:',
+        response.status,
+      );
+    }
+  } catch (error) {
+    console.error('[SIGNUP-WELCOME-DISCOUNT] Failed to issue welcome discount:', error);
+  }
+}
+
 export function SignupForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -58,6 +76,7 @@ export function SignupForm() {
       const continueUrl = requestedCallbackUrl
         ? `/auth/continue?callbackUrl=${encodeURIComponent(requestedCallbackUrl)}`
         : '/auth/continue';
+      await sendAccountWelcomeDiscount();
       setPostAuthPendingCookie();
       router.replace(continueUrl);
     } catch {
@@ -144,7 +163,7 @@ export function SignupForm() {
           />
           <div className="space-y-1 text-sm leading-5 text-foreground/75">
             <label htmlFor="researchUseAccepted">
-              I confirm I am at least {RESEARCH_USE_MINIMUM_AGE} years old, am a qualified purchaser acting for lawful
+              I confirm I am at least 21 years old, am a qualified purchaser acting for lawful
               research purposes, and understand Revalin products are not for human or veterinary use or human
               consumption.
             </label>

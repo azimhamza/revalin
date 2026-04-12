@@ -85,7 +85,7 @@ export default function TermsOfServicePage() {
               <h2 id="buyer-eligibility" className="text-xl md:text-2xl font-semibold scroll-mt-24">3. Buyer Eligibility</h2>
               <p>By purchasing from Revalin, you represent and warrant that you:</p>
               <ul className="list-disc pl-6 space-y-1">
-                <li>Are at least 18 years of age.</li>
+                <li>Are at least 21 years of age.</li>
                 <li>
                   Are a qualified purchaser acting on behalf of a legitimate research organization, laboratory, or
                   other lawful research operation.

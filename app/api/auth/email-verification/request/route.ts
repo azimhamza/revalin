@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic';
 
 export const POST = createApiRoute({
   route: '/api/auth/email-verification/request',
-  access: 'session',
+  access: 'fresh-session',
   rateLimit: 'auth',
   cacheControl: 'no-store',
   handler: async ({ session }) => {
@@ -22,6 +22,15 @@ export const POST = createApiRoute({
     const name = session.user.name?.trim();
     if (!email) {
       throw apiError.badRequest('Missing user email.');
+    }
+
+    if (session.user.emailVerified) {
+      return {
+        data: {
+          sent: false,
+          alreadyVerified: true,
+        },
+      };
     }
 
     const identifier = buildAuthCodeIdentifier(EMAIL_VERIFICATION_CODE_PURPOSE, email);
@@ -61,6 +70,7 @@ export const POST = createApiRoute({
     return {
       data: {
         sent: true,
+        alreadyVerified: false,
       },
     };
   },

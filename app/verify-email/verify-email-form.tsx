@@ -23,6 +23,16 @@ export function VerifyEmailForm({ callbackUrl }: { callbackUrl: string }) {
     try {
       const res = await fetch('/api/auth/email-verification/request', { method: 'POST' });
       const payload = await readJsonSafely(res);
+      const data = getApiData<{ alreadyVerified?: boolean }>(payload);
+
+      if (res.ok && data?.alreadyVerified) {
+        setPostAuthPendingCookie();
+        router.replace(
+          `/auth/continue?callbackUrl=${encodeURIComponent(callbackUrl)}`,
+        );
+        return;
+      }
+
       if (res.status === 429) {
         setCooldown(RESEND_COOLDOWN);
       } else if (!res.ok) {
@@ -35,7 +45,7 @@ export function VerifyEmailForm({ callbackUrl }: { callbackUrl: string }) {
     } finally {
       setIsSending(false);
     }
-  }, []);
+  }, [callbackUrl, router]);
 
   // Send code on mount
   useEffect(() => {
