@@ -4,7 +4,10 @@ import {
 } from "@/lib/swell/swell";
 import type { SwellCart as StorefrontCart } from "@/lib/swell/types";
 import { providerFetch } from "@/lib/api/provider-client";
-import { buildSwellCouponCreatePayload } from "./swell-coupon-payloads";
+import {
+  buildSwellCouponCreatePayload,
+  normalizeSwellCouponCode,
+} from "./swell-coupon-payloads";
 
 type QueryValue =
   | string
@@ -255,7 +258,7 @@ function extractSwellErrorMessages(value: unknown): string[] {
   const appendNestedMessages = (nested: unknown) => {
     if (!nested || typeof nested !== "object") return;
 
-    Object.values(nested as Record<string, unknown>).forEach((entry) => {
+    Object.entries(nested as Record<string, unknown>).forEach(([field, entry]) => {
       if (!entry || typeof entry !== "object") return;
 
       const message =
@@ -272,7 +275,8 @@ function extractSwellErrorMessages(value: unknown): string[] {
           : null;
 
       if (message) {
-        messages.push([message, code, id].filter(Boolean).join(" | "));
+        const detail = [message, code, id].filter(Boolean).join(" | ");
+        messages.push(field ? `${field}: ${detail}` : detail);
       }
     });
   };
@@ -335,7 +339,10 @@ function appendQueryParam(
   searchParams.append(key, String(value));
 }
 
-function buildRequestUrls(path: string, params?: Record<string, QueryValue>) {
+function buildRequestUrls(
+  path: string,
+  params?: Record<string, QueryValue>,
+) {
   assertSwellBackendConfig();
 
   return SWELL_API_BASES.map((base) => {
@@ -379,7 +386,7 @@ function buildBackendHeaders(apiUrl: string): HeadersInit[] {
     });
   };
 
-  if (SWELL_STORE_IDENTIFIER) {
+  if (SWELL_STORE_IDENTIFIER && SWELL_SECRET_KEY) {
     const secretBasicAuth = Buffer.from(
       `${SWELL_STORE_IDENTIFIER}:${SWELL_SECRET_KEY}`,
       "utf8",
@@ -390,7 +397,13 @@ function buildBackendHeaders(apiUrl: string): HeadersInit[] {
     });
   }
 
-  if (!isGlobalApiHost) {
+  if (SWELL_STORE_IDENTIFIER && SWELL_SECRET_KEY) {
+    pushAuthVariants(SWELL_SECRET_KEY, {
+      "Swell-Store-Id": SWELL_STORE_IDENTIFIER,
+    });
+  }
+
+  if (!isGlobalApiHost && SWELL_SECRET_KEY) {
     pushAuthVariants(SWELL_SECRET_KEY);
   }
 
@@ -403,6 +416,8 @@ async function swellBackendRequest<T>(
   options: {
     params?: Record<string, QueryValue>;
     body?: Record<string, unknown>;
+    timeoutMs?: number | null;
+    retryable?: boolean;
   } = {},
 ) {
   const requestUrls = buildRequestUrls(path, options.params);
@@ -419,7 +434,8 @@ async function swellBackendRequest<T>(
         headers,
         cache: "no-store",
         body: options.body ? JSON.stringify(options.body) : undefined,
-        retryable: method === 'GET' || method === 'DELETE',
+        timeoutMs: options.timeoutMs,
+        retryable: options.retryable ?? (method === 'GET' || method === 'DELETE'),
       });
 
       if (response.ok) {
@@ -488,6 +504,8 @@ export function getSwellManualPaymentMethod() {
   return SWELL_MANUAL_PAYMENT_METHOD;
 }
 
+const CHECKOUT_SWELL_TIMEOUT_MS = null;
+
 export function toSwellAddress(address: {
   firstName: string;
   lastName: string;
@@ -526,6 +544,7 @@ export async function findSwellAccountByEmail(email: string) {
       limit: 1,
       page: 1,
     },
+    timeoutMs: CHECKOUT_SWELL_TIMEOUT_MS,
   });
 
   return response?.results?.[0] ?? null;
@@ -571,12 +590,14 @@ export async function upsertSwellGuestAccount(args: {
       `/accounts/${existing.id}`,
       {
         body: payload,
+        timeoutMs: CHECKOUT_SWELL_TIMEOUT_MS,
       },
     );
   }
 
   return swellBackendRequest<SwellBackendAccount>("POST", "/accounts", {
     body: payload,
+    timeoutMs: CHECKOUT_SWELL_TIMEOUT_MS,
   });
 }
 
@@ -728,10 +749,15 @@ export async function createSwellCheckoutCart(args: {
       ...draft,
       account_id: args.accountId,
     },
+    timeoutMs: CHECKOUT_SWELL_TIMEOUT_MS,
   });
 
   if (!cart?.id) {
-    throw new Error("Swell returned a cart response without an id.");
+    throw new Error(
+      args.couponCode
+        ? "Swell returned a coupon cart response without an id."
+        : "Swell returned a cart response without an id.",
+    );
   }
 
   return cart;
@@ -743,6 +769,7 @@ export async function updateSwellCheckoutCart(
 ) {
   return swellBackendRequest<SwellBackendCart>("PUT", `/carts/${cartId}`, {
     body,
+    timeoutMs: CHECKOUT_SWELL_TIMEOUT_MS,
   });
 }
 
@@ -755,7 +782,9 @@ export async function deleteSwellCheckoutCart(cartId: string) {
   }
 
   try {
-    await swellBackendRequest("DELETE", `/carts/${cartId}`);
+    await swellBackendRequest("DELETE", `/carts/${cartId}`, {
+      timeoutMs: CHECKOUT_SWELL_TIMEOUT_MS,
+    });
   } catch (error) {
     console.warn(`Unable to delete temporary Swell cart ${cartId}:`, error);
   }
@@ -766,6 +795,7 @@ export async function convertSwellCartToOrder(cartId: string) {
     body: {
       cart_id: cartId,
     },
+    timeoutMs: CHECKOUT_SWELL_TIMEOUT_MS,
   });
 }
 
@@ -775,6 +805,7 @@ export async function updateSwellOrder(
 ) {
   return swellBackendRequest<SwellBackendOrder>("PUT", `/orders/${orderId}`, {
     body,
+    timeoutMs: CHECKOUT_SWELL_TIMEOUT_MS,
   });
 }
 
@@ -806,6 +837,7 @@ export async function createSwellOrderPayment(body: {
 }) {
   return swellBackendRequest<SwellBackendPayment>("POST", "/payments", {
     body,
+    timeoutMs: CHECKOUT_SWELL_TIMEOUT_MS,
   });
 }
 
@@ -856,7 +888,7 @@ export async function listSwellCouponCodes(
 }
 
 export async function findSwellCouponCodeByCode(code: string) {
-  const normalizedCode = code.trim().toUpperCase();
+  const normalizedCode = normalizeSwellCouponCode(code);
   const codes = await listSwellCouponCodes({
     search: normalizedCode,
     limit: 25,
@@ -874,7 +906,7 @@ export async function createSwellCouponCode(parentId: string, code: string) {
   return swellBackendRequest<SwellBackendCouponCode>("POST", "/coupons:codes", {
     body: {
       parent_id: parentId,
-      code: code.trim().toUpperCase(),
+      code: normalizeSwellCouponCode(code),
     },
   });
 }
@@ -885,7 +917,7 @@ export async function updateSwellCouponCode(codeId: string, code: string) {
     `/coupons:codes/${codeId}`,
     {
       body: {
-        code: code.trim().toUpperCase(),
+        code: normalizeSwellCouponCode(code),
       },
     },
   );

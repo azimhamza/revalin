@@ -569,24 +569,22 @@ export async function finalizeCheckoutSession(
     let availableServices: CheckoutRatedService[] = [];
     let shipEngineErrorMessage: string | null = null;
 
-    if (!args.discountCode) {
-      try {
-        availableServices = await getShipEngineCheckoutServices({
-          shippingAddress: args.shippingAddress,
-          currencyCode,
-          subtotalAmount,
-          itemCount,
-        });
-      } catch (shipEngineError) {
-        shipEngineErrorMessage =
-          shipEngineError instanceof Error
-            ? shipEngineError.message
-            : 'Unable to validate the shipping address.';
-        console.error(
-          'Unable to fetch ShipEngine rates for payment creation, falling back to Swell:',
-          shipEngineError,
-        );
-      }
+    try {
+      availableServices = await getShipEngineCheckoutServices({
+        shippingAddress: args.shippingAddress,
+        currencyCode,
+        subtotalAmount,
+        itemCount,
+      });
+    } catch (shipEngineError) {
+      shipEngineErrorMessage =
+        shipEngineError instanceof Error
+          ? shipEngineError.message
+          : 'Unable to validate the shipping address.';
+      console.error(
+        'Unable to fetch ShipEngine rates for payment creation, falling back to Swell:',
+        shipEngineError,
+      );
     }
 
     if (availableServices.length === 0) {
@@ -644,6 +642,9 @@ export async function finalizeCheckoutSession(
     const couponDiscountTotal = Number(
       swellOrder.discount_total ?? swellOrder.item_discount ?? 0,
     );
+    if (args.discountCode && couponDiscountTotal <= 0) {
+      throw apiError.badRequest('That discount code is invalid or has expired.');
+    }
     const orderTaxTotal = Number(swellOrder.tax_total || 0);
     const orderShipmentTotal = Number(
       swellOrder.shipment_total || selectedService.price.amount || 0,

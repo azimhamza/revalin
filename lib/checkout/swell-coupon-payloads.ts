@@ -1,5 +1,5 @@
 export function normalizeSwellCouponCode(code: string) {
-  return code.trim().toUpperCase();
+  return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
 export function buildSwellCouponCreatePayload(args: {

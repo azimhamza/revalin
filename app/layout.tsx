@@ -19,6 +19,7 @@ const V0Setup = dynamic(() => import('@/components/v0-setup'));
 
 const isV0 = process.env['VERCEL_URL']?.includes('vusercontent.net') ?? false;
 const openPanelClientId = process.env.NEXT_PUBLIC_OPENPANEL_CLIENT_ID;
+const shouldLoadOpenPanel = Boolean(openPanelClientId) && !isDevelopment;
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -83,7 +84,7 @@ export default async function RootLayout({
           <SessionProvider initialSession={session}>
             <CartProvider>
               <NuqsAdapter>
-                {openPanelClientId ? (
+                {shouldLoadOpenPanel ? (
                   <>
                     <Script id="openpanel-init" strategy="beforeInteractive">{`
                       window.op=window.op||function(){var n=[];return new Proxy(function(){arguments.length&&n.push([].slice.call(arguments))},{get:function(t,r){return"q"===r?n:function(){n.push([r].concat([].slice.call(arguments)))}},has:function(t,r){return"q"===r}})}();

@@ -12,7 +12,7 @@ type ProviderFetchOptions = RequestInit & {
   provider: ProviderName;
   operation: string;
   route?: string;
-  timeoutMs?: number;
+  timeoutMs?: number | null;
   retryable?: boolean;
 };
 
@@ -73,13 +73,24 @@ export async function providerFetch(
   options: ProviderFetchOptions,
 ) {
   const method = (options.method || 'GET').toUpperCase();
-  const timeoutMs = options.timeoutMs ?? PROVIDER_TIMEOUTS[options.provider];
+  const timeoutMs =
+    options.timeoutMs === undefined
+      ? PROVIDER_TIMEOUTS[options.provider]
+      : options.timeoutMs;
   const attempts = shouldRetry({ method, retryable: options.retryable }) ? 2 : 1;
-  const { provider, operation, route, retryable: _retryable, ...init } = options;
+  const {
+    provider,
+    operation,
+    route,
+    retryable: _retryable,
+    timeoutMs: _timeoutMs,
+    ...init
+  } = options;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const shouldUseTimeout = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0;
+    const timeout = shouldUseTimeout ? setTimeout(() => controller.abort(), timeoutMs) : null;
     const startedAt = Date.now();
 
     try {
@@ -87,7 +98,7 @@ export async function providerFetch(
         ...init,
         signal: controller.signal,
       });
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
 
       const durationMs = Date.now() - startedAt;
 
@@ -117,7 +128,7 @@ export async function providerFetch(
       });
       return response;
     } catch (error) {
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
       const durationMs = Date.now() - startedAt;
       const timedOut = error instanceof Error && error.name === 'AbortError';
 

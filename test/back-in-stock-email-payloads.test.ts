@@ -8,14 +8,14 @@ test("buildProductNotificationReadyEmailVariables includes Loops template keys",
     productTitle: "GHK-Cu",
     variantTitle: "50mg",
     discountPercent: 20,
-    discountCode: "READY20-51C43368",
+    discountCode: "R2051C433",
     discountExpiresAt: "2026-04-11T16:00:00.000Z",
     productUrl: "https://revalin.ca/product/ghk-cu",
-    checkoutUrl: "https://revalin.ca/checkout?discount=READY20-51C43368",
+    checkoutUrl: "https://revalin.ca/checkout?discount=R2051C433",
   });
 
   assert.equal(variables.product_name, "GHK-Cu - 50mg");
-  assert.equal(variables.discount_code, "READY20-51C43368");
+  assert.equal(variables.discount_code, "R2051C433");
   assert.equal(variables.productTitle, "GHK-Cu");
-  assert.equal(variables.discountCode, "READY20-51C43368");
+  assert.equal(variables.discountCode, "R2051C433");
 });

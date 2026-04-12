@@ -9,7 +9,7 @@ import { PanelLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 import { Button, type ButtonProps } from "./button";
-import { Dialog, DialogContent, DialogTitle } from "./dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./dialog";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
@@ -197,6 +197,9 @@ export function Sidebar({
           )}
         >
           <DialogTitle className="sr-only">Sidebar</DialogTitle>
+          <DialogDescription className="sr-only">
+            Site navigation and account links.
+          </DialogDescription>
           <div
             data-slot="sidebar"
             data-mobile="true"

@@ -71,7 +71,7 @@ function buildSession(overrides: Partial<CheckoutSessionRecord> = {}): CheckoutS
 
 test('buildSessionChanges normalizes email and discount code', () => {
   const changes = buildSessionChanges({
-    discountCode: ' welcome10 ',
+    discountCode: ' w10-ab12cd ',
     shippingAddress: {
       firstName: 'Ada',
       lastName: 'Lovelace',
@@ -86,7 +86,7 @@ test('buildSessionChanges normalizes email and discount code', () => {
   });
 
   assert.equal(changes.email, 'Ada@example.com');
-  assert.equal(changes.discountCode, 'WELCOME10');
+  assert.equal(changes.discountCode, 'W10AB12CD');
 });
 
 test('assertSessionReadyForFinalize rejects missing shipping service', () => {

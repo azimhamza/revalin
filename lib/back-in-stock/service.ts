@@ -50,7 +50,7 @@ function getSiteUrl() {
 }
 
 function createProductNotificationCouponCode() {
-  return `READY20-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+  return `R20${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
 }
 
 function isUniqueViolation(error: unknown) {

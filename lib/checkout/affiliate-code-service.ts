@@ -22,6 +22,7 @@ import {
   updateSwellAffiliateCoupon,
   updateSwellCouponCode,
 } from "@/lib/checkout/swell-order-management";
+import { normalizeSwellCouponCode } from "@/lib/checkout/swell-coupon-payloads";
 import { shouldPromoteToAffiliateRole } from "@/lib/checkout/affiliate-role";
 import {
   assertAffiliateCodeAvailable,
@@ -107,7 +108,7 @@ function buildLinks(affiliateCode: string, discountCode: string | null) {
 }
 
 function normalizeDiscountCode(value: string) {
-  const normalized = value.trim().toUpperCase();
+  const normalized = normalizeSwellCouponCode(value);
   if (!normalized) {
     throw new Error("A Swell discount code is required.");
   }

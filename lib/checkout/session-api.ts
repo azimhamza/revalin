@@ -1,5 +1,6 @@
 import { apiError } from '../api/errors.ts';
 import type { z } from 'zod';
+import { normalizeSwellCouponCode } from './swell-coupon-payloads.ts';
 import { checkoutCartSnapshotSchema } from './session-api-schemas.ts';
 import type { CheckoutSessionRecord } from './session-store.ts';
 import type { CheckoutShippingAddress } from './types.ts';
@@ -60,7 +61,9 @@ export function buildSessionChanges(body: {
     paymentMethod: body.paymentMethod,
     paymentCurrency: body.paymentCurrency?.trim() || null,
     sourceWalletAddress: body.sourceWalletAddress?.trim() || null,
-    discountCode: body.discountCode?.trim().toUpperCase() || null,
+    discountCode: body.discountCode
+      ? normalizeSwellCouponCode(body.discountCode) || null
+      : null,
     email: body.shippingAddress?.email?.trim() || undefined,
   };
 }

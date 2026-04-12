@@ -21,7 +21,7 @@ const DISCOUNT_PERCENT = 10;
 const DISCOUNT_WINDOW_HOURS = 72;
 
 function createDiscountCode() {
-  return `WELCOME10-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+  return `W10${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 }
 
 export const dynamic = 'force-dynamic';

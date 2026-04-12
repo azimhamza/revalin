@@ -58,6 +58,7 @@ export function CheckoutAuthPopup({ open, onOpenChange, closeCart, router }: Che
             role="dialog"
             aria-modal="true"
             aria-labelledby="checkout-auth-title"
+            aria-describedby="checkout-auth-description"
           >
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               Before you checkout
@@ -66,10 +67,10 @@ export function CheckoutAuthPopup({ open, onOpenChange, closeCart, router }: Che
               id="checkout-auth-title"
               className="mt-1.5 text-lg font-semibold text-foreground"
             >
-              Create an account
+              New users get 10% off
             </p>
-            <p className="mt-2 text-sm leading-5 text-muted-foreground">
-              Get 10% off your first order, track your orders, and check out faster next time.
+            <p id="checkout-auth-description" className="mt-2 text-sm leading-5 text-muted-foreground">
+              Create an account to claim 10% off your first order, track orders, and check out faster next time.
             </p>
 
             <div className="mt-5 flex flex-col gap-2">

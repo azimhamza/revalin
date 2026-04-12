@@ -214,6 +214,7 @@ async function shipEngineRequest<T>(path: string, init: RequestInit): Promise<T>
   const response = await providerFetch(`${SHIPENGINE_API_BASE}${path}`, {
     provider: 'shipengine',
     operation: path,
+    timeoutMs: path === '/v1/rates' ? null : undefined,
     ...init,
     headers: {
       'API-Key': SHIPENGINE_API_KEY,

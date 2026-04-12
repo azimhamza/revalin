@@ -263,6 +263,25 @@ function toCheckoutApiSession(value: unknown): CheckoutApiSession | null {
   };
 }
 
+function isDraftOutOfDateResponse(payload: unknown) {
+  if (!payload || typeof payload !== 'object' || !('error' in payload)) {
+    return false;
+  }
+
+  const error = (payload as { error?: unknown }).error;
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const details = (error as { details?: unknown }).details;
+  return Boolean(
+    (error as { code?: unknown }).code === 'conflict' &&
+      details &&
+      typeof details === 'object' &&
+      (details as { code?: unknown }).code === 'draft_out_of_date',
+  );
+}
+
 function PaymentBrandIcons({ className }: { className?: string }) {
   return (
     <div className={cn('flex items-center gap-1.5', className)}>
@@ -1230,14 +1249,13 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       discountCode:
         overrides?.discountCode !== undefined
           ? overrides.discountCode || undefined
-          : appliedDiscount?.code || discountCode || undefined,
+          : appliedDiscount?.code || undefined,
       selectedShippingServiceId:
         overrides?.selectedShippingServiceId || selectedShippingServiceId || undefined,
     }),
     [
       appliedDiscount?.code,
       cartSnapshot,
-      discountCode,
       paymentCurrency,
       paymentMethod,
       selectedShippingServiceId,
@@ -1275,6 +1293,107 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     return nextSession;
   }, [buildCheckoutSessionPayload, checkoutApiSession]);
 
+  const refreshCheckoutApiSession = useCallback(
+    async (session: CheckoutApiSession, signal?: AbortSignal) => {
+      const response = await fetch(
+        `/api/checkout/v2/sessions/${encodeURIComponent(
+          session.sessionId,
+        )}?sessionKey=${encodeURIComponent(session.sessionKey)}`,
+        {
+          cache: 'no-store',
+          signal,
+        },
+      );
+      const payload = await readJsonSafely(response);
+
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, 'Unable to refresh checkout session.'));
+      }
+
+      const nextSession = toCheckoutApiSession(getApiData<CheckoutApiSessionState>(payload));
+      if (!nextSession) {
+        throw new Error('Unable to refresh checkout session.');
+      }
+
+      setCheckoutApiSession(nextSession);
+      return nextSession;
+    },
+    [],
+  );
+
+  const repriceCheckoutApiSession = useCallback(
+    async (args: {
+      session: CheckoutApiSession;
+      payload: ReturnType<typeof buildCheckoutSessionPayload>;
+      fallbackMessage: string;
+      signal?: AbortSignal;
+    }) => {
+      const postReprice = async (session: CheckoutApiSession) => {
+        const response = await fetch(
+          `/api/checkout/v2/sessions/${encodeURIComponent(session.sessionId)}/reprice`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: args.signal,
+            body: JSON.stringify({
+              ...args.payload,
+              sessionKey: session.sessionKey,
+              version: session.version,
+            }),
+          },
+        );
+        const payload = await readJsonSafely(response);
+
+        return { response, payload };
+      };
+
+      let next = await postReprice(args.session);
+
+      if (!next.response.ok && isDraftOutOfDateResponse(next.payload) && !args.signal?.aborted) {
+        const currentSession = await refreshCheckoutApiSession(args.session, args.signal);
+        next = await postReprice(currentSession);
+      }
+
+      let data = getApiData<{
+        session: CheckoutApiSessionState;
+        quote?: CheckoutQuote | null;
+        stale?: boolean;
+      }>(next.payload);
+
+      if (next.response.ok && data?.stale && !args.signal?.aborted) {
+        const currentSession = toCheckoutApiSession(data.session);
+        if (!currentSession) {
+          throw new Error('Unable to refresh checkout session.');
+        }
+        setCheckoutApiSession(currentSession);
+        next = await postReprice(currentSession);
+        data = getApiData<{
+          session: CheckoutApiSessionState;
+          quote?: CheckoutQuote | null;
+          stale?: boolean;
+        }>(next.payload);
+      }
+
+      if (!next.response.ok) {
+        throw new Error(getApiErrorMessage(next.payload, args.fallbackMessage));
+      }
+
+      const nextSession = toCheckoutApiSession(data?.session);
+      if (nextSession) {
+        setCheckoutApiSession(nextSession);
+      }
+      if (!data?.quote) {
+        throw new Error(args.fallbackMessage);
+      }
+
+      return {
+        session: data.session,
+        quote: data.quote,
+      };
+    },
+    [refreshCheckoutApiSession],
+  );
+
   const applyDiscountCode = useCallback(async (rawCode: string) => {
     const code = rawCode.trim().toUpperCase();
     if (!code) return;
@@ -1295,39 +1414,14 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
     try {
       const session = await ensureCheckoutApiSession();
-      const response = await fetch(
-        `/api/checkout/v2/sessions/${encodeURIComponent(session.sessionId)}/reprice`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...buildCheckoutSessionPayload({
-              shippingAddress,
-              discountCode: code,
-            }),
-            sessionKey: session.sessionKey,
-            version: session.version,
-          }),
-        },
-      );
-
-      const payload = await readJsonSafely(response);
-
-      if (!response.ok) {
-        throw new Error(getApiErrorMessage(payload, 'Invalid discount code.'));
-      }
-
-      const data = getApiData<{
-        session: CheckoutApiSessionState;
-        quote: CheckoutQuote;
-      }>(payload);
-      const nextSession = toCheckoutApiSession(data?.session);
-      if (nextSession) {
-        setCheckoutApiSession(nextSession);
-      }
-      if (!data?.quote) {
-        throw new Error('Invalid discount code.');
-      }
+      const data = await repriceCheckoutApiSession({
+        session,
+        payload: buildCheckoutSessionPayload({
+          shippingAddress,
+          discountCode: code,
+        }),
+        fallbackMessage: 'Invalid discount code.',
+      });
 
       setQuote(data.quote);
       setSelectedShippingServiceId((current) =>
@@ -1335,9 +1429,10 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
           ? current
           : data.quote.selectedServiceId,
       );
-      setDiscountCode(code);
+      const appliedCode = data.quote.discountCode || code;
+      setDiscountCode(appliedCode);
       setAppliedDiscount({
-        code,
+        code: appliedCode,
         amount: data.quote.discountAmount?.amount || '0.00',
         currencyCode: data.quote.discountAmount?.currencyCode || data.quote.currencyCode,
       });
@@ -1345,8 +1440,6 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     } catch (applyError: unknown) {
       setDiscountError(applyError instanceof Error ? applyError.message : 'Invalid discount code.');
       setAppliedDiscount(null);
-      setQuote(null);
-      setSelectedShippingServiceId('');
     } finally {
       setIsValidatingDiscount(false);
     }
@@ -1354,6 +1447,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     buildCheckoutSessionPayload,
     cartSnapshot,
     ensureCheckoutApiSession,
+    repriceCheckoutApiSession,
     shippingAddress,
   ]);
 
@@ -1425,43 +1519,17 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
       try {
         const session = await ensureCheckoutApiSession();
-        const response = await fetch(
-          `/api/checkout/v2/sessions/${encodeURIComponent(session.sessionId)}/reprice`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            signal: controller.signal,
-            body: JSON.stringify({
-              ...buildCheckoutSessionPayload({
-                shippingAddress: nextShippingAddress,
-              }),
-              sessionKey: session.sessionKey,
-              version: session.version,
-            }),
-          },
-        );
+        const data = await repriceCheckoutApiSession({
+          session,
+          payload: buildCheckoutSessionPayload({
+            shippingAddress: nextShippingAddress,
+          }),
+          fallbackMessage: 'Unable to fetch shipping options.',
+          signal: controller.signal,
+        });
 
-        const payload = await readJsonSafely(response);
         if (controller.signal.aborted) {
           return;
-        }
-
-        if (!response.ok) {
-          throw new Error(getApiErrorMessage(payload, 'Unable to fetch shipping options.'));
-        }
-
-        const data = getApiData<{
-          session: CheckoutApiSessionState;
-          quote: CheckoutQuote;
-        }>(payload);
-        const nextSession = toCheckoutApiSession(data?.session);
-        if (nextSession) {
-          setCheckoutApiSession(nextSession);
-        }
-        if (!data?.quote) {
-          throw new Error('Unable to fetch shipping options.');
         }
 
         setQuote(data.quote);
@@ -1485,7 +1553,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         }
       }
     },
-    [buildCheckoutSessionPayload, cartSnapshot, ensureCheckoutApiSession]
+    [buildCheckoutSessionPayload, cartSnapshot, ensureCheckoutApiSession, repriceCheckoutApiSession]
   );
 
   const handleFetchQuote = async () => {

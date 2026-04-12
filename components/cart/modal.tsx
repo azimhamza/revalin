@@ -13,6 +13,8 @@ import { useBodyScrollLock } from '@/lib/hooks/use-body-scroll-lock';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { FREE_SHIPPING_THRESHOLD } from '@/lib/checkout/constants';
+import { useAuthSession } from '@/components/auth/session-provider';
+import { CheckoutAuthPopup } from './checkout-auth-popup';
 
 const CartContainer = ({ children, className }: { children: React.ReactNode; className?: string }) => {
   return <div className={cn('px-3 md:px-4', className)}>{children}</div>;
@@ -242,6 +244,8 @@ export default function CartModal() {
 function CheckoutButton({ closeCart }: { closeCart: () => void }) {
   const { cart } = useCart();
   const router = useRouter();
+  const { data: session, isPending } = useAuthSession();
+  const [isCheckoutAuthOpen, setIsCheckoutAuthOpen] = useState(false);
   const isDisabled = !cart || cart.lines.length === 0;
 
   return (
@@ -252,10 +256,17 @@ function CheckoutButton({ closeCart }: { closeCart: () => void }) {
         size="lg"
         className="flex relative gap-3 justify-between items-center w-full"
         onClick={() => {
-          if (cart && cart.lines.length > 0) {
+          if (!cart || cart.lines.length === 0 || isPending) {
+            return;
+          }
+
+          if (session?.user) {
             closeCart();
             router.push('/checkout');
+            return;
           }
+
+          setIsCheckoutAuthOpen(true);
         }}
       >
         <AnimatePresence initial={false} mode="wait">
@@ -274,6 +285,12 @@ function CheckoutButton({ closeCart }: { closeCart: () => void }) {
           </motion.div>
         </AnimatePresence>
       </Button>
+      <CheckoutAuthPopup
+        open={isCheckoutAuthOpen}
+        onOpenChange={setIsCheckoutAuthOpen}
+        closeCart={closeCart}
+        router={router}
+      />
     </>
   );
 }

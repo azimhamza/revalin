@@ -111,28 +111,26 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
   try {
     let preferredServices: CheckoutRatedService[] = [];
 
-    if (!args.discountCode) {
-      try {
-        const shipEngineServices = await getShipEngineCheckoutServices({
-          shippingAddress: args.shippingAddress,
-          currencyCode,
-          subtotalAmount,
-          itemCount,
-        });
+    try {
+      const shipEngineServices = await getShipEngineCheckoutServices({
+        shippingAddress: args.shippingAddress,
+        currencyCode,
+        subtotalAmount,
+        itemCount,
+      });
 
-        if (shipEngineServices.length > 0) {
-          preferredServices = shipEngineServices;
-        }
-      } catch (shipEngineError) {
-        shipEngineErrorMessage =
-          shipEngineError instanceof Error
-            ? shipEngineError.message
-            : 'Unable to validate the shipping address.';
-        console.error(
-          'Unable to fetch ShipEngine rates, falling back to Swell:',
-          shipEngineError,
-        );
+      if (shipEngineServices.length > 0) {
+        preferredServices = shipEngineServices;
       }
+    } catch (shipEngineError) {
+      shipEngineErrorMessage =
+        shipEngineError instanceof Error
+          ? shipEngineError.message
+          : 'Unable to validate the shipping address.';
+      console.error(
+        'Unable to fetch ShipEngine rates, falling back to Swell:',
+        shipEngineError,
+      );
     }
 
     const manualMethod = getSwellManualPaymentMethod();
@@ -170,6 +168,9 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
     const couponDiscountAmount = Number(
       swellCart.discount_total ?? swellCart.item_discount ?? 0,
     );
+    if (args.discountCode && couponDiscountAmount <= 0) {
+      throw apiError.badRequest('That discount code is invalid or has expired.');
+    }
     const pricing = calculateCheckoutPricing({
       currencyCode: swellCart.currency || currencyCode,
       subtotalAmount,
