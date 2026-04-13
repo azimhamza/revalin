@@ -1,4 +1,7 @@
-import { createSwellCoupon } from '@/lib/checkout/swell-order-management';
+import {
+  createSwellCoupon,
+  deleteSwellCoupon,
+} from '@/lib/checkout/swell-order-management';
 import {
   createOrUpdateContact,
   findLoopsContact,
@@ -9,8 +12,9 @@ import {
   WELCOME_DISCOUNT_PERCENT,
   WELCOME_DISCOUNT_WINDOW_HOURS,
   buildWelcomeDiscountContactProperties,
-  contactHasWelcomeDiscount,
   createWelcomeDiscountCode,
+  getWelcomeDiscountContactCode,
+  getWelcomeDiscountContactExpiresAt,
 } from '@/lib/email/welcome-discount';
 import { sendWelcomeDiscountEmail } from '@/lib/email/welcome-discount-emails';
 
@@ -31,6 +35,7 @@ export async function issueWelcomeDiscount(args: {
   mailingLists?: Record<string, boolean>;
   eventName: string;
   lookupErrorLogPrefix: string;
+  resendExisting?: boolean;
 }) {
   if (!hasLoopsConfig()) {
     throw new Error('Email service not configured.');
@@ -48,7 +53,31 @@ export async function issueWelcomeDiscount(args: {
     );
   }
 
-  if (contactHasWelcomeDiscount(existingContact)) {
+  const existingDiscountCode = getWelcomeDiscountContactCode(existingContact);
+  if (existingDiscountCode) {
+    const existingDiscountExpiresAt =
+      getWelcomeDiscountContactExpiresAt(existingContact);
+
+    if (
+      args.resendExisting &&
+      existingDiscountExpiresAt &&
+      Date.parse(existingDiscountExpiresAt) > Date.now()
+    ) {
+      await sendWelcomeDiscountEmail({
+        email,
+        discountCode: existingDiscountCode,
+        discountPercent: WELCOME_DISCOUNT_PERCENT,
+        discountExpiresAt: existingDiscountExpiresAt,
+      });
+
+      return {
+        issued: false,
+        alreadyIssued: true,
+        discountCode: existingDiscountCode,
+        discountExpiresAt: existingDiscountExpiresAt,
+      } satisfies IssueWelcomeDiscountResult;
+    }
+
     return {
       issued: false,
       alreadyIssued: true,
@@ -62,7 +91,7 @@ export async function issueWelcomeDiscount(args: {
     Date.now() + WELCOME_DISCOUNT_WINDOW_HOURS * 60 * 60 * 1000,
   ).toISOString();
 
-  await createSwellCoupon({
+  const swellCoupon = await createSwellCoupon({
     code: discountCode,
     name: `Welcome discount - ${email}`,
     percentOff: WELCOME_DISCOUNT_PERCENT,
@@ -70,34 +99,61 @@ export async function issueWelcomeDiscount(args: {
     description: `Auto-issued welcome coupon for ${email}`,
   });
 
-  await createOrUpdateContact({
-    email,
-    firstName: args.firstName,
-    lastName: args.lastName,
-    source: args.source,
-    mailingLists: args.mailingLists,
-    properties: buildWelcomeDiscountContactProperties({
-      discountCode,
-      discountExpiresAt,
-    }),
-  });
-
-  await sendWelcomeDiscountEmail({
-    email,
-    discountCode,
-    discountPercent: WELCOME_DISCOUNT_PERCENT,
-    discountExpiresAt,
-  });
-
-  await sendLoopsEvent({
-    email,
-    eventName: args.eventName,
-    eventProperties: {
+  try {
+    await sendWelcomeDiscountEmail({
+      email,
       discountCode,
       discountPercent: WELCOME_DISCOUNT_PERCENT,
+      discountExpiresAt,
+    });
+  } catch (error) {
+    try {
+      await deleteSwellCoupon(swellCoupon.id);
+    } catch (cleanupError) {
+      console.error(
+        `[${args.lookupErrorLogPrefix}] Failed to clean up unsent welcome coupon ${discountCode}:`,
+        cleanupError,
+      );
+    }
+
+    throw error;
+  }
+
+  try {
+    await createOrUpdateContact({
+      email,
+      firstName: args.firstName,
+      lastName: args.lastName,
       source: args.source,
-    },
-  });
+      mailingLists: args.mailingLists,
+      properties: buildWelcomeDiscountContactProperties({
+        discountCode,
+        discountExpiresAt,
+      }),
+    });
+  } catch (error) {
+    console.error(
+      `[${args.lookupErrorLogPrefix}] Failed to store welcome discount contact properties after email send:`,
+      error,
+    );
+  }
+
+  try {
+    await sendLoopsEvent({
+      email,
+      eventName: args.eventName,
+      eventProperties: {
+        discountCode,
+        discountPercent: WELCOME_DISCOUNT_PERCENT,
+        source: args.source,
+      },
+    });
+  } catch (error) {
+    console.error(
+      `[${args.lookupErrorLogPrefix}] Failed to send welcome discount Loops event after email send:`,
+      error,
+    );
+  }
 
   return {
     issued: true,

@@ -43,6 +43,7 @@ export const POST = createApiRoute({
       source: 'account_signup',
       eventName: 'account_welcome',
       lookupErrorLogPrefix: 'ACCOUNT-WELCOME-DISCOUNT',
+      resendExisting: true,
     });
 
     return {

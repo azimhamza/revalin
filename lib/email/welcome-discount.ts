@@ -87,6 +87,21 @@ export function getWelcomeDiscountContactCode(
   return null;
 }
 
+export function getWelcomeDiscountContactExpiresAt(
+  contact?: Record<string, unknown> | null,
+) {
+  if (!contact) {
+    return null;
+  }
+
+  const candidate = contact.welcomeDiscountExpiresAt;
+  if (typeof candidate === 'string' && candidate.trim()) {
+    return candidate.trim();
+  }
+
+  return null;
+}
+
 export function contactHasWelcomeDiscount(
   contact?: Record<string, unknown> | null,
 ) {

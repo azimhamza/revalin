@@ -4,6 +4,7 @@ import { admin } from 'better-auth/plugins';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { RESEARCH_USE_TERMS_VERSION } from '@/lib/compliance';
+import { issueWelcomeDiscount } from '@/lib/email/welcome-discount-service';
 
 const DEFAULT_AUTH_ORIGIN = 'https://revalin.ca';
 const DEFAULT_LOCAL_AUTH_ORIGINS = [
@@ -53,6 +54,51 @@ const configuredAuthOrigins = Array.from(
 
 const authAllowedHosts = Array.from(new Set(configuredAuthOrigins.map((origin) => new URL(origin).host)));
 const authFallbackOrigin = configuredAuthOrigins[0] ?? 'http://localhost:3000';
+
+function splitName(name?: string | null) {
+  const trimmed = name?.trim();
+  if (!trimmed) {
+    return { firstName: undefined, lastName: undefined };
+  }
+
+  const [firstName, ...rest] = trimmed.split(/\s+/);
+  return {
+    firstName,
+    lastName: rest.length ? rest.join(' ') : undefined,
+  };
+}
+
+async function issueAccountSignupWelcomeDiscount(user: {
+  email?: string | null;
+  name?: string | null;
+}) {
+  const email = user.email?.trim();
+  if (!email) {
+    console.warn(
+      '[ACCOUNT-WELCOME-DISCOUNT] Skipping welcome discount: missing signup email.',
+    );
+    return;
+  }
+
+  const { firstName, lastName } = splitName(user.name);
+
+  try {
+    await issueWelcomeDiscount({
+      email,
+      firstName,
+      lastName,
+      source: 'account_signup',
+      eventName: 'account_welcome',
+      lookupErrorLogPrefix: 'ACCOUNT-WELCOME-DISCOUNT',
+      resendExisting: true,
+    });
+  } catch (error) {
+    console.error(
+      '[ACCOUNT-WELCOME-DISCOUNT] Failed to issue welcome discount for account signup:',
+      error,
+    );
+  }
+}
 
 export const auth = betterAuth({
   baseURL: {
@@ -114,6 +160,22 @@ export const auth = betterAuth({
         required: false,
         defaultValue: null,
         input: false,
+      },
+    },
+  },
+  databaseHooks: {
+    user: {
+      create: {
+        async after(createdUser, context) {
+          if (context?.path !== '/sign-up/email') {
+            return;
+          }
+
+          await issueAccountSignupWelcomeDiscount({
+            email: createdUser?.email,
+            name: createdUser?.name,
+          });
+        },
       },
     },
   },
