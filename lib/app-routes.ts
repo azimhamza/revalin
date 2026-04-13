@@ -56,3 +56,9 @@ export const AFFILIATE_NAV_ROUTES: NavItem[] = [
   { href: "/affiliate/dashboard/analytics", label: "Analytics" },
   { href: "/affiliate/dashboard/payouts", label: "Payouts" },
 ];
+
+export const PROMOTER_NAV_ROUTES: NavItem[] = [
+  { href: "/promoter/dashboard", label: "Overview" },
+  { href: "/promoter/dashboard/analytics", label: "Analytics" },
+  { href: "/promoter/dashboard/payouts", label: "Payouts" },
+];

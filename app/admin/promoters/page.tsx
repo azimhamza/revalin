@@ -21,6 +21,7 @@ export default async function PromotersPage({ searchParams }: PromotersPageProps
   const requestedPromoterId = Array.isArray(params.openPromoter)
     ? params.openPromoter[0]
     : params.openPromoter;
+  const canDelete = process.env.NODE_ENV !== "production";
   const [promoters, invites] = await Promise.all([
     listPromoters(),
     listPromoterInvites(),
@@ -32,6 +33,7 @@ export default async function PromotersPage({ searchParams }: PromotersPageProps
       invites={invites}
       initialOpenUserId={requestedUserId ?? null}
       initialOpenPromoterId={requestedPromoterId ?? null}
+      canDelete={canDelete}
     />
   );
 }

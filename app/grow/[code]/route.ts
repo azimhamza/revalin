@@ -6,7 +6,12 @@ import {
   PROMOTER_REFERRAL_COOKIE_NAME,
   PROMOTER_REFERRAL_SOURCE_COOKIE_NAME,
 } from "@/lib/checkout/affiliate-constants";
+import { getAffiliateByUserIdentity } from "@/lib/checkout/affiliate-service";
 import { resolveApprovedPromoterReferralCode } from "@/lib/checkout/promoter-service";
+import {
+  getFirstName,
+  resolveGrowRedirect,
+} from "@/lib/checkout/promoter-referral-logic";
 
 type RouteContext = {
   params: Promise<{
@@ -27,16 +32,48 @@ export async function GET(request: NextRequest, context: RouteContext) {
     );
   }
 
-  const affiliateSignupPath = `/affiliate/signup?promoter=${encodeURIComponent(
-    resolution.code,
-  )}`;
+  const promoterFirstName = getFirstName(resolution.promoter.name) ?? "";
   const session = await getServerSession();
-  const redirectUrl = session?.user
-    ? new URL(affiliateSignupPath, request.url)
-    : new URL("/signup", request.url);
 
-  if (!session?.user) {
-    redirectUrl.searchParams.set("callbackUrl", affiliateSignupPath);
+  const affiliateRecord =
+    session?.user
+      ? await getAffiliateByUserIdentity({
+          userId: session.user.id,
+          email: session.user.email,
+        })
+      : null;
+
+  const redirect = resolveGrowRedirect({
+    isLoggedIn: Boolean(session?.user),
+    affiliateStatus: affiliateRecord?.status ?? null,
+    promoterCode: resolution.code,
+    promoterFirstName,
+  });
+
+  let redirectUrl: URL;
+
+  switch (redirect.destination) {
+    case "affiliate_dashboard":
+      redirectUrl = new URL("/affiliate/dashboard", request.url);
+      break;
+    case "account_boost":
+      redirectUrl = new URL("/account", request.url);
+      redirectUrl.searchParams.set("promoter_boost", redirect.promoterCode);
+      break;
+    case "account_no_boost":
+      redirectUrl = new URL("/account", request.url);
+      break;
+    case "affiliate_signup":
+      redirectUrl = new URL("/affiliate/signup", request.url);
+      redirectUrl.searchParams.set("promoter", redirect.promoterCode);
+      break;
+    case "signup":
+      redirectUrl = new URL("/signup", request.url);
+      redirectUrl.searchParams.set("callbackUrl", redirect.callbackUrl);
+      if (redirect.promoterName) {
+        redirectUrl.searchParams.set("promoter_name", redirect.promoterName);
+      }
+      break;
   }
 
   const response = NextResponse.redirect(redirectUrl, { status: 302 });

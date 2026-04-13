@@ -11,8 +11,11 @@ import { Input } from '@/components/ui/input';
 import { getApiData, getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
 
 const POPUP_DELAY_MS = 10_000;
-const HIDDEN_PATHS = new Set(['/login', '/signup', '/verify-email']);
-const HIDDEN_PATH_PREFIXES = ['/account'];
+const WELCOME_POPUP_PATHS = new Set(['/', '/shop']);
+
+function isWelcomePopupPath(pathname: string) {
+  return WELCOME_POPUP_PATHS.has(pathname) || pathname.startsWith('/shop/');
+}
 
 export function WelcomePopup() {
   const pathname = usePathname();
@@ -23,9 +26,7 @@ export function WelcomePopup() {
   const [submitted, setSubmitted] = useState(false);
   const [alreadySubscribed, setAlreadySubscribed] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isHiddenRoute =
-    HIDDEN_PATHS.has(pathname) || HIDDEN_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
-  const canShowPopup = !isPending && !session?.user && !isHiddenRoute;
+  const canShowPopup = !isPending && !session?.user && isWelcomePopupPath(pathname);
 
   useEffect(() => {
     if (!canShowPopup) {

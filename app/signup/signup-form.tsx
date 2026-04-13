@@ -163,7 +163,7 @@ export function SignupForm() {
           />
           <div className="space-y-1 text-sm leading-5 text-foreground/75">
             <label htmlFor="researchUseAccepted">
-              I confirm I am at least 21 years old, am a qualified purchaser acting for lawful
+              I confirm I am at least {RESEARCH_USE_MINIMUM_AGE}+ years old, am a qualified purchaser acting for lawful
               research purposes, and understand Revalin products are not for human or veterinary use or human
               consumption.
             </label>

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import {
   ArrowRight,
   MapPin,
+  Megaphone,
   Shield,
   ShoppingBag,
   User as UserIcon,
@@ -13,6 +14,12 @@ import { Button } from "@/components/ui/button";
 import { AccountSignOut } from "./account-sign-out";
 import { getOrdersForUser } from "@/lib/checkout/order-queries";
 import { getAffiliateByUserIdentity } from "@/lib/checkout/affiliate-service";
+import {
+  getPromoterByUserIdentity,
+  recordPromoterApplicationFromReferralCode,
+  resolveApprovedPromoterReferralCode,
+} from "@/lib/checkout/promoter-service";
+import { getFirstName } from "@/lib/checkout/promoter-referral-logic";
 import { formatPrice } from "@/lib/swell/utils";
 import {
   accountChipClass,
@@ -26,6 +33,7 @@ import {
   accountSecondaryButtonClass,
   accountStatusChipClass,
 } from "./account-theme";
+import { PromoterBoostDialog } from "./promoter-boost-dialog";
 import {
   formatAccountDate,
   formatPaymentCurrencyLabel,
@@ -41,11 +49,17 @@ export const metadata = {
   title: "Account | Revalin",
 };
 
-export default async function AccountPage() {
+export default async function AccountPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ promoter_boost?: string }>;
+}) {
   const session = await getServerSession();
   if (!session?.user) redirect("/login");
 
   const { user } = session;
+  const params = (await searchParams) || {};
+  const promoterBoostCode = params.promoter_boost?.trim() || null;
   const role = (user as any).role;
   const savedAddress = parseAccountShippingAddress(
     (user as any).shippingAddress,
@@ -54,9 +68,13 @@ export default async function AccountPage() {
     preferredPaymentCurrency: (user as any).preferredPaymentCurrency,
     cryptoWalletAddress: (user as any).cryptoWalletAddress,
   });
-  const [orders, affiliateRecord] = await Promise.all([
+  const [orders, affiliateRecord, promoterRecord] = await Promise.all([
     getOrdersForUser(user.id),
     getAffiliateByUserIdentity({
+      userId: user.id,
+      email: user.email,
+    }),
+    getPromoterByUserIdentity({
       userId: user.id,
       email: user.email,
     }),
@@ -67,14 +85,45 @@ export default async function AccountPage() {
     (sum, order) => sum + getOrderItemCount(order.lines as any[]),
     0,
   );
+  let promoterBoostFirstName: string | null = null;
+  if (
+    promoterBoostCode &&
+    affiliateRecord &&
+    affiliateRecord.status !== "approved" &&
+    affiliateRecord.status !== "rejected"
+  ) {
+    try {
+      const boostResult = await recordPromoterApplicationFromReferralCode({
+        referralCode: promoterBoostCode,
+        affiliateId: affiliateRecord.id,
+        applicantName: user.name,
+        applicantEmail: user.email.toLowerCase(),
+        socialProfiles: affiliateRecord.socialProfiles,
+      });
+      if (boostResult.linked) {
+        const boostResolution = await resolveApprovedPromoterReferralCode(promoterBoostCode);
+        promoterBoostFirstName = getFirstName(boostResolution?.promoter.name);
+      }
+    } catch (error) {
+      console.error("[PROMOTER-BOOST-ACCOUNT]", error);
+    }
+  }
+
   const showGrowthPartnerPanel =
     role === "affiliate" ||
     role === "admin" ||
     affiliateRecord?.status === "approved";
   const showGrowthPartnerCta = role !== "admin" && !showGrowthPartnerPanel;
+  const showPromoterPanel =
+    promoterRecord?.status === "approved" || role === "admin";
+  const showPromoterCta =
+    role !== "admin" && !showPromoterPanel && !promoterRecord;
 
   return (
     <div className="space-y-6">
+      {promoterBoostFirstName ? (
+        <PromoterBoostDialog promoterFirstName={promoterBoostFirstName} />
+      ) : null}
       <section className="grid gap-4 md:grid-cols-3">
         <div className={`${accountPanelClass} p-5`}>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground/45">
@@ -445,6 +494,117 @@ export default async function AccountPage() {
                   <ArrowRight className="size-4" />
                 </Link>
               </Button>
+            </section>
+          ) : null}
+
+          {showPromoterPanel ? (
+            <section className={`${accountPanelClass} p-5 sm:p-6`}>
+              <div className="flex items-center gap-3">
+                <div className={accountIconTileClass}>
+                  <Megaphone className="size-5 text-[#0B2E2F]" />
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground/45">
+                    Promoter
+                  </p>
+                  <h2 className="mt-1 text-lg font-semibold tracking-tight text-[#0B2E2F]">
+                    Connected Promoter dashboard
+                  </h2>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-3 text-sm">
+                <div className={`${accountInsetClass} px-4 py-3`}>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">
+                    Referral code
+                  </p>
+                  <p className="mt-1 font-semibold text-[#0B2E2F]">
+                    {promoterRecord?.code || "Not assigned yet"}
+                  </p>
+                </div>
+                <div className={`${accountInsetClass} px-4 py-3`}>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">
+                    Status
+                  </p>
+                  <p className="mt-1 font-semibold capitalize text-[#0B2E2F]">
+                    {promoterRecord?.status || "Needs review"}
+                  </p>
+                </div>
+                <div className={`${accountInsetClass} px-4 py-3`}>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">
+                    Default commission
+                  </p>
+                  <p className="mt-1 font-semibold text-[#0B2E2F]">
+                    {promoterRecord?.defaultCommissionRate
+                      ? `${(Number(promoterRecord.defaultCommissionRate) * 100).toFixed(1)}%`
+                      : "Assigned on approval"}
+                  </p>
+                </div>
+              </div>
+
+              <Button
+                asChild
+                className={`mt-5 h-11 w-full text-sm font-semibold ${accountPrimaryButtonClass}`}
+              >
+                <Link href="/promoter/dashboard">
+                  Open Promoter dashboard
+                  <ArrowRight className="size-4" />
+                </Link>
+              </Button>
+            </section>
+          ) : showPromoterCta ? (
+            <section className={`${accountPanelClass} p-5 sm:p-6`}>
+              <div className="flex items-center gap-3">
+                <div className={accountIconTileClass}>
+                  <Megaphone className="size-5 text-[#0B2E2F]" />
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground/45">
+                    Promoter
+                  </p>
+                  <h2 className="mt-1 text-lg font-semibold tracking-tight text-[#0B2E2F]">
+                    Become a Promoter
+                  </h2>
+                </div>
+              </div>
+
+              <p className="mt-5 text-sm leading-6 text-foreground/58">
+                Apply to recruit Growth Partners and earn commission on
+                every order they generate. Get a referral link and
+                promoter dashboard once the team approves your account.
+              </p>
+
+              <Button
+                asChild
+                className={`mt-5 h-11 w-full text-sm font-semibold ${accountPrimaryButtonClass}`}
+              >
+                <Link href="/promoter/signup">
+                  Become a Promoter
+                  <ArrowRight className="size-4" />
+                </Link>
+              </Button>
+            </section>
+          ) : promoterRecord ? (
+            <section className={`${accountPanelClass} p-5 sm:p-6`}>
+              <div className="flex items-center gap-3">
+                <div className={accountIconTileClass}>
+                  <Megaphone className="size-5 text-[#0B2E2F]" />
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground/45">
+                    Promoter
+                  </p>
+                  <h2 className="mt-1 text-lg font-semibold tracking-tight text-[#0B2E2F]">
+                    Application under review
+                  </h2>
+                </div>
+              </div>
+
+              <p className="mt-5 text-sm leading-6 text-foreground/58">
+                Your promoter application is currently{" "}
+                <span className="font-semibold capitalize">{promoterRecord.status}</span>.
+                The team will review it and follow up by email.
+              </p>
             </section>
           ) : null}
 

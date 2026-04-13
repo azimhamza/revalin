@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { PageLayout } from '@/components/layout/page-layout';
 import { LegalSidebar } from '@/components/layout/sidebar/legal-sidebar';
-import { RESEARCH_USE_TERMS_LAST_UPDATED_LABEL } from '@/lib/compliance';
+import { RESEARCH_USE_MINIMUM_AGE, RESEARCH_USE_TERMS_LAST_UPDATED_LABEL } from '@/lib/compliance';
 
 export const metadata: Metadata = {
   title: 'Terms of Service | Revalin',
@@ -85,7 +85,7 @@ export default function TermsOfServicePage() {
               <h2 id="buyer-eligibility" className="text-xl md:text-2xl font-semibold scroll-mt-24">3. Buyer Eligibility</h2>
               <p>By purchasing from Revalin, you represent and warrant that you:</p>
               <ul className="list-disc pl-6 space-y-1">
-                <li>Are at least 21 years of age.</li>
+                <li>Are at least {RESEARCH_USE_MINIMUM_AGE}+ years of age.</li>
                 <li>
                   Are a qualified purchaser acting on behalf of a legitimate research organization, laboratory, or
                   other lawful research operation.

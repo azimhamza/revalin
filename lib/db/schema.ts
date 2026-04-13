@@ -57,6 +57,11 @@ export const payoutStatusEnum = pgEnum("payout_status", [
   "rejected",
 ]);
 
+export const payoutBatchTypeEnum = pgEnum("payout_batch_type", [
+  "weekly",
+  "pay_now",
+]);
+
 export const checkoutSessionStatusEnum = pgEnum("checkout_session_status", [
   "draft",
   "quoted",
@@ -316,6 +321,7 @@ export const affiliateWeeklyPayouts = pgTable(
   "affiliate_weekly_payouts",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    batchType: payoutBatchTypeEnum("batch_type").default("weekly").notNull(),
     affiliateId: uuid("affiliate_id")
       .notNull()
       .references(() => affiliates.id, { onDelete: "cascade" }),
@@ -364,7 +370,11 @@ export const affiliateWeeklyPayouts = pgTable(
       table.commissionMonthKey,
       table.periodStart,
       table.periodEnd,
+      table.batchType,
     ),
+    uniqueIndex("affiliate_weekly_payouts_open_pay_now_idx")
+      .on(table.affiliateId, table.commissionMonthKey)
+      .where(sql`${table.batchType} = 'pay_now' AND ${table.status} IN ('pending', 'approved')`),
     index("affiliate_weekly_payouts_affiliate_id_idx").on(table.affiliateId),
     index("affiliate_weekly_payouts_status_idx").on(table.status),
     index("affiliate_weekly_payouts_period_start_idx").on(table.periodStart),
@@ -444,6 +454,10 @@ export const promoters = pgTable(
     encryptedWalletAddress: text("encrypted_wallet_address").notNull(),
     walletIv: varchar("wallet_iv", { length: 64 }).notNull(),
     walletTag: varchar("wallet_tag", { length: 64 }).notNull(),
+    socialProfiles: jsonb("social_profiles")
+      .$type<AffiliateSocialProfile[]>()
+      .default([])
+      .notNull(),
     defaultCommissionRate: varchar("default_commission_rate", { length: 16 })
       .default("0.025")
       .notNull(),
@@ -529,6 +543,7 @@ export const promoterWeeklyPayouts = pgTable(
   "promoter_weekly_payouts",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    batchType: payoutBatchTypeEnum("batch_type").default("weekly").notNull(),
     promoterId: uuid("promoter_id")
       .notNull()
       .references(() => promoters.id, { onDelete: "cascade" }),
@@ -570,7 +585,11 @@ export const promoterWeeklyPayouts = pgTable(
       table.commissionMonthKey,
       table.periodStart,
       table.periodEnd,
+      table.batchType,
     ),
+    uniqueIndex("promoter_weekly_payouts_open_pay_now_idx")
+      .on(table.promoterId, table.commissionMonthKey)
+      .where(sql`${table.batchType} = 'pay_now' AND ${table.status} IN ('pending', 'approved')`),
     index("promoter_weekly_payouts_promoter_id_idx").on(table.promoterId),
     index("promoter_weekly_payouts_status_idx").on(table.status),
     index("promoter_weekly_payouts_period_start_idx").on(table.periodStart),

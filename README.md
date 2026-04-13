@@ -50,10 +50,11 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `LOOPS_WELCOME_DISCOUNT_CODE_PROPERTY_KEY` (optional Loops contact property API key for storing the issued welcome code; defaults to `initCode`)
 - `LOOPS_WELCOME_DISCOUNT_USED_PROPERTY_KEY` (optional Loops contact property API key for marking welcome-code redemption; defaults to `initCodeUsed`)
 - `LOOPS_TRANSACTIONAL_AFFILIATE_APPROVED` (optional Loops template ID for first-time Growth Partner approval)
-- `LOOPS_TRANSACTIONAL_AFFILIATE_APPLICATION_RECEIVED` (optional Loops template ID for internal Growth Partner application notifications; defaults to `cmnmb8o0s00b40iuq46qek8jv`)
+- `LOOPS_TRANSACTIONAL_AFFILIATE_APPLICATION_RECEIVED` (optional Loops template ID for customer-facing Growth Partner application confirmations; defaults to `cmnmb8o0s00b40iuq46qek8jv`)
 - `LOOPS_TRANSACTIONAL_AFFILIATE_REMOVED` (optional Loops template ID for Growth Partner suspension / removal notices)
 - `LOOPS_TRANSACTIONAL_AFFILIATE_REINSTATED` (optional Loops template ID for Growth Partner reinstatement notices)
-- `AFFILIATE_APPLICATION_EMAIL_TO` (optional recipient inbox for internal Growth Partner application notifications; defaults to `operations@revalin.ca`)
+- `LOOPS_TRANSACTIONAL_PROMOTER_APPROVED` (optional Loops template ID for first-time promoter approval; defaults to `cmnusjnuo0aso0i108dq551r4`)
+- `LOOPS_TRANSACTIONAL_PROMOTER_APPLICATION_RECEIVED` (optional Loops template ID for customer-facing promoter application confirmations; defaults to `cmnsxr0zc00j70h0q3beqenib`)
 - `SHIPPING_LABEL_EMAIL` or `SHIPPING_LABEL_EMAILS` (recipient inbox for internal shipping label emails; `SHIPPING_LABEL_EMAILS` accepts comma-separated recipients)
 
 ## Checkout requirements

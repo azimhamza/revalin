@@ -196,6 +196,18 @@ export type AdminAffiliateTelemetry = {
   countries: OpenPanelNamedValue[];
 };
 
+export type PromoterPartnerBreakdown = {
+  affiliateCode: string;
+  visits: number;
+  purchases: number;
+  revenue: number;
+  conversionRate: number | null;
+};
+
+export type PromoterOpenPanelTelemetry = AffiliateOpenPanelTelemetry & {
+  partnerBreakdown: PromoterPartnerBreakdown[];
+};
+
 function toNumberOrNull(value: unknown) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number(value);
@@ -1155,4 +1167,242 @@ export async function getAdminAffiliateTelemetry(
     referrers: sortNamedValues(referrers),
     countries: sortNamedValues(countries),
   } satisfies AdminAffiliateTelemetry;
+}
+
+export async function getPromoterOpenPanelTelemetry(
+  affiliateCodes: string[],
+  range = "30d",
+): Promise<PromoterOpenPanelTelemetry | null> {
+  if (affiliateCodes.length === 0) return null;
+
+  const start = rangeToStartTimestamp(range) ?? undefined;
+  const codesFilter: OpenPanelFilter = {
+    name: "properties.affiliate_code",
+    operator: "is",
+    value: affiliateCodes,
+  };
+
+  const [
+    visitTrend,
+    purchaseTrend,
+    revenueTrend,
+    visitEvents,
+    purchaseEvents,
+  ] = await Promise.all([
+    getOpenPanelChart({
+      range,
+      interval: "day",
+      series: [
+        {
+          name: "affiliate_visit",
+          segment: "user",
+          filters: [codesFilter],
+        },
+      ],
+    }),
+    getOpenPanelChart({
+      range,
+      interval: "day",
+      series: [
+        {
+          name: "purchase",
+          segment: "event",
+          filters: [codesFilter],
+        },
+      ],
+    }),
+    getOpenPanelChart({
+      range,
+      interval: "day",
+      series: [
+        {
+          name: "purchase",
+          segment: "property_sum",
+          property: "properties.orderTotal",
+          filters: [codesFilter],
+        },
+      ],
+    }),
+    getAllOpenPanelEvents({
+      event: "affiliate_visit",
+      start,
+      includes: ["properties", "device", "referrer", "referrerName", "country"],
+      limit: 250,
+      maxPages: 4,
+    }),
+    getAllOpenPanelEvents({
+      event: "purchase",
+      start,
+      includes: ["properties", "device", "referrer", "referrerName", "country"],
+      limit: 250,
+      maxPages: 4,
+    }),
+  ]);
+
+  const codesSet = new Set(affiliateCodes);
+  const events = [...visitEvents, ...purchaseEvents]
+    .filter((event) => {
+      const code = getEventProperties(event).affiliate_code;
+      return typeof code === "string" && codesSet.has(code);
+    })
+    .sort((a, b) => {
+      const aTime = new Date(
+        String(a.timestamp ?? a.createdAt ?? a.created_at ?? a.time ?? 0),
+      ).getTime();
+      const bTime = new Date(
+        String(b.timestamp ?? b.createdAt ?? b.created_at ?? b.time ?? 0),
+      ).getTime();
+      return bTime - aTime;
+    });
+
+  const trendMap = new Map<string, AffiliateTelemetryTrendPoint>();
+  const mergeTrend = (
+    chart: OpenPanelChartResult | null,
+    key: "visits" | "purchases" | "revenue",
+    field: "count" | "value",
+  ) => {
+    const series = chart?.series[0];
+    if (!series) return;
+
+    for (const point of series.data) {
+      const entry = trendMap.get(point.date) ?? {
+        date: point.date,
+        visits: 0,
+        purchases: 0,
+        revenue: 0,
+        conversionRate: null,
+      };
+      entry[key] = point[field];
+      trendMap.set(point.date, entry);
+    }
+  };
+
+  mergeTrend(visitTrend, "visits", "count");
+  mergeTrend(purchaseTrend, "purchases", "count");
+  mergeTrend(revenueTrend, "revenue", "value");
+
+  const devices = new Map<string, number>();
+  const countries = new Map<string, number>();
+  const referrers = new Map<string, number>();
+  const sources = new Map<string, number>();
+  const utmSources = new Map<string, number>();
+  const utmMediums = new Map<string, number>();
+  const utmCampaigns = new Map<string, number>();
+  const landingPaths = new Map<string, number>();
+  const partnerMap = new Map<
+    string,
+    { visits: number; purchases: number; revenue: number }
+  >();
+
+  for (const event of events) {
+    const properties = getEventProperties(event);
+    const affiliateCode =
+      typeof properties.affiliate_code === "string"
+        ? properties.affiliate_code
+        : null;
+
+    if (affiliateCode) {
+      const partner = partnerMap.get(affiliateCode) ?? {
+        visits: 0,
+        purchases: 0,
+        revenue: 0,
+      };
+      const eventName = event.name ?? event.event ?? "";
+      if (eventName === "affiliate_visit") {
+        partner.visits += 1;
+      } else if (eventName === "purchase") {
+        partner.purchases += 1;
+        partner.revenue += Number(properties.orderTotal ?? 0);
+      }
+      partnerMap.set(affiliateCode, partner);
+    }
+
+    const device =
+      typeof event.device === "string" && event.device.trim()
+        ? event.device.trim()
+        : getStringProperty(properties, "device", "deviceType") ||
+          "Unknown device";
+    const country =
+      typeof event.country === "string" && event.country.trim()
+        ? event.country.trim()
+        : getStringProperty(properties, "country", "country_name") ||
+          "Unknown country";
+    const referrer =
+      typeof event.referrerName === "string" && event.referrerName.trim()
+        ? event.referrerName.trim()
+        : normalizeReferrerLabel(
+            typeof event.referrer === "string" ? event.referrer : null,
+          );
+    const utmSource = getStringProperty(properties, "utm_source");
+    const utmMedium = getStringProperty(properties, "utm_medium");
+    const utmCampaign = getStringProperty(properties, "utm_campaign");
+    const source =
+      getStringProperty(properties, "source", "channel", "referral_source") ||
+      utmSource ||
+      referrer;
+    const landingPath = normalizePathLabel(
+      getStringProperty(
+        properties,
+        "referral_path",
+        "path",
+        "pathname",
+        "url",
+        "page",
+      ),
+    );
+
+    devices.set(device, (devices.get(device) ?? 0) + 1);
+    countries.set(country, (countries.get(country) ?? 0) + 1);
+    referrers.set(referrer, (referrers.get(referrer) ?? 0) + 1);
+    sources.set(source, (sources.get(source) ?? 0) + 1);
+    landingPaths.set(landingPath, (landingPaths.get(landingPath) ?? 0) + 1);
+
+    if (utmSource) {
+      utmSources.set(utmSource, (utmSources.get(utmSource) ?? 0) + 1);
+    }
+    if (utmMedium) {
+      utmMediums.set(utmMedium, (utmMediums.get(utmMedium) ?? 0) + 1);
+    }
+    if (utmCampaign) {
+      utmCampaigns.set(utmCampaign, (utmCampaigns.get(utmCampaign) ?? 0) + 1);
+    }
+  }
+
+  const partnerBreakdown: PromoterPartnerBreakdown[] = Array.from(
+    partnerMap.entries(),
+  )
+    .map(([code, stats]) => ({
+      affiliateCode: code,
+      visits: stats.visits,
+      purchases: stats.purchases,
+      revenue: stats.revenue,
+      conversionRate:
+        stats.visits > 0 ? stats.purchases / stats.visits : null,
+    }))
+    .sort(
+      (a, b) =>
+        b.revenue - a.revenue ||
+        b.purchases - a.purchases ||
+        b.visits - a.visits,
+    );
+
+  return {
+    trend: Array.from(trendMap.values())
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((entry) => ({
+        ...entry,
+        conversionRate:
+          entry.visits > 0 ? entry.purchases / entry.visits : null,
+      })),
+    events,
+    devices: sortNamedValues(devices),
+    countries: sortNamedValues(countries),
+    referrers: sortNamedValues(referrers),
+    sources: sortNamedValues(sources),
+    utmSources: sortNamedValues(utmSources),
+    utmMediums: sortNamedValues(utmMediums),
+    utmCampaigns: sortNamedValues(utmCampaigns),
+    landingPaths: sortNamedValues(landingPaths),
+    partnerBreakdown,
+  };
 }

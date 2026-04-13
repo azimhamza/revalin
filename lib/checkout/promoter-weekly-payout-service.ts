@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, notInArray, or } from "drizzle-orm";
 
 import { db } from "@/lib/db";
 import {
@@ -16,6 +16,7 @@ import { formatAmount, parseAmount } from "@/lib/checkout/affiliate-math";
 import {
   buildWeeklyPayoutPeriod,
   formatPayoutPeriodLabel,
+  getDefaultPayoutTimezone,
   type WeeklyPayoutPeriod,
 } from "@/lib/checkout/payout-periods";
 import { sendPromoterWeeklyPayoutSentEmail } from "@/lib/email/promoter-emails";
@@ -45,6 +46,10 @@ export type PromoterWeeklyPayoutBatchDetail =
 type BatchGroupingRow = {
   earning: PromoterEarningRecord;
   promoter: typeof promoters.$inferSelect | null;
+};
+
+type PayNowBatchGroupingRow = BatchGroupingRow & {
+  batch: PromoterWeeklyPayoutBatchRecord | null;
 };
 
 function decryptWalletSnapshot(
@@ -86,6 +91,7 @@ async function getExistingBatchForGroup(args: {
         eq(promoterWeeklyPayouts.commissionMonthKey, args.commissionMonthKey),
         eq(promoterWeeklyPayouts.periodStart, args.period.start),
         eq(promoterWeeklyPayouts.periodEnd, args.period.end),
+        eq(promoterWeeklyPayouts.batchType, "weekly"),
       ),
     )
     .limit(1);
@@ -101,11 +107,47 @@ async function loadBatchGroupingRows(period: WeeklyPayoutPeriod) {
     })
     .from(promoterPayouts)
     .leftJoin(promoters, eq(promoterPayouts.promoterId, promoters.id))
+    .leftJoin(
+      promoterWeeklyPayouts,
+      eq(promoterPayouts.weeklyPayoutId, promoterWeeklyPayouts.id),
+    )
     .where(
       and(
         inArray(promoterPayouts.status, ["pending", "approved"]),
         eq(promoterPayouts.payoutPeriodStart, period.start),
         eq(promoterPayouts.payoutPeriodEnd, period.end),
+        or(
+          isNull(promoterPayouts.weeklyPayoutId),
+          eq(promoterWeeklyPayouts.batchType, "weekly"),
+        ),
+      ),
+    )
+    .orderBy(desc(promoterPayouts.earnedAt), desc(promoterPayouts.createdAt));
+}
+
+async function loadPayNowBatchGroupingRows() {
+  return db
+    .select({
+      earning: promoterPayouts,
+      promoter: promoters,
+      batch: promoterWeeklyPayouts,
+    })
+    .from(promoterPayouts)
+    .leftJoin(promoters, eq(promoterPayouts.promoterId, promoters.id))
+    .leftJoin(
+      promoterWeeklyPayouts,
+      eq(promoterPayouts.weeklyPayoutId, promoterWeeklyPayouts.id),
+    )
+    .where(
+      and(
+        inArray(promoterPayouts.status, ["pending", "approved"]),
+        or(
+          isNull(promoterPayouts.weeklyPayoutId),
+          and(
+            eq(promoterWeeklyPayouts.batchType, "pay_now"),
+            inArray(promoterWeeklyPayouts.status, ["pending", "approved"]),
+          ),
+        ),
       ),
     )
     .orderBy(desc(promoterPayouts.earnedAt), desc(promoterPayouts.createdAt));
@@ -123,6 +165,44 @@ function groupRowsByPromoterMonth(rows: BatchGroupingRow[]) {
     groups.set(key, existing);
     return groups;
   }, new Map<string, BatchGroupingRow[]>());
+}
+
+async function getExistingOpenPayNowBatchForGroup(args: {
+  promoterId: string;
+  commissionMonthKey: string;
+}) {
+  const [row] = await db
+    .select()
+    .from(promoterWeeklyPayouts)
+    .where(
+      and(
+        eq(promoterWeeklyPayouts.promoterId, args.promoterId),
+        eq(promoterWeeklyPayouts.commissionMonthKey, args.commissionMonthKey),
+        eq(promoterWeeklyPayouts.batchType, "pay_now"),
+        inArray(promoterWeeklyPayouts.status, ["pending", "approved"]),
+      ),
+    )
+    .orderBy(desc(promoterWeeklyPayouts.createdAt))
+    .limit(1);
+
+  return row ?? null;
+}
+
+function getEarningTimestamp(earning: PromoterEarningRecord) {
+  return earning.earnedAt ?? earning.createdAt;
+}
+
+function getPayNowPeriod(rows: BatchGroupingRow[], now: Date) {
+  const start = rows.reduce((earliest, row) => {
+    const earnedAt = getEarningTimestamp(row.earning);
+    return earnedAt < earliest ? earnedAt : earliest;
+  }, getEarningTimestamp(rows[0]!.earning));
+
+  return {
+    start,
+    end: now,
+    timezone: getDefaultPayoutTimezone(),
+  };
 }
 
 export async function generatePromoterWeeklyPayoutBatches(args?: {
@@ -167,6 +247,7 @@ export async function generatePromoterWeeklyPayoutBatches(args?: {
     const [batch] = await db
       .insert(promoterWeeklyPayouts)
       .values({
+        batchType: "weekly",
         promoterId: firstRow.earning.promoterId,
         commissionMonthKey: firstRow.earning.commissionMonthKey,
         periodStart: period.start,
@@ -189,6 +270,7 @@ export async function generatePromoterWeeklyPayoutBatches(args?: {
           promoterWeeklyPayouts.commissionMonthKey,
           promoterWeeklyPayouts.periodStart,
           promoterWeeklyPayouts.periodEnd,
+          promoterWeeklyPayouts.batchType,
         ],
         set: {
           earningCount: rowsForGroup.length,
@@ -245,10 +327,115 @@ export async function generatePromoterWeeklyPayoutBatches(args?: {
   };
 }
 
+export async function generatePromoterPayNowPayoutBatches() {
+  await backfillLegacyOpenPromoterEarnings();
+
+  const rows = (await loadPayNowBatchGroupingRows()) as PayNowBatchGroupingRow[];
+  const groupedRows = groupRowsByPromoterMonth(rows);
+  const batches: PromoterWeeklyPayoutBatchRecord[] = [];
+  const now = new Date();
+
+  for (const rowsForGroup of groupedRows.values()) {
+    const [firstRow] = rowsForGroup;
+    if (!firstRow?.promoter || !firstRow.earning.commissionMonthKey) {
+      continue;
+    }
+
+    const existingBatch = await getExistingOpenPayNowBatchForGroup({
+      promoterId: firstRow.earning.promoterId,
+      commissionMonthKey: firstRow.earning.commissionMonthKey,
+    });
+    const earningIds = rowsForGroup.map((row) => row.earning.id);
+    const period = getPayNowPeriod(rowsForGroup, now);
+    const totalNormalizedCommissionAmount = formatAmount(
+      rowsForGroup.reduce(
+        (sum, row) =>
+          sum +
+          parseAmount(
+            row.earning.normalizedCommissionAmount ?? row.earning.commissionAmount,
+          ),
+        0,
+      ),
+    );
+    const approvedAt = existingBatch?.approvedAt ?? now;
+    const batchValues = {
+      periodStart: period.start,
+      periodEnd: period.end,
+      periodTimezone: period.timezone,
+      earningCount: rowsForGroup.length,
+      totalNormalizedCommissionAmount,
+      payoutCurrencyCode: "USD",
+      encryptedWalletAddress: firstRow.promoter.encryptedWalletAddress,
+      walletIv: firstRow.promoter.walletIv,
+      walletTag: firstRow.promoter.walletTag,
+      status: "approved" as const,
+      approvedAt,
+      rejectedAt: null,
+      updatedAt: now,
+    };
+
+    const [batch] = existingBatch
+      ? await db
+          .update(promoterWeeklyPayouts)
+          .set(batchValues)
+          .where(eq(promoterWeeklyPayouts.id, existingBatch.id))
+          .returning()
+      : await db
+          .insert(promoterWeeklyPayouts)
+          .values({
+            batchType: "pay_now",
+            promoterId: firstRow.earning.promoterId,
+            commissionMonthKey: firstRow.earning.commissionMonthKey,
+            adminNotes: null,
+            ...batchValues,
+          })
+          .returning();
+
+    if (!batch) continue;
+
+    if (existingBatch) {
+      await db
+        .update(promoterPayouts)
+        .set({
+          weeklyPayoutId: null,
+          status: "pending",
+          approvedAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(promoterPayouts.weeklyPayoutId, existingBatch.id),
+            notInArray(promoterPayouts.id, earningIds),
+            inArray(promoterPayouts.status, ["pending", "approved"]),
+          ),
+        );
+    }
+
+    await db
+      .update(promoterPayouts)
+      .set({
+        weeklyPayoutId: batch.id,
+        status: "approved",
+        approvedAt,
+        rejectedAt: null,
+        updatedAt: now,
+      })
+      .where(inArray(promoterPayouts.id, earningIds));
+
+    batches.push(batch);
+  }
+
+  return {
+    batches,
+  };
+}
+
 export async function listPromoterWeeklyPayoutBatches(args?: {
   periodDate?: string | Date;
   promoterId?: string;
   status?: PromoterWeeklyPayoutBatchRecord["status"];
+  batchType?: PromoterWeeklyPayoutBatchRecord["batchType"];
+  limit?: number;
 }) {
   const period = args?.periodDate ? getPeriodFromDate(args.periodDate) : null;
   const conditions = [];
@@ -258,6 +445,9 @@ export async function listPromoterWeeklyPayoutBatches(args?: {
   }
   if (args?.status) {
     conditions.push(eq(promoterWeeklyPayouts.status, args.status));
+  }
+  if (args?.batchType) {
+    conditions.push(eq(promoterWeeklyPayouts.batchType, args.batchType));
   }
   if (period) {
     conditions.push(eq(promoterWeeklyPayouts.periodStart, period.start));
@@ -274,7 +464,7 @@ export async function listPromoterWeeklyPayoutBatches(args?: {
     .innerJoin(promoters, eq(promoterWeeklyPayouts.promoterId, promoters.id))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(promoterWeeklyPayouts.periodStart), desc(promoterWeeklyPayouts.createdAt))
-    .limit(500);
+    .limit(args?.limit ?? 500);
 
   return rows.map((row) => ({
     ...row.batch,
@@ -282,6 +472,19 @@ export async function listPromoterWeeklyPayoutBatches(args?: {
     promoterEmail: row.promoterEmail,
     walletAddress: decryptWalletSnapshot(row.batch),
   }));
+}
+
+export async function listPromoterPayNowPayoutBatches(args?: {
+  promoterId?: string;
+  status?: PromoterWeeklyPayoutBatchRecord["status"];
+  limit?: number;
+}) {
+  return listPromoterWeeklyPayoutBatches({
+    promoterId: args?.promoterId,
+    status: args?.status,
+    batchType: "pay_now",
+    limit: args?.limit,
+  });
 }
 
 export async function getPromoterWeeklyPayoutBatchById(batchId: string) {
@@ -426,6 +629,7 @@ export async function getPromoterWeeklyPayoutBatchPeriodOverview(
   const period = getPeriodFromDate(periodDate);
   const batches = await listPromoterWeeklyPayoutBatches({
     periodDate: period.start,
+    batchType: "weekly",
   });
 
   return {

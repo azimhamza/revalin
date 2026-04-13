@@ -1,11 +1,5 @@
 import Link from "next/link";
-import {
-  ArrowRight,
-  ClipboardCheck,
-  ShieldCheck,
-  Users,
-  WalletCards,
-} from "lucide-react";
+import { ArrowRight, ShieldCheck } from "lucide-react";
 import { redirect } from "next/navigation";
 
 import { Footer } from "@/components/layout/footer";
@@ -56,6 +50,13 @@ export default async function PromoterSignupPage() {
       <div className="min-h-screen md:grid md:grid-cols-2">
         <div className="flex min-h-screen flex-col justify-center bg-background px-sides py-16 md:justify-start md:px-10 md:pt-top-spacing lg:px-16">
           <div className="mx-auto w-full max-w-[440px] md:my-auto">
+            <div className="mb-8 mt-10 md:mt-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">
+                Promoter
+              </p>
+              <h1 className="mt-2 text-3xl font-semibold tracking-[-0.02em]">Apply for access</h1>
+            </div>
+
             <div className="rounded-[26px] border border-[#0B2E2F]/12 bg-card p-6 shadow-[0_20px_48px_rgba(11,46,47,0.05)]">
               {promoterRecord ? (
                 <div className="space-y-5">
@@ -102,123 +103,48 @@ export default async function PromoterSignupPage() {
               )}
             </div>
 
-            <div className="mt-8 space-y-3 md:hidden">
-              {[
-                {
-                  icon: ClipboardCheck,
-                  text: "Apply with the same account you will use for the promoter dashboard",
-                },
-                {
-                  icon: WalletCards,
-                  text: "Set your payout wallet after approval",
-                },
-                {
-                  icon: ShieldCheck,
-                  text: "Applications are reviewed manually before promoter access goes live",
-                },
-              ].map((item) => (
-                <div key={item.text} className="flex items-center gap-3">
-                  <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[#0B2E2F]/12 bg-[#F4F1EA]/70">
-                    <item.icon
-                      className="size-3.5 text-[#0B2E2F]/60"
-                      strokeWidth={1.5}
-                    />
-                  </div>
-                  <p className="text-sm text-foreground/50">{item.text}</p>
-                </div>
-              ))}
+            <div className="mt-8 flex items-center gap-2.5 md:hidden">
+              <ShieldCheck className="size-4 shrink-0 text-[#0B2E2F]/40" strokeWidth={1.5} />
+              <p className="text-sm text-foreground/40">Invite partners. Track approvals. Weekly payouts.</p>
             </div>
           </div>
         </div>
 
-        <div className="relative hidden min-h-screen overflow-hidden bg-[#0B2E2F] md:block">
-          <div className="relative z-10 flex h-full flex-col justify-between">
-            <div className="px-10 pt-10 lg:px-16">
-              <Link
-                href="/"
-                className="text-sm font-semibold tracking-tight text-[#F4F1EA]"
-              >
-                Revalin
-              </Link>
-            </div>
+        <div className="relative hidden overflow-hidden bg-[#0B2E2F] md:flex md:flex-col md:justify-between">
+          <div className="relative z-10 flex flex-1 flex-col justify-end px-10 pb-20 lg:px-16">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#F4F1EA]/40">
+              Revalin Promoter
+            </p>
+            <h2 className="mt-5 max-w-[16ch] text-[2.75rem] font-semibold leading-[1.04] tracking-[-0.04em] text-[#F4F1EA] lg:text-[3.5rem]">
+              Grow the network. Earn from every partner.
+            </h2>
+            <p className="mt-5 max-w-sm text-base leading-relaxed text-[#F4F1EA]/50">
+              Invite Growth Partners, track their approvals, and earn commission from their sales.
+            </p>
 
-            <div className="px-10 pb-16 lg:px-16">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#F4F1EA]/45">
-                Promoter program
-              </p>
-              <h2 className="mt-4 text-[1.85rem] font-semibold leading-[1.08] tracking-[-0.03em] text-[#F4F1EA] lg:text-[2.2rem]">
-                Invite partners. Track approvals. Earn from their sales.
-              </h2>
-
-              <div className="mt-8 flex flex-wrap gap-3">
-                <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">
-                    Default rate
-                  </p>
-                  <p className="mt-1 text-xl font-semibold tracking-tight text-[#F4F1EA]">
-                    2.5%
-                  </p>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">
-                    Approval
-                  </p>
-                  <p className="mt-1 text-xl font-semibold tracking-tight text-[#F4F1EA]">
-                    Team review
-                  </p>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">
-                    Dashboard
-                  </p>
-                  <p className="mt-1 text-xl font-semibold tracking-tight text-[#F4F1EA]">
-                    Partner network
-                  </p>
-                </div>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <div className="border border-white/10 bg-white/[0.04] px-4 py-2.5">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Default rate</p>
+                <p className="mt-0.5 text-lg font-semibold tracking-tight text-[#F4F1EA]">2.5%</p>
               </div>
-
-              <div className="mt-8 grid grid-cols-2 gap-x-5 gap-y-4">
-                {[
-                  {
-                    icon: Users,
-                    text: "Invite Growth Partners for team review and approval",
-                  },
-                  {
-                    icon: ClipboardCheck,
-                    text: "Admin maps successful referrals to partner records",
-                  },
-                  {
-                    icon: WalletCards,
-                    text: "Earn from sales generated by approved mapped partners",
-                  },
-                  {
-                    icon: ShieldCheck,
-                    text: "Payouts settle weekly after wallet setup",
-                  },
-                ].map((item) => (
-                  <div key={item.text} className="flex items-start gap-3">
-                    <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5">
-                      <item.icon
-                        className="size-3.5 text-[#F4F1EA]/70"
-                        strokeWidth={1.5}
-                      />
-                    </div>
-                    <p className="text-[13px] leading-5 text-[#F4F1EA]/55">
-                      {item.text}
-                    </p>
-                  </div>
-                ))}
+              <div className="border border-white/10 bg-white/[0.04] px-4 py-2.5">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Dashboard</p>
+                <p className="mt-0.5 text-lg font-semibold tracking-tight text-[#F4F1EA]">Partner network</p>
               </div>
-            </div>
-
-            <div className="relative z-10 border-t border-white/8 px-10 py-5 lg:px-16">
-              <p className="text-[11px] italic tracking-tight text-[#F4F1EA]/30">
-                Applications are reviewed manually before promoter access goes live.
-              </p>
+              <div className="border border-white/10 bg-white/[0.04] px-4 py-2.5">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Payouts</p>
+                <p className="mt-0.5 text-lg font-semibold tracking-tight text-[#F4F1EA]">Weekly</p>
+              </div>
             </div>
           </div>
 
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.03] via-transparent to-black/10" />
+          <div className="relative z-10 border-t border-white/8 px-10 py-5 lg:px-16">
+            <p className="text-xs italic tracking-tight text-[#F4F1EA]/25">
+              Applications are reviewed manually before promoter access goes live.
+            </p>
+          </div>
+
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.02] via-transparent to-black/10" />
         </div>
       </div>
       <Footer />

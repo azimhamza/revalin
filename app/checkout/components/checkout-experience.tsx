@@ -1468,7 +1468,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
     if (!shouldAutoApplyDiscount || activeOrder) return;
     if (!normalizedDiscountCode || !cartSnapshot) return;
-    if (!isShippingAddressReady(shippingAddress) || isValidatingDiscount) return;
+    if (!isShippingAddressReady(shippingAddress)) return;
+    if (isValidatingDiscount || isLoadingQuote) return;
 
     if (appliedDiscount?.code === normalizedDiscountCode) {
       setShouldAutoApplyDiscount(false);
@@ -1482,6 +1483,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     applyDiscountCode,
     cartSnapshot,
     discountCode,
+    isLoadingQuote,
     isValidatingDiscount,
     shippingAddress,
     shouldAutoApplyDiscount,
@@ -1518,11 +1520,18 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       setError(null);
 
       try {
+        // Include the pending affiliate discount code in the first quote so
+        // the user sees it applied as soon as the shipping address is ready.
+        const pendingCode = shouldAutoApplyDiscount && !appliedDiscount
+          ? discountCode.trim().toUpperCase() || undefined
+          : undefined;
+
         const session = await ensureCheckoutApiSession();
         const data = await repriceCheckoutApiSession({
           session,
           payload: buildCheckoutSessionPayload({
             shippingAddress: nextShippingAddress,
+            ...(pendingCode ? { discountCode: pendingCode } : {}),
           }),
           fallbackMessage: 'Unable to fetch shipping options.',
           signal: controller.signal,
@@ -1538,6 +1547,18 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
             ? current
             : data.quote.selectedServiceId
         );
+
+        // If we piggybacked the affiliate discount, mark it as applied.
+        if (pendingCode && data.quote.discountAmount && Number(data.quote.discountAmount.amount) > 0) {
+          const appliedCode = data.quote.discountCode || pendingCode;
+          setDiscountCode(appliedCode);
+          setAppliedDiscount({
+            code: appliedCode,
+            amount: data.quote.discountAmount.amount || '0.00',
+            currencyCode: data.quote.discountAmount.currencyCode || data.quote.currencyCode,
+          });
+          setShouldAutoApplyDiscount(false);
+        }
       } catch (quoteError: unknown) {
         if (quoteError instanceof Error && quoteError.name === 'AbortError') {
           return;
@@ -1553,7 +1574,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         }
       }
     },
-    [buildCheckoutSessionPayload, cartSnapshot, ensureCheckoutApiSession, repriceCheckoutApiSession]
+    [appliedDiscount, buildCheckoutSessionPayload, cartSnapshot, discountCode, ensureCheckoutApiSession, repriceCheckoutApiSession, shouldAutoApplyDiscount]
   );
 
   const handleFetchQuote = async () => {

@@ -1,7 +1,10 @@
 import crypto from 'node:crypto';
 import { apiError } from '@/lib/api/errors';
 import { optionalSession } from '@/lib/api/auth';
-import { getApprovedAffiliateByCode, getApprovedAffiliateByDiscountCode } from '@/lib/checkout/affiliate-service';
+import {
+  getApprovedAffiliateByCode,
+  getApprovedAffiliateByDiscountCode,
+} from '@/lib/checkout/affiliate-service';
 import { getSuccessfulPromoterForAffiliate } from '@/lib/checkout/promoter-service';
 import {
   FREE_SHIPPING_THRESHOLD,
@@ -17,13 +20,21 @@ import {
   getNowPaymentsEstimate,
   getNowPaymentsMinimumAmount,
 } from '@/lib/checkout/nowpayments';
-import { saveCheckoutOrder, findCheckoutOrderByCartId, updateCheckoutOrder } from '@/lib/checkout/order-store';
+import {
+  saveCheckoutOrder,
+  findCheckoutOrderByCartId,
+  updateCheckoutOrder,
+} from '@/lib/checkout/order-store';
 import { markCheckoutOrderSetupFailed } from '@/lib/checkout/order-recovery';
 import {
   buildCheckoutPricingMetadata,
   calculateCheckoutPricing,
 } from '@/lib/checkout/pricing';
-import { createWalletForOrder, buildShieldClimbPaymentUrl, convertToUsd } from '@/lib/checkout/shieldclimb';
+import {
+  createWalletForOrder,
+  buildShieldClimbPaymentUrl,
+  convertToUsd,
+} from '@/lib/checkout/shieldclimb';
 import {
   applyFreeShipping,
   findCheckoutShippingService,
@@ -60,7 +71,10 @@ import type {
   ShieldClimbPaymentData,
 } from '@/lib/checkout/types';
 import { toPublicCheckoutOrder } from '@/lib/checkout/types';
-import { createAndStoreWallet, updateWalletShieldClimbData } from '@/lib/checkout/wallet-service';
+import {
+  createAndStoreWallet,
+  updateWalletShieldClimbData,
+} from '@/lib/checkout/wallet-service';
 
 type FinalizeCheckoutInput = {
   sessionId: string;
@@ -89,6 +103,42 @@ type FinalizeCheckoutInput = {
   discountCode?: string | null;
   requestUrl: URL;
   affiliateCode?: string | null;
+};
+
+export type FinalizeCheckoutDependencies = {
+  nowDate: () => Date;
+  nowIso: () => string;
+  createOrderId: () => string;
+  createAccessKey: () => string;
+  createShieldClimbCallbackToken: () => string;
+  optionalSession: typeof optionalSession;
+  getApprovedAffiliateByDiscountCode: typeof getApprovedAffiliateByDiscountCode;
+  getApprovedAffiliateByCode: typeof getApprovedAffiliateByCode;
+  getAffiliateCommissionSnapshot: typeof getAffiliateCommissionSnapshot;
+  getCommissionMonthKey: typeof getCommissionMonthKey;
+  getSuccessfulPromoterForAffiliate: typeof getSuccessfulPromoterForAffiliate;
+  findCheckoutOrderByCartId: typeof findCheckoutOrderByCartId;
+  saveCheckoutOrder: typeof saveCheckoutOrder;
+  updateCheckoutOrder: typeof updateCheckoutOrder;
+  upsertSwellGuestAccount: typeof upsertSwellGuestAccount;
+  createSwellCheckoutCart: typeof createSwellCheckoutCart;
+  getShipEngineCheckoutServices: typeof getShipEngineCheckoutServices;
+  getSwellManualPaymentMethod: typeof getSwellManualPaymentMethod;
+  updateSwellCheckoutCart: typeof updateSwellCheckoutCart;
+  convertSwellCartToOrder: typeof convertSwellCartToOrder;
+  updateSwellOrder: typeof updateSwellOrder;
+  cancelSwellOrder: typeof cancelSwellOrder;
+  deleteSwellCheckoutCart: typeof deleteSwellCheckoutCart;
+  createAndStoreWallet: typeof createAndStoreWallet;
+  updateWalletShieldClimbData: typeof updateWalletShieldClimbData;
+  createWalletForOrder: typeof createWalletForOrder;
+  convertToUsd: typeof convertToUsd;
+  buildShieldClimbPaymentUrl: typeof buildShieldClimbPaymentUrl;
+  getNowPaymentsEstimate: typeof getNowPaymentsEstimate;
+  getNowPaymentsMinimumAmount: typeof getNowPaymentsMinimumAmount;
+  createNowPaymentsPayment: typeof createNowPaymentsPayment;
+  sendCheckoutPaymentInitiatedEvent: typeof sendCheckoutPaymentInitiatedEvent;
+  trackCheckoutPaymentInitiated: typeof trackCheckoutPaymentInitiated;
 };
 
 function createOrderId() {
@@ -199,9 +249,14 @@ function toStorefrontCartSnapshot(
 }
 
 function buildAffiliateData(args: {
-  resolvedAffiliate: Awaited<ReturnType<typeof getApprovedAffiliateByDiscountCode>>;
+  resolvedAffiliate: Awaited<
+    ReturnType<typeof getApprovedAffiliateByDiscountCode>
+  >;
   affiliateSource: 'url' | 'discount_code' | null;
-  commissionSnapshot: Awaited<ReturnType<typeof getAffiliateCommissionSnapshot>> | null;
+  commissionSnapshot: Awaited<
+    ReturnType<typeof getAffiliateCommissionSnapshot>
+  > | null;
+  fallbackCommissionMonthKey: string;
 }) {
   if (!args.resolvedAffiliate) {
     return null;
@@ -222,7 +277,7 @@ function buildAffiliateData(args: {
         : args.commissionSnapshot.tierLabel
       : null,
     commissionMonthKey:
-      args.commissionSnapshot?.monthKey ?? getCommissionMonthKey(new Date()),
+      args.commissionSnapshot?.monthKey ?? args.fallbackCommissionMonthKey,
     discountCode: args.resolvedAffiliate.discountCode,
     discountPercentAtPurchase: args.resolvedAffiliate.discountPercent,
     source: args.affiliateSource,
@@ -230,7 +285,9 @@ function buildAffiliateData(args: {
 }
 
 function buildPromoterData(args: {
-  promoterAttribution: Awaited<ReturnType<typeof getSuccessfulPromoterForAffiliate>>;
+  promoterAttribution: Awaited<
+    ReturnType<typeof getSuccessfulPromoterForAffiliate>
+  >;
   affiliateData: CheckoutOrderAffiliate | null;
 }) {
   if (!args.promoterAttribution || !args.affiliateData) {
@@ -271,8 +328,9 @@ function buildNowPaymentsOrderRecord(args: {
   sourceWalletAddress?: string | null;
   payment: Awaited<ReturnType<typeof createNowPaymentsPayment>>;
   ipnCallbackEnabled: boolean;
+  nowIso?: string;
 }): CheckoutOrderRecord {
-  const now = new Date().toISOString();
+  const now = args.nowIso ?? new Date().toISOString();
   const shippingStatus = args.orderShipmentTotal <= 0.009 ? 'free' : 'quoted';
 
   const paymentData: NowPaymentsPaymentData = {
@@ -379,8 +437,9 @@ function buildShieldClimbOrderRecord(args: {
   callbackToken?: string;
   redirectUrl: string;
   paymentStatus?: string;
+  nowIso?: string;
 }): CheckoutOrderRecord {
-  const now = new Date().toISOString();
+  const now = args.nowIso ?? new Date().toISOString();
   const shippingStatus = args.orderShipmentTotal <= 0.009 ? 'free' : 'quoted';
 
   const paymentData: ShieldClimbPaymentData = {
@@ -459,323 +518,487 @@ function normalizeFinalizeError(error: unknown) {
   return error;
 }
 
-export async function finalizeCheckoutSession(
-  args: FinalizeCheckoutInput,
-): Promise<{
-  accessKey: string;
-  order: CheckoutOrderPublic;
-  redirectUrl?: string | null;
-}> {
-  const requestUrl = args.requestUrl;
-  const fallbackCartId =
-    args.cartId?.trim() || `checkout-session:${args.sessionId}`;
-  let swellOrderId: string | undefined;
-  let checkoutOrderId: string | undefined;
-  let temporaryCartId: string | undefined;
-
-  try {
-    const affiliateRefCode = args.affiliateCode?.trim() || null;
-    let resolvedAffiliate: Awaited<
-      ReturnType<typeof getApprovedAffiliateByDiscountCode>
-    > = null;
-    let affiliateSource: 'url' | 'discount_code' | null = null;
-
-    if (args.discountCode) {
-      resolvedAffiliate = await getApprovedAffiliateByDiscountCode(
-        args.discountCode,
-      );
-      if (resolvedAffiliate) {
-        affiliateSource = affiliateRefCode ? 'url' : 'discount_code';
-      }
-    }
-    if (!resolvedAffiliate && affiliateRefCode) {
-      resolvedAffiliate = await getApprovedAffiliateByCode(affiliateRefCode);
-      if (resolvedAffiliate) {
-        affiliateSource = 'url';
-      }
-    }
-
-    const commissionSnapshot = resolvedAffiliate
-      ? await getAffiliateCommissionSnapshot({
-          affiliateId: resolvedAffiliate.id,
-        })
-      : null;
-    const affiliateData = buildAffiliateData({
-      resolvedAffiliate,
-      affiliateSource,
-      commissionSnapshot,
-    });
-    const promoterAttribution = affiliateData
-      ? await getSuccessfulPromoterForAffiliate(affiliateData.id)
-      : null;
-    const promoterData = buildPromoterData({
-      promoterAttribution,
-      affiliateData,
-    });
-
-    const existingOrder = await findCheckoutOrderByCartId(fallbackCartId);
-    if (existingOrder) {
-      return {
-        accessKey: existingOrder.accessKey,
-        order: toPublicCheckoutOrder(existingOrder),
-        redirectUrl:
-          existingOrder.payment.provider === 'shieldclimb'
-            ? existingOrder.payment.redirectUrl
-            : null,
-      };
-    }
-
-    const lines = args.cartSnapshot.lines.map((line) => ({
-      ...line,
-      skuNumber: line.skuNumber || undefined,
-    })) satisfies CheckoutOrderLine[];
-    const currencyCode = args.cartSnapshot.currencyCode;
-    const subtotalAmount = getCartSnapshotSubtotal(args.cartSnapshot);
-    const itemCount = getCartSnapshotItemCount(args.cartSnapshot);
-    const paymentCurrency = args.paymentCurrency.toLowerCase();
-    const ipnCallbackEnabled = shouldEnableIpnCallback(requestUrl);
-    const manualMethod = getSwellManualPaymentMethod();
-    const swellShipping = toSwellAddress({
-      ...args.shippingAddress,
-      email: args.shippingAddress.email,
-      phone: args.shippingAddress.phone,
-    });
-    const swellBilling = {
-      ...swellShipping,
-      method: manualMethod,
-    };
-
-    const account = await upsertSwellGuestAccount({
-      email: args.shippingAddress.email,
-      firstName: args.shippingAddress.firstName,
-      lastName: args.shippingAddress.lastName,
-      phone: args.shippingAddress.phone,
-      shipping: swellShipping,
-      billing: swellBilling,
-    });
-
-    const swellCart = await createSwellCheckoutCart({
-      accountId: account.id,
-      storefrontCartId: args.cartId ?? undefined,
-      storefrontCartSnapshot: toStorefrontCartSnapshot(args.cartSnapshot),
-      currencyCode,
-      shipping: swellShipping,
-      billing: swellBilling,
-      comments: args.shippingAddress.notes,
-      couponCode: args.discountCode ?? undefined,
-    });
-    temporaryCartId = swellCart.id;
-
-    let availableServices: CheckoutRatedService[] = [];
-    let shipEngineErrorMessage: string | null = null;
+export function createFinalizeCheckoutSession(
+  dependencies: FinalizeCheckoutDependencies,
+) {
+  return async function finalizeCheckoutSessionWithDependencies(
+    args: FinalizeCheckoutInput,
+  ): Promise<{
+    accessKey: string;
+    order: CheckoutOrderPublic;
+    redirectUrl?: string | null;
+  }> {
+    const requestUrl = args.requestUrl;
+    const fallbackCartId =
+      args.cartId?.trim() || `checkout-session:${args.sessionId}`;
+    let swellOrderId: string | undefined;
+    let checkoutOrderId: string | undefined;
+    let temporaryCartId: string | undefined;
 
     try {
-      availableServices = await getShipEngineCheckoutServices({
-        shippingAddress: args.shippingAddress,
-        currencyCode,
-        subtotalAmount,
-        itemCount,
+      const affiliateRefCode = args.affiliateCode?.trim() || null;
+      let resolvedAffiliate: Awaited<
+        ReturnType<typeof getApprovedAffiliateByDiscountCode>
+      > = null;
+      let affiliateSource: 'url' | 'discount_code' | null = null;
+
+      if (args.discountCode) {
+        resolvedAffiliate =
+          await dependencies.getApprovedAffiliateByDiscountCode(
+            args.discountCode,
+          );
+        if (resolvedAffiliate) {
+          affiliateSource = affiliateRefCode ? 'url' : 'discount_code';
+        }
+      }
+      if (!resolvedAffiliate && affiliateRefCode) {
+        resolvedAffiliate =
+          await dependencies.getApprovedAffiliateByCode(affiliateRefCode);
+        if (resolvedAffiliate) {
+          affiliateSource = 'url';
+        }
+      }
+
+      const commissionSnapshot = resolvedAffiliate
+        ? await dependencies.getAffiliateCommissionSnapshot({
+            affiliateId: resolvedAffiliate.id,
+          })
+        : null;
+      const affiliateData = buildAffiliateData({
+        resolvedAffiliate,
+        affiliateSource,
+        commissionSnapshot,
+        fallbackCommissionMonthKey: dependencies.getCommissionMonthKey(
+          dependencies.nowDate(),
+        ),
       });
-    } catch (shipEngineError) {
-      shipEngineErrorMessage =
-        shipEngineError instanceof Error
-          ? shipEngineError.message
-          : 'Unable to validate the shipping address.';
-      console.error(
-        'Unable to fetch ShipEngine rates for payment creation, falling back to Swell:',
-        shipEngineError,
-      );
-    }
-
-    if (availableServices.length === 0) {
-      availableServices = mapSwellRatedServices(
-        swellCart.shipment_rating?.services || [],
-        swellCart.currency || currencyCode,
-      );
-    }
-
-    if (availableServices.length === 0 && shipEngineErrorMessage) {
-      throw apiError.badRequest(shipEngineErrorMessage, {
-        code: 'address_validation_failed',
+      const promoterAttribution = affiliateData
+        ? await dependencies.getSuccessfulPromoterForAffiliate(affiliateData.id)
+        : null;
+      const promoterData = buildPromoterData({
+        promoterAttribution,
+        affiliateData,
       });
-    }
 
-    availableServices = applyFreeShipping(
-      availableServices,
-      subtotalAmount,
-      currencyCode,
-    );
+      const existingOrder =
+        await dependencies.findCheckoutOrderByCartId(fallbackCartId);
+      if (existingOrder) {
+        return {
+          accessKey: existingOrder.accessKey,
+          order: toPublicCheckoutOrder(existingOrder),
+          redirectUrl:
+            existingOrder.payment.provider === 'shieldclimb'
+              ? existingOrder.payment.redirectUrl
+              : null,
+        };
+      }
 
-    const selectedService = findCheckoutShippingService(
-      availableServices,
-      args.selectedShippingServiceId,
-    );
-
-    if (!selectedService) {
-      throw apiError.badRequest(
-        'No valid shipping service was selected. Refresh shipping options and retry.',
-        {
-          code: 'invalid_shipping_service',
-          availableServiceIds: availableServices.map((service) => service.id),
-        },
-      );
-    }
-
-    const ratedCart = await updateSwellCheckoutCart(swellCart.id, {
-      shipping: {
+      const lines = args.cartSnapshot.lines.map((line) => ({
+        ...line,
+        skuNumber: line.skuNumber || undefined,
+      })) satisfies CheckoutOrderLine[];
+      const currencyCode = args.cartSnapshot.currencyCode;
+      const subtotalAmount = getCartSnapshotSubtotal(args.cartSnapshot);
+      const itemCount = getCartSnapshotItemCount(args.cartSnapshot);
+      const paymentCurrency = args.paymentCurrency.toLowerCase();
+      const ipnCallbackEnabled = shouldEnableIpnCallback(requestUrl);
+      const manualMethod = dependencies.getSwellManualPaymentMethod();
+      const swellShipping = toSwellAddress({
+        ...args.shippingAddress,
+        email: args.shippingAddress.email,
+        phone: args.shippingAddress.phone,
+      });
+      const swellBilling = {
         ...swellShipping,
-        service: selectedService.source === 'swell' ? selectedService.id : undefined,
-        service_name: selectedService.name,
-        price: Number(selectedService.price.amount || 0),
-      },
-      billing: {
-        ...swellBilling,
         method: manualMethod,
-      },
-      coupon_code: args.discountCode ?? undefined,
-    });
+      };
 
-    const swellOrder = await convertSwellCartToOrder(ratedCart.id);
-    swellOrderId = swellOrder.id;
-    temporaryCartId = undefined;
-
-    const couponDiscountTotal = Number(
-      swellOrder.discount_total ?? swellOrder.item_discount ?? 0,
-    );
-    if (args.discountCode && couponDiscountTotal <= 0) {
-      throw apiError.badRequest('That discount code is invalid or has expired.');
-    }
-    const orderTaxTotal = Number(swellOrder.tax_total || 0);
-    const orderShipmentTotal = Number(
-      swellOrder.shipment_total || selectedService.price.amount || 0,
-    );
-    const appliedDiscountCode = args.discountCode || swellOrder.coupon_code;
-    const pricing = calculateCheckoutPricing({
-      currencyCode: swellOrder.currency || currencyCode,
-      subtotalAmount,
-      couponDiscountAmount: couponDiscountTotal,
-      couponCode: appliedDiscountCode,
-      shippingAmount: orderShipmentTotal,
-      taxAmount: orderTaxTotal,
-      paymentMethod: args.paymentMethod,
-    });
-    const orderDiscountTotal = pricing.discountTotalValue;
-    const orderTotal = pricing.totalValue;
-    const fiatCurrency = (swellOrder.currency || currencyCode).toLowerCase();
-    const pricingMetadata = buildCheckoutPricingMetadata({
-      currencyCode: swellOrder.currency || currencyCode,
-      subtotalAmount,
-      shippingAmount: orderShipmentTotal,
-      taxAmount: orderTaxTotal,
-      totalAmount: orderTotal,
-      discounts: pricing.discounts,
-      discountAmount: orderDiscountTotal,
-      discountCode: appliedDiscountCode,
-      paymentMethod: args.paymentMethod,
-    });
-
-    if (!orderTotal || orderTotal <= 0 || !Number.isFinite(orderTotal)) {
-      throw apiError.badRequest('Order total must be greater than zero.', {
-        code: 'invalid_order_total',
+      const account = await dependencies.upsertSwellGuestAccount({
+        email: args.shippingAddress.email,
+        firstName: args.shippingAddress.firstName,
+        lastName: args.shippingAddress.lastName,
+        phone: args.shippingAddress.phone,
+        shipping: swellShipping,
+        billing: swellBilling,
       });
-    }
 
-    const orderId = createOrderId();
-    const accessKey = createAccessKey();
-    const shieldClimbCallbackToken = createShieldClimbCallbackToken();
-    const session = await optionalSession();
-    const userId = session?.user?.id ?? null;
+      const swellCart = await dependencies.createSwellCheckoutCart({
+        accountId: account.id,
+        storefrontCartId: args.cartId ?? undefined,
+        storefrontCartSnapshot: toStorefrontCartSnapshot(args.cartSnapshot),
+        currencyCode,
+        shipping: swellShipping,
+        billing: swellBilling,
+        comments: args.shippingAddress.notes,
+        couponCode: args.discountCode ?? undefined,
+      });
+      temporaryCartId = swellCart.id;
 
-    if (args.paymentMethod === 'card') {
-      const publicCallbackOrigin = getPublicCallbackOrigin(requestUrl);
+      let availableServices: CheckoutRatedService[] = [];
+      let shipEngineErrorMessage: string | null = null;
 
-      if (!publicCallbackOrigin) {
-        throw apiError.badRequest(
-          'Card checkout requires a public callback URL. Set `SHIELDCLIMB_CALLBACK_BASE_URL`, `NEXT_PUBLIC_SITE_URL`, or `SITE_URL` to your public app origin before using ShieldClimb from local development.',
-          { code: 'shieldclimb_callback_unavailable' },
+      try {
+        availableServices = await dependencies.getShipEngineCheckoutServices({
+          shippingAddress: args.shippingAddress,
+          currencyCode,
+          subtotalAmount,
+          itemCount,
+        });
+      } catch (shipEngineError) {
+        shipEngineErrorMessage =
+          shipEngineError instanceof Error
+            ? shipEngineError.message
+            : 'Unable to validate the shipping address.';
+        console.error(
+          'Unable to fetch ShipEngine rates for payment creation, falling back to Swell:',
+          shipEngineError,
         );
       }
 
-      const initializingOrder = await saveCheckoutOrder({
-        ...buildShieldClimbOrderRecord({
-          orderId,
-          accessKey,
-          cartId: fallbackCartId,
-          userId,
-          swellAccountId: account.id,
-          swellCartId: ratedCart.id,
-          swellOrderId: swellOrder.id,
-          swellOrderNumber: swellOrder.number,
-          currencyCode: swellOrder.currency || currencyCode,
-          lines,
-          shippingAddress: args.shippingAddress,
-          shippingService: mapShippingService(
-            selectedService,
-            swellOrder.currency || currencyCode,
-          ),
-          orderSubtotal: subtotalAmount,
-          orderDiscountTotal,
-          discountCode: appliedDiscountCode,
-          discounts: pricing.discounts,
-          orderTaxTotal,
-          orderGrandTotal: orderTotal,
-          orderShipmentTotal,
-          walletId: 'pending',
-          addressIn: '',
-          polygonAddressIn: '',
-          ipnToken: '',
-          callbackToken: shieldClimbCallbackToken,
-          redirectUrl: '',
-          paymentStatus: 'initializing',
-        }),
-        affiliate: affiliateData,
-        promoter: promoterData,
-      });
-      checkoutOrderId = initializingOrder.orderId;
-
-      const wallet = await createAndStoreWallet(orderId);
-
-      const callbackUrl = new URL(
-        '/api/providers/shieldclimb/callback',
-        publicCallbackOrigin,
-      );
-      callbackUrl.searchParams.set('orderId', orderId);
-      callbackUrl.searchParams.set('callbackToken', shieldClimbCallbackToken);
-
-      const scWallet = await createWalletForOrder({
-        callbackUrl: callbackUrl.toString(),
-      });
-
-      await updateWalletShieldClimbData(wallet.id, {
-        addressIn: scWallet.address_in,
-        polygonAddressIn: scWallet.polygon_address_in,
-        ipnToken: scWallet.ipn_token,
-      });
-
-      let paymentAmount = orderTotal;
-      if (fiatCurrency === 'cad') {
-        const converted = await convertToUsd({
-          amount: orderTotal,
-          fromCurrency: 'CAD',
-        });
-        paymentAmount = Number(converted.value_coin);
+      if (availableServices.length === 0) {
+        availableServices = mapSwellRatedServices(
+          swellCart.shipment_rating?.services || [],
+          swellCart.currency || currencyCode,
+        );
       }
 
-      const redirectUrl = buildShieldClimbPaymentUrl({
-        addressIn: scWallet.address_in,
-        amount: paymentAmount,
-        email: args.shippingAddress.email,
-        currency: fiatCurrency === 'cad' ? 'USD' : fiatCurrency.toUpperCase(),
+      if (availableServices.length === 0 && shipEngineErrorMessage) {
+        throw apiError.badRequest(shipEngineErrorMessage, {
+          code: 'address_validation_failed',
+        });
+      }
+
+      availableServices = applyFreeShipping(
+        availableServices,
+        subtotalAmount,
+        currencyCode,
+      );
+
+      const selectedService = findCheckoutShippingService(
+        availableServices,
+        args.selectedShippingServiceId,
+      );
+
+      if (!selectedService) {
+        throw apiError.badRequest(
+          'No valid shipping service was selected. Refresh shipping options and retry.',
+          {
+            code: 'invalid_shipping_service',
+            availableServiceIds: availableServices.map((service) => service.id),
+          },
+        );
+      }
+
+      const ratedCart = await dependencies.updateSwellCheckoutCart(
+        swellCart.id,
+        {
+          shipping: {
+            ...swellShipping,
+            service:
+              selectedService.source === 'swell'
+                ? selectedService.id
+                : undefined,
+            service_name: selectedService.name,
+            price: Number(selectedService.price.amount || 0),
+          },
+          billing: {
+            ...swellBilling,
+            method: manualMethod,
+          },
+          coupon_code: args.discountCode ?? undefined,
+        },
+      );
+
+      const swellOrder = await dependencies.convertSwellCartToOrder(
+        ratedCart.id,
+      );
+      swellOrderId = swellOrder.id;
+      temporaryCartId = undefined;
+
+      const couponDiscountTotal = Number(
+        swellOrder.discount_total ?? swellOrder.item_discount ?? 0,
+      );
+      if (args.discountCode && couponDiscountTotal <= 0) {
+        throw apiError.badRequest(
+          'That discount code is invalid or has expired.',
+        );
+      }
+      const orderTaxTotal = Number(swellOrder.tax_total || 0);
+      const orderShipmentTotal = Number(
+        swellOrder.shipment_total || selectedService.price.amount || 0,
+      );
+      const appliedDiscountCode = args.discountCode || swellOrder.coupon_code;
+      const pricing = calculateCheckoutPricing({
+        currencyCode: swellOrder.currency || currencyCode,
+        subtotalAmount,
+        couponDiscountAmount: couponDiscountTotal,
+        couponCode: appliedDiscountCode,
+        shippingAmount: orderShipmentTotal,
+        taxAmount: orderTaxTotal,
+        paymentMethod: args.paymentMethod,
+      });
+      const orderDiscountTotal = pricing.discountTotalValue;
+      const orderTotal = pricing.totalValue;
+      const fiatCurrency = (swellOrder.currency || currencyCode).toLowerCase();
+      const pricingMetadata = buildCheckoutPricingMetadata({
+        currencyCode: swellOrder.currency || currencyCode,
+        subtotalAmount,
+        shippingAmount: orderShipmentTotal,
+        taxAmount: orderTaxTotal,
+        totalAmount: orderTotal,
+        discounts: pricing.discounts,
+        discountAmount: orderDiscountTotal,
+        discountCode: appliedDiscountCode,
+        paymentMethod: args.paymentMethod,
       });
 
-      await updateSwellOrder(swellOrder.id, {
+      if (!orderTotal || orderTotal <= 0 || !Number.isFinite(orderTotal)) {
+        throw apiError.badRequest('Order total must be greater than zero.', {
+          code: 'invalid_order_total',
+        });
+      }
+
+      const orderId = dependencies.createOrderId();
+      const accessKey = dependencies.createAccessKey();
+      const shieldClimbCallbackToken =
+        dependencies.createShieldClimbCallbackToken();
+      const session = await dependencies.optionalSession();
+      const userId = session?.user?.id ?? null;
+
+      if (args.paymentMethod === 'card') {
+        const publicCallbackOrigin = getPublicCallbackOrigin(requestUrl);
+
+        if (!publicCallbackOrigin) {
+          throw apiError.badRequest(
+            'Card checkout requires a public callback URL. Set `SHIELDCLIMB_CALLBACK_BASE_URL`, `NEXT_PUBLIC_SITE_URL`, or `SITE_URL` to your public app origin before using ShieldClimb from local development.',
+            { code: 'shieldclimb_callback_unavailable' },
+          );
+        }
+
+        const initializingOrder = await dependencies.saveCheckoutOrder({
+          ...buildShieldClimbOrderRecord({
+            orderId,
+            accessKey,
+            cartId: fallbackCartId,
+            userId,
+            swellAccountId: account.id,
+            swellCartId: ratedCart.id,
+            swellOrderId: swellOrder.id,
+            swellOrderNumber: swellOrder.number,
+            currencyCode: swellOrder.currency || currencyCode,
+            lines,
+            shippingAddress: args.shippingAddress,
+            shippingService: mapShippingService(
+              selectedService,
+              swellOrder.currency || currencyCode,
+            ),
+            orderSubtotal: subtotalAmount,
+            orderDiscountTotal,
+            discountCode: appliedDiscountCode,
+            discounts: pricing.discounts,
+            orderTaxTotal,
+            orderGrandTotal: orderTotal,
+            orderShipmentTotal,
+            walletId: 'pending',
+            addressIn: '',
+            polygonAddressIn: '',
+            ipnToken: '',
+            callbackToken: shieldClimbCallbackToken,
+            redirectUrl: '',
+            paymentStatus: 'initializing',
+            nowIso: dependencies.nowIso(),
+          }),
+          affiliate: affiliateData,
+          promoter: promoterData,
+        });
+        checkoutOrderId = initializingOrder.orderId;
+
+        const wallet = await dependencies.createAndStoreWallet(orderId);
+
+        const callbackUrl = new URL(
+          '/api/providers/shieldclimb/callback',
+          publicCallbackOrigin,
+        );
+        callbackUrl.searchParams.set('orderId', orderId);
+        callbackUrl.searchParams.set('callbackToken', shieldClimbCallbackToken);
+
+        const scWallet = await dependencies.createWalletForOrder({
+          callbackUrl: callbackUrl.toString(),
+        });
+
+        await dependencies.updateWalletShieldClimbData(wallet.id, {
+          addressIn: scWallet.address_in,
+          polygonAddressIn: scWallet.polygon_address_in,
+          ipnToken: scWallet.ipn_token,
+        });
+
+        let paymentAmount = orderTotal;
+        if (fiatCurrency === 'cad') {
+          const converted = await dependencies.convertToUsd({
+            amount: orderTotal,
+            fromCurrency: 'CAD',
+          });
+          paymentAmount = Number(converted.value_coin);
+        }
+
+        const redirectUrl = dependencies.buildShieldClimbPaymentUrl({
+          addressIn: scWallet.address_in,
+          amount: paymentAmount,
+          email: args.shippingAddress.email,
+          currency: fiatCurrency === 'cad' ? 'USD' : fiatCurrency.toUpperCase(),
+        });
+
+        await dependencies.updateSwellOrder(swellOrder.id, {
+          billing: {
+            ...(swellOrder.billing || {}),
+            method: manualMethod,
+            intent: {
+              provider: 'shieldclimb',
+              wallet_id: wallet.id,
+              status: 'unpaid',
+            },
+          },
+          metadata: {
+            ...(swellOrder.metadata || {}),
+            checkout_reference: orderId,
+            coupon_code: appliedDiscountCode || null,
+            pricing: pricingMetadata,
+            shieldclimb: {
+              wallet_id: wallet.id,
+              status: 'unpaid',
+            },
+            affiliate: resolvedAffiliate
+              ? {
+                  ...affiliateData,
+                  paymentProvider: 'shieldclimb',
+                  status: 'pending',
+                }
+              : null,
+            promoter: promoterData
+              ? {
+                  ...promoterData,
+                  paymentProvider: 'shieldclimb',
+                  status: 'pending',
+                }
+              : null,
+          },
+        });
+
+        const checkoutOrder = await dependencies.saveCheckoutOrder({
+          ...buildShieldClimbOrderRecord({
+            orderId,
+            accessKey,
+            cartId: fallbackCartId,
+            userId,
+            swellAccountId: account.id,
+            swellCartId: ratedCart.id,
+            swellOrderId: swellOrder.id,
+            swellOrderNumber: swellOrder.number,
+            currencyCode: swellOrder.currency || currencyCode,
+            lines,
+            shippingAddress: args.shippingAddress,
+            shippingService: mapShippingService(
+              selectedService,
+              swellOrder.currency || currencyCode,
+            ),
+            orderSubtotal: subtotalAmount,
+            orderDiscountTotal,
+            discountCode: appliedDiscountCode,
+            discounts: pricing.discounts,
+            orderTaxTotal,
+            orderGrandTotal: orderTotal,
+            orderShipmentTotal,
+            walletId: wallet.id,
+            addressIn: scWallet.address_in,
+            polygonAddressIn: scWallet.polygon_address_in,
+            ipnToken: scWallet.ipn_token,
+            callbackToken: shieldClimbCallbackToken,
+            redirectUrl,
+            paymentStatus: 'unpaid',
+            nowIso: dependencies.nowIso(),
+          }),
+          affiliate: affiliateData,
+          promoter: promoterData,
+        });
+        checkoutOrderId = checkoutOrder.orderId;
+
+        const initiationTelemetry = {
+          orderId,
+          userId,
+          currencyCode,
+          orderTotal: orderTotal.toFixed(2),
+          itemCount,
+          paymentProvider: 'shieldclimb' as const,
+          paymentMethod: 'card' as const,
+          affiliateCode: resolvedAffiliate?.code ?? null,
+          affiliateSource,
+        };
+
+        dependencies
+          .sendCheckoutPaymentInitiatedEvent({
+            ...initiationTelemetry,
+            customerEmail: args.shippingAddress.email,
+          })
+          .catch(() => {});
+        dependencies
+          .trackCheckoutPaymentInitiated(initiationTelemetry)
+          .catch(() => {});
+
+        return {
+          accessKey,
+          redirectUrl,
+          order: toPublicCheckoutOrder(
+            checkoutOrder,
+          ) satisfies CheckoutOrderPublic,
+        };
+      }
+
+      const [estimate, minimum] = await Promise.all([
+        dependencies.getNowPaymentsEstimate({
+          amount: orderTotal,
+          currencyFrom: fiatCurrency,
+          currencyTo: paymentCurrency,
+        }),
+        dependencies.getNowPaymentsMinimumAmount({
+          currencyFrom: paymentCurrency,
+          fiatEquivalent: fiatCurrency,
+          isFixedRate: true,
+          isFeePaidByUser: false,
+        }),
+      ]);
+
+      if (estimate.estimated_amount < minimum.min_amount) {
+        throw apiError.badRequest(
+          `The order total is below NOWPayments minimum for ${paymentCurrency.toUpperCase()}. Choose another currency or use a different shipping/payment configuration.`,
+          {
+            code: 'nowpayments_minimum_not_met',
+          },
+        );
+      }
+
+      const payment = await dependencies.createNowPaymentsPayment({
+        price_amount: Number(orderTotal.toFixed(2)),
+        price_currency: fiatCurrency,
+        pay_currency: paymentCurrency,
+        ipn_callback_url: ipnCallbackEnabled
+          ? new URL('/api/webhooks/nowpayments', requestUrl.origin).toString()
+          : undefined,
+        order_id: orderId,
+        order_description: buildOrderDescription(lines),
+        is_fixed_rate: true,
+        is_fee_paid_by_user: false,
+      });
+
+      await dependencies.updateSwellOrder(swellOrder.id, {
         billing: {
           ...(swellOrder.billing || {}),
           method: manualMethod,
           intent: {
-            provider: 'shieldclimb',
-            wallet_id: wallet.id,
-            status: 'unpaid',
+            provider: 'nowpayments',
+            payment_id: payment.payment_id,
+            payment_status: payment.payment_status,
+            payment_currency: paymentCurrency,
+            source_wallet_address: args.sourceWalletAddress || null,
           },
         },
         metadata: {
@@ -783,29 +1006,46 @@ export async function finalizeCheckoutSession(
           checkout_reference: orderId,
           coupon_code: appliedDiscountCode || null,
           pricing: pricingMetadata,
-          shieldclimb: {
-            wallet_id: wallet.id,
-            status: 'unpaid',
+          nowpayments: {
+            payment_id: payment.payment_id,
+            purchase_id: payment.purchase_id,
+            payment_status: payment.payment_status,
+            payment_currency: paymentCurrency,
+            pay_address: payment.pay_address,
+            source_wallet_address: args.sourceWalletAddress || null,
+            pay_amount: payment.pay_amount,
           },
           affiliate: resolvedAffiliate
             ? {
                 ...affiliateData,
-                paymentProvider: 'shieldclimb',
+                commissionOwed: (
+                  orderTotal *
+                  Number(
+                    commissionSnapshot?.effectiveRate ||
+                      resolvedAffiliate.commissionRate,
+                  )
+                ).toFixed(2),
+                currencyCode: fiatCurrency.toUpperCase(),
+                paymentProvider: 'nowpayments',
                 status: 'pending',
               }
             : null,
           promoter: promoterData
             ? {
                 ...promoterData,
-                paymentProvider: 'shieldclimb',
+                commissionOwed: (
+                  orderTotal * Number(promoterData.commissionRate)
+                ).toFixed(2),
+                currencyCode: fiatCurrency.toUpperCase(),
+                paymentProvider: 'nowpayments',
                 status: 'pending',
               }
             : null,
         },
       });
 
-      const checkoutOrder = await saveCheckoutOrder({
-        ...buildShieldClimbOrderRecord({
+      const checkoutOrder = await dependencies.saveCheckoutOrder({
+        ...buildNowPaymentsOrderRecord({
           orderId,
           accessKey,
           cartId: fallbackCartId,
@@ -828,13 +1068,11 @@ export async function finalizeCheckoutSession(
           orderTaxTotal,
           orderGrandTotal: orderTotal,
           orderShipmentTotal,
-          walletId: wallet.id,
-          addressIn: scWallet.address_in,
-          polygonAddressIn: scWallet.polygon_address_in,
-          ipnToken: scWallet.ipn_token,
-          callbackToken: shieldClimbCallbackToken,
-          redirectUrl,
-          paymentStatus: 'unpaid',
+          paymentCurrency,
+          sourceWalletAddress: args.sourceWalletAddress,
+          payment,
+          ipnCallbackEnabled,
+          nowIso: dependencies.nowIso(),
         }),
         affiliate: affiliateData,
         promoter: promoterData,
@@ -847,199 +1085,104 @@ export async function finalizeCheckoutSession(
         currencyCode,
         orderTotal: orderTotal.toFixed(2),
         itemCount,
-        paymentProvider: 'shieldclimb' as const,
-        paymentMethod: 'card' as const,
+        paymentProvider: 'nowpayments' as const,
+        paymentMethod: 'crypto' as const,
         affiliateCode: resolvedAffiliate?.code ?? null,
         affiliateSource,
       };
 
-      sendCheckoutPaymentInitiatedEvent({
-        ...initiationTelemetry,
-        customerEmail: args.shippingAddress.email,
-      }).catch(() => {});
-      trackCheckoutPaymentInitiated(initiationTelemetry).catch(() => {});
+      dependencies
+        .sendCheckoutPaymentInitiatedEvent({
+          ...initiationTelemetry,
+          customerEmail: args.shippingAddress.email,
+        })
+        .catch(() => {});
+      dependencies
+        .trackCheckoutPaymentInitiated(initiationTelemetry)
+        .catch(() => {});
 
       return {
         accessKey,
-        redirectUrl,
-        order: toPublicCheckoutOrder(checkoutOrder) satisfies CheckoutOrderPublic,
+        order: toPublicCheckoutOrder(
+          checkoutOrder,
+        ) satisfies CheckoutOrderPublic,
       };
-    }
+    } catch (caughtError) {
+      const error = normalizeFinalizeError(caughtError);
+      const reason =
+        error instanceof Error ? error.message : 'Unknown payment setup error.';
 
-    const [estimate, minimum] = await Promise.all([
-      getNowPaymentsEstimate({
-        amount: orderTotal,
-        currencyFrom: fiatCurrency,
-        currencyTo: paymentCurrency,
-      }),
-      getNowPaymentsMinimumAmount({
-        currencyFrom: paymentCurrency,
-        fiatEquivalent: fiatCurrency,
-        isFixedRate: true,
-        isFeePaidByUser: false,
-      }),
-    ]);
+      if (swellOrderId) {
+        await dependencies
+          .cancelSwellOrder(swellOrderId, reason)
+          .catch((cancelError) => {
+            console.error('Unable to cancel failed Swell order:', cancelError);
+          });
+      } else if (temporaryCartId) {
+        await dependencies
+          .deleteSwellCheckoutCart(temporaryCartId)
+          .catch((cleanupError) => {
+            console.error(
+              'Unable to delete temporary Swell checkout cart:',
+              cleanupError,
+            );
+          });
+      }
 
-    if (estimate.estimated_amount < minimum.min_amount) {
-      throw apiError.badRequest(
-        `The order total is below NOWPayments minimum for ${paymentCurrency.toUpperCase()}. Choose another currency or use a different shipping/payment configuration.`,
-        {
-          code: 'nowpayments_minimum_not_met',
-        },
-      );
-    }
-
-    const payment = await createNowPaymentsPayment({
-      price_amount: Number(orderTotal.toFixed(2)),
-      price_currency: fiatCurrency,
-      pay_currency: paymentCurrency,
-      ipn_callback_url: ipnCallbackEnabled
-        ? new URL('/api/webhooks/nowpayments', requestUrl.origin).toString()
-        : undefined,
-      order_id: orderId,
-      order_description: buildOrderDescription(lines),
-      is_fixed_rate: true,
-      is_fee_paid_by_user: false,
-    });
-
-    await updateSwellOrder(swellOrder.id, {
-      billing: {
-        ...(swellOrder.billing || {}),
-        method: manualMethod,
-        intent: {
-          provider: 'nowpayments',
-          payment_id: payment.payment_id,
-          payment_status: payment.payment_status,
-          payment_currency: paymentCurrency,
-          source_wallet_address: args.sourceWalletAddress || null,
-        },
-      },
-      metadata: {
-        ...(swellOrder.metadata || {}),
-        checkout_reference: orderId,
-        coupon_code: appliedDiscountCode || null,
-        pricing: pricingMetadata,
-        nowpayments: {
-          payment_id: payment.payment_id,
-          purchase_id: payment.purchase_id,
-          payment_status: payment.payment_status,
-          payment_currency: paymentCurrency,
-          pay_address: payment.pay_address,
-          source_wallet_address: args.sourceWalletAddress || null,
-          pay_amount: payment.pay_amount,
-        },
-        affiliate: resolvedAffiliate
-          ? {
-              ...affiliateData,
-              commissionOwed: (
-                orderTotal *
-                Number(
-                  commissionSnapshot?.effectiveRate ||
-                    resolvedAffiliate.commissionRate,
-                )
-              ).toFixed(2),
-              currencyCode: fiatCurrency.toUpperCase(),
-              paymentProvider: 'nowpayments',
-              status: 'pending',
+      if (checkoutOrderId) {
+        await dependencies
+          .updateCheckoutOrder(checkoutOrderId, (current) => {
+            if (isTerminalPaymentStatus(current.payment.status)) {
+              return current;
             }
-          : null,
-        promoter: promoterData
-          ? {
-              ...promoterData,
-              commissionOwed: (
-                orderTotal * Number(promoterData.commissionRate)
-              ).toFixed(2),
-              currencyCode: fiatCurrency.toUpperCase(),
-              paymentProvider: 'nowpayments',
-              status: 'pending',
-            }
-          : null,
-      },
-    });
 
-    const checkoutOrder = await saveCheckoutOrder({
-      ...buildNowPaymentsOrderRecord({
-        orderId,
-        accessKey,
-        cartId: fallbackCartId,
-        userId,
-        swellAccountId: account.id,
-        swellCartId: ratedCart.id,
-        swellOrderId: swellOrder.id,
-        swellOrderNumber: swellOrder.number,
-        currencyCode: swellOrder.currency || currencyCode,
-        lines,
-        shippingAddress: args.shippingAddress,
-        shippingService: mapShippingService(
-          selectedService,
-          swellOrder.currency || currencyCode,
-        ),
-        orderSubtotal: subtotalAmount,
-        orderDiscountTotal,
-        discountCode: appliedDiscountCode,
-        discounts: pricing.discounts,
-        orderTaxTotal,
-        orderGrandTotal: orderTotal,
-        orderShipmentTotal,
-        paymentCurrency,
-        sourceWalletAddress: args.sourceWalletAddress,
-        payment,
-        ipnCallbackEnabled,
-      }),
-      affiliate: affiliateData,
-      promoter: promoterData,
-    });
-    checkoutOrderId = checkoutOrder.orderId;
+            return markCheckoutOrderSetupFailed(current, reason);
+          })
+          .catch((orderError) => {
+            console.error(
+              'Unable to mark checkout order setup failed:',
+              orderError,
+            );
+          });
+      }
 
-    const initiationTelemetry = {
-      orderId,
-      userId,
-      currencyCode,
-      orderTotal: orderTotal.toFixed(2),
-      itemCount,
-      paymentProvider: 'nowpayments' as const,
-      paymentMethod: 'crypto' as const,
-      affiliateCode: resolvedAffiliate?.code ?? null,
-      affiliateSource,
-    };
-
-    sendCheckoutPaymentInitiatedEvent({
-      ...initiationTelemetry,
-      customerEmail: args.shippingAddress.email,
-    }).catch(() => {});
-    trackCheckoutPaymentInitiated(initiationTelemetry).catch(() => {});
-
-    return {
-      accessKey,
-      order: toPublicCheckoutOrder(checkoutOrder) satisfies CheckoutOrderPublic,
-    };
-  } catch (caughtError) {
-    const error = normalizeFinalizeError(caughtError);
-    const reason =
-      error instanceof Error ? error.message : 'Unknown payment setup error.';
-
-    if (swellOrderId) {
-      await cancelSwellOrder(swellOrderId, reason).catch((cancelError) => {
-        console.error('Unable to cancel failed Swell order:', cancelError);
-      });
-    } else if (temporaryCartId) {
-      await deleteSwellCheckoutCart(temporaryCartId).catch((cleanupError) => {
-        console.error('Unable to delete temporary Swell checkout cart:', cleanupError);
-      });
+      throw error;
     }
-
-    if (checkoutOrderId) {
-      await updateCheckoutOrder(checkoutOrderId, (current) => {
-        if (isTerminalPaymentStatus(current.payment.status)) {
-          return current;
-        }
-
-        return markCheckoutOrderSetupFailed(current, reason);
-      }).catch((orderError) => {
-        console.error('Unable to mark checkout order setup failed:', orderError);
-      });
-    }
-
-    throw error;
-  }
+  };
 }
+
+export const finalizeCheckoutSession = createFinalizeCheckoutSession({
+  nowDate: () => new Date(),
+  nowIso: () => new Date().toISOString(),
+  createOrderId,
+  createAccessKey,
+  createShieldClimbCallbackToken,
+  optionalSession,
+  getApprovedAffiliateByDiscountCode,
+  getApprovedAffiliateByCode,
+  getAffiliateCommissionSnapshot,
+  getCommissionMonthKey,
+  getSuccessfulPromoterForAffiliate,
+  findCheckoutOrderByCartId,
+  saveCheckoutOrder,
+  updateCheckoutOrder,
+  upsertSwellGuestAccount,
+  createSwellCheckoutCart,
+  getShipEngineCheckoutServices,
+  getSwellManualPaymentMethod,
+  updateSwellCheckoutCart,
+  convertSwellCartToOrder,
+  updateSwellOrder,
+  cancelSwellOrder,
+  deleteSwellCheckoutCart,
+  createAndStoreWallet,
+  updateWalletShieldClimbData,
+  createWalletForOrder,
+  convertToUsd,
+  buildShieldClimbPaymentUrl,
+  getNowPaymentsEstimate,
+  getNowPaymentsMinimumAmount,
+  createNowPaymentsPayment,
+  sendCheckoutPaymentInitiatedEvent,
+  trackCheckoutPaymentInitiated,
+});

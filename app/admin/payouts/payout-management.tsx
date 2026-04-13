@@ -41,6 +41,7 @@ import { getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
 
 type WeeklyPayoutRow = {
   id: string;
+  batchType: "weekly" | "pay_now";
   partnerType: "affiliate" | "promoter";
   partnerId: string;
   partnerCode: string;
@@ -119,7 +120,9 @@ type StatusFilter =
   | "paid"
   | "rejected"
   | "affiliate"
-  | "promoter";
+  | "promoter"
+  | "weekly"
+  | "pay_now";
 
 function statusBadgeVariant(
   status: WeeklyPayoutRow["status"],
@@ -150,6 +153,18 @@ function formatDate(value: string | null) {
 function formatDateTime(value: string | null) {
   if (!value) return "-";
   return new Date(value).toLocaleString();
+}
+
+function formatBatchType(batchType: WeeklyPayoutRow["batchType"]) {
+  return batchType === "pay_now" ? "Pay now" : "Weekly";
+}
+
+function formatBatchWindow(batch: WeeklyPayoutRow, fallbackPeriod: string) {
+  if (batch.batchType === "weekly") {
+    return fallbackPeriod;
+  }
+
+  return `${formatDate(batch.periodStart)} - ${formatDate(batch.periodEnd)}`;
 }
 
 export function PayoutManagement({
@@ -214,10 +229,14 @@ export function PayoutManagement({
     return batches.filter((entry) => {
       if (filter === "affiliate" && entry.partnerType !== "affiliate") return false;
       if (filter === "promoter" && entry.partnerType !== "promoter") return false;
+      if (filter === "weekly" && entry.batchType !== "weekly") return false;
+      if (filter === "pay_now" && entry.batchType !== "pay_now") return false;
       if (
         filter !== "all" &&
         filter !== "affiliate" &&
         filter !== "promoter" &&
+        filter !== "weekly" &&
+        filter !== "pay_now" &&
         entry.status !== filter
       ) {
         return false;
@@ -228,6 +247,7 @@ export function PayoutManagement({
         entry.partnerCode.toLowerCase().includes(normalizedQuery) ||
         entry.affiliateCode.toLowerCase().includes(normalizedQuery) ||
         entry.commissionMonthKey.toLowerCase().includes(normalizedQuery) ||
+        formatBatchType(entry.batchType).toLowerCase().includes(normalizedQuery) ||
         entry.walletAddress.toLowerCase().includes(normalizedQuery) ||
         (entry.txHash ?? "").toLowerCase().includes(normalizedQuery) ||
         (entry.currentTierLabel ?? entry.currentTierKey ?? "")
@@ -252,6 +272,16 @@ export function PayoutManagement({
       key: "promoter",
       label: "Promoters",
       count: batches.filter((entry) => entry.partnerType === "promoter").length,
+    },
+    {
+      key: "weekly",
+      label: "Weekly",
+      count: batches.filter((entry) => entry.batchType === "weekly").length,
+    },
+    {
+      key: "pay_now",
+      label: "Pay now",
+      count: batches.filter((entry) => entry.batchType === "pay_now").length,
     },
   ];
 
@@ -280,6 +310,30 @@ export function PayoutManagement({
       await refreshWithPeriod(selectedPeriodDate);
     } catch (error) {
       console.error("[ADMIN-WEEKLY-PAYOUTS-GENERATE]", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handlePayNowGenerate() {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/admin/payout-batches/pay-now", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          partnerType: "all",
+        }),
+      });
+      const payload = await readJsonSafely(response);
+
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, "Failed to create pay-now payout batches."));
+      }
+
+      await refreshWithPeriod(selectedPeriodDate);
+    } catch (error) {
+      console.error("[ADMIN-PAY-NOW-PAYOUTS-GENERATE]", error);
     } finally {
       setLoading(false);
     }
@@ -362,13 +416,19 @@ export function PayoutManagement({
   return (
     <div className="space-y-4">
       <AdminSectionHeader
-        title="Weekly payout queue"
-        description={`Weekly batches for ${period.label} (${period.timezone}). Generate this window manually, then mark each batch paid once the transfer has been sent.`}
+        title="Payout queue"
+        description={`Weekly batches for ${period.label} (${period.timezone}) plus recent pay-now batches. Create batches here, then mark each one paid after the transfer is sent.`}
       />
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <AdminStatCard label="Weekly batches" value={counts.all} size="compact" />
+        <AdminStatCard label="Payout batches" value={counts.all} size="compact" />
         <AdminStatCard label="Ready to send" value={counts.approved} size="compact" />
+        <AdminStatCard
+          label="Pay-now batches"
+          value={batches.filter((entry) => entry.batchType === "pay_now").length}
+          tone="muted"
+          size="compact"
+        />
         <AdminStatCard
           label="Current batch value"
           value={formatUsd(totals.approved + totals.pending)}
@@ -424,7 +484,16 @@ export function PayoutManagement({
             className={adminPrimaryButtonClass}
           >
             {loading ? <Loader2 className="mr-2 size-3.5 animate-spin" /> : null}
-            Generate / refresh batches
+            Generate / refresh weekly
+          </Button>
+          <Button
+            type="button"
+            onClick={handlePayNowGenerate}
+            disabled={loading}
+            className={adminPrimaryButtonClass}
+          >
+            {loading ? <Loader2 className="mr-2 size-3.5 animate-spin" /> : null}
+            Create pay-now batches
           </Button>
         </div>
       </div>
@@ -436,6 +505,7 @@ export function PayoutManagement({
           <TableHeader>
             <TableRow>
               <TableHead>Partner</TableHead>
+              <TableHead>Type</TableHead>
               <TableHead>Commission month</TableHead>
               <TableHead>Earnings</TableHead>
               <TableHead>Payout</TableHead>
@@ -460,6 +530,11 @@ export function PayoutManagement({
                     </p>
                   </div>
                 </TableCell>
+                <TableCell>
+                  <Badge variant={batch.batchType === "pay_now" ? "secondary" : "outline"}>
+                    {formatBatchType(batch.batchType)}
+                  </Badge>
+                </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {batch.commissionMonthKey}
                 </TableCell>
@@ -468,7 +543,9 @@ export function PayoutManagement({
                     <p className="text-xs font-semibold text-foreground">
                       {batch.earningCount} {batch.earningCount === 1 ? "earning" : "earnings"}
                     </p>
-                    <p className="text-[11px] text-muted-foreground">{period.label}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {formatBatchWindow(batch, period.label)}
+                    </p>
                   </div>
                 </TableCell>
                 <TableCell>
@@ -568,11 +645,11 @@ export function PayoutManagement({
             {filteredBatches.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={9}
+                  colSpan={10}
                   className="py-10 text-center text-sm text-muted-foreground"
                 >
-                  No weekly payout batches for this period yet. Generate the period to batch
-                  eligible partner earnings.
+                  No payout batches match this view yet. Generate the weekly period or create
+                  pay-now batches to queue eligible partner earnings.
                 </TableCell>
               </TableRow>
             ) : null}
@@ -583,7 +660,7 @@ export function PayoutManagement({
       <Dialog open={markPaidOpen} onOpenChange={setMarkPaidOpen}>
         <DialogContent className="rounded-none">
           <DialogHeader>
-            <DialogTitle>Mark weekly payout batch paid</DialogTitle>
+            <DialogTitle>Mark payout batch paid</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
@@ -779,7 +856,7 @@ export function PayoutManagement({
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
         <DialogContent className="rounded-none">
           <DialogHeader>
-            <DialogTitle>Reject weekly payout batch</DialogTitle>
+            <DialogTitle>Reject payout batch</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">

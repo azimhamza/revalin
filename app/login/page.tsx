@@ -2,7 +2,7 @@ import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { LoginForm } from './login-form';
 import { Footer } from '@/components/layout/footer';
-import { FlaskConical, Truck, ShieldCheck, ClipboardCheck } from 'lucide-react';
+import { ShieldCheck } from 'lucide-react';
 import { getServerSession } from '@/lib/auth-server';
 
 export const metadata = {
@@ -45,80 +45,35 @@ export default async function LoginPage({
               </Suspense>
             </div>
 
-            {/* Mobile features */}
-            <div className="mt-8 space-y-3 md:hidden">
-              {[
-                { icon: ClipboardCheck, text: 'Batch-specific COAs with purity data' },
-                { icon: Truck, text: 'Tracked worldwide shipping' },
-                { icon: ShieldCheck, text: 'Encrypted & private' },
-              ].map((item) => (
-                <div key={item.text} className="flex items-center gap-3">
-                  <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[#0B2E2F]/12 bg-[#F4F1EA]/70">
-                    <item.icon className="size-3.5 text-[#0B2E2F]/60" strokeWidth={1.5} />
-                  </div>
-                  <p className="text-sm text-foreground/50">{item.text}</p>
-                </div>
-              ))}
+            {/* Mobile trust line */}
+            <div className="mt-8 flex items-center gap-2.5 md:hidden">
+              <ShieldCheck className="size-4 shrink-0 text-[#0B2E2F]/40" strokeWidth={1.5} />
+              <p className="text-sm text-foreground/40">Verified compounds. Third-party tested.</p>
             </div>
           </div>
         </div>
 
-        {/* ── Right panel — dark teal brand panel ── */}
+        {/* ── Right panel — editorial minimal ── */}
         <div className="relative hidden overflow-hidden bg-[#0B2E2F] md:flex md:flex-col md:justify-between">
-          <div className="relative z-10 flex flex-1 flex-col justify-start px-10 pt-16 md:pt-[calc(var(--top-spacing)-0.75rem)] lg:px-16">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#F4F1EA]/50">
-              Revalin Research
+          <div className="relative z-10 flex flex-1 flex-col justify-end px-10 pb-20 lg:px-16">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#F4F1EA]/40">
+              Revalin
             </p>
-            <h2 className="mt-4 text-[2rem] font-semibold tracking-[-0.03em] leading-[1.08] text-[#F4F1EA] lg:text-[2.375rem]">
-              Reference-standard peptides for serious research.
+            <h2 className="mt-5 max-w-[14ch] text-[2.75rem] font-semibold leading-[1.04] tracking-[-0.04em] text-[#F4F1EA] lg:text-[3.5rem]">
+              Research-grade. Verified purity.
             </h2>
-            <p className="mt-4 max-w-md text-sm leading-relaxed text-[#F4F1EA]/60">
-              Sign in to manage orders, access batch-specific certificates of analysis, and track shipments from your dashboard.
+            <p className="mt-5 max-w-sm text-base leading-relaxed text-[#F4F1EA]/50">
+              Every batch third-party tested. Every order tracked.
             </p>
-
-            {/* Stats row */}
-            <div className="mt-10 flex flex-wrap gap-3">
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Avg. purity</p>
-                <p className="mt-1 text-xl font-semibold tracking-tight text-[#F4F1EA]">&gt;99%</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Fulfillment</p>
-                <p className="mt-1 text-xl font-semibold tracking-tight text-[#F4F1EA]">Same-day</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Testing</p>
-                <p className="mt-1 text-xl font-semibold tracking-tight text-[#F4F1EA]">Third-party</p>
-              </div>
-            </div>
-
-            {/* Feature list */}
-            <div className="mt-10 grid grid-cols-2 gap-x-6 gap-y-5">
-              {[
-                { icon: ClipboardCheck, text: 'COAs with HPLC & mass spec data' },
-                { icon: Truck, text: 'Discreet, tracked worldwide shipping' },
-                { icon: FlaskConical, text: 'Full catalog of research peptides' },
-                { icon: ShieldCheck, text: 'Encrypted data, no third-party sharing' },
-              ].map((item) => (
-                <div key={item.text} className="flex items-start gap-3">
-                  <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5">
-                    <item.icon className="size-3.5 text-[#F4F1EA]/70" strokeWidth={1.5} />
-                  </div>
-                  <p className="text-[13px] leading-snug text-[#F4F1EA]/55">{item.text}</p>
-                </div>
-              ))}
-            </div>
           </div>
 
-          {/* Bottom tagline */}
           <div className="relative z-10 border-t border-white/8 px-10 py-5 lg:px-16">
-            <p className="text-xs italic tracking-tight text-[#F4F1EA]/30">
+            <p className="text-xs italic tracking-tight text-[#F4F1EA]/25">
               All products are intended for laboratory research use only.
             </p>
           </div>
 
-          {/* Subtle gradient overlay */}
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.03] via-transparent to-black/10" />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.02] via-transparent to-black/10" />
         </div>
       </div>
       <Footer />

@@ -1,11 +1,5 @@
 import Link from "next/link";
-import {
-  ArrowRight,
-  ClipboardCheck,
-  ShieldCheck,
-  Users,
-  WalletCards,
-} from "lucide-react";
+import { ArrowRight, ShieldCheck } from "lucide-react";
 import { notFound, redirect } from "next/navigation";
 
 import { Footer } from "@/components/layout/footer";
@@ -116,28 +110,11 @@ export default async function AffiliateSignupPage({
       <div className="min-h-screen md:grid md:grid-cols-2">
         <div className="flex min-h-screen flex-col justify-center bg-background px-sides py-16 md:justify-start md:px-10 md:pt-top-spacing lg:px-16">
           <div className="mx-auto w-full max-w-[440px] md:my-auto">
-            <div className="mt-10 mb-8 rounded-xl border border-[#0B2E2F]/12 bg-[#0B2E2F] px-4 py-3.5 md:hidden">
-              <div className="flex items-center justify-between gap-4">
-                <p className="text-sm font-semibold text-[#F4F1EA]">
-                  Growth Partner Program
-                </p>
-                <div className="flex gap-3">
-                  <div className="text-center">
-                    <p className="text-[9px] uppercase tracking-[0.12em] text-[#F4F1EA]/40">
-                      Commission
-                    </p>
-                    <p className="text-sm font-semibold text-[#F4F1EA]">10%+</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-[9px] uppercase tracking-[0.12em] text-[#F4F1EA]/40">
-                      Access
-                    </p>
-                    <p className="text-sm font-semibold text-[#F4F1EA]">
-                      Live dashboard
-                    </p>
-                  </div>
-                </div>
-              </div>
+            <div className="mb-8 mt-10 md:mt-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">
+                Growth Partner
+              </p>
+              <h1 className="mt-2 text-3xl font-semibold tracking-[-0.02em]">Apply for access</h1>
             </div>
 
             <div className="rounded-[26px] border border-[#0B2E2F]/12 bg-card p-6 shadow-[0_20px_48px_rgba(11,46,47,0.05)]">
@@ -202,113 +179,52 @@ export default async function AffiliateSignupPage({
               )}
             </div>
 
-            <div className="mt-8 space-y-3 md:hidden">
-              {[
-                {
-                  icon: ClipboardCheck,
-                  text: "Apply with the channels you already use to reach serious researchers",
-                },
-                {
-                  icon: WalletCards,
-                  text: "Set your payout wallet and manage commissions once your account is approved",
-                },
-                {
-                  icon: ShieldCheck,
-                  text: "Use the same email for your application and dashboard access",
-                },
-              ].map((item) => (
-                <div key={item.text} className="flex items-center gap-3">
-                  <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[#0B2E2F]/12 bg-[#F4F1EA]/70">
-                    <item.icon
-                      className="size-3.5 text-[#0B2E2F]/60"
-                      strokeWidth={1.5}
-                    />
-                  </div>
-                  <p className="text-sm text-foreground/50">{item.text}</p>
-                </div>
-              ))}
+            <div className="mt-8 flex items-center gap-2.5 md:hidden">
+              <ShieldCheck className="size-4 shrink-0 text-[#0B2E2F]/40" strokeWidth={1.5} />
+              <p className="text-sm text-foreground/40">15%+ commission. Live dashboard. Weekly payouts.</p>
             </div>
           </div>
         </div>
 
         <div className="relative hidden overflow-hidden bg-[#0B2E2F] md:flex md:flex-col md:justify-between">
-          <div className="relative z-10 flex flex-1 flex-col justify-start px-10 pt-16 md:pt-[calc(var(--top-spacing)-0.75rem)] lg:px-16">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#F4F1EA]/50">
+          <div className="relative z-10 flex flex-1 flex-col justify-end px-10 pb-20 lg:px-16">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#F4F1EA]/40">
               Revalin Growth Partner
             </p>
-            <h2 className="mt-4 text-[1.85rem] font-semibold leading-[1.08] tracking-[-0.03em] text-[#F4F1EA] lg:text-[2.2rem]">
-              Apply once. Share your link. Track every referral.
+            <h2 className="mt-5 max-w-[16ch] text-[2.75rem] font-semibold leading-[1.04] tracking-[-0.04em] text-[#F4F1EA] lg:text-[3.5rem]">
+              {promoterFirstName
+                ? `${promoterFirstName} thinks you should apply as a Growth Partner.`
+                : "Share your link. Earn on every sale."}
             </h2>
+            <p className="mt-5 max-w-sm text-base leading-relaxed text-[#F4F1EA]/50">
+              {promoterFirstName
+                ? `${promoterFirstName} referred you. Submit your social profiles and the admin team will review your application.`
+                : "Apply once, get a personal referral link, and track every conversion from a live dashboard."}
+            </p>
 
             <div className="mt-8 flex flex-wrap gap-3">
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">
-                  Commission
-                </p>
-                <p className="mt-1 text-xl font-semibold tracking-tight text-[#F4F1EA]">
-                  10%+
-                </p>
+              <div className="border border-white/10 bg-white/[0.04] px-4 py-2.5">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Commission</p>
+                <p className="mt-0.5 text-lg font-semibold tracking-tight text-[#F4F1EA]">15%+</p>
               </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">
-                  Approval
-                </p>
-                <p className="mt-1 text-xl font-semibold tracking-tight text-[#F4F1EA]">
-                  Team review
-                </p>
+              <div className="border border-white/10 bg-white/[0.04] px-4 py-2.5">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Dashboard</p>
+                <p className="mt-0.5 text-lg font-semibold tracking-tight text-[#F4F1EA]">Live tracking</p>
               </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">
-                  Dashboard
-                </p>
-                <p className="mt-1 text-xl font-semibold tracking-tight text-[#F4F1EA]">
-                  Live tracking
-                </p>
+              <div className="border border-white/10 bg-white/[0.04] px-4 py-2.5">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/40">Payouts</p>
+                <p className="mt-0.5 text-lg font-semibold tracking-tight text-[#F4F1EA]">Weekly</p>
               </div>
-            </div>
-
-            <div className="mt-8 grid grid-cols-2 gap-x-5 gap-y-4">
-              {[
-                {
-                  icon: Users,
-                  text: "List the channels or communities you want the team to review",
-                },
-                {
-                  icon: ClipboardCheck,
-                  text: "Applications are reviewed manually before approval goes live",
-                },
-                {
-                  icon: WalletCards,
-                  text: "Use the same account email so access is linked cleanly",
-                },
-                {
-                  icon: ShieldCheck,
-                  text: "Add your payout wallet after approval from the dashboard",
-                },
-              ].map((item) => (
-                <div key={item.text} className="flex items-start gap-3">
-                  <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5">
-                    <item.icon
-                      className="size-3.5 text-[#F4F1EA]/70"
-                      strokeWidth={1.5}
-                    />
-                  </div>
-                  <p className="text-[13px] leading-5 text-[#F4F1EA]/55">
-                    {item.text}
-                  </p>
-                </div>
-              ))}
             </div>
           </div>
 
           <div className="relative z-10 border-t border-white/8 px-10 py-5 lg:px-16">
-            <p className="text-[11px] italic tracking-tight text-[#F4F1EA]/30">
-              Applications are reviewed manually before partner codes and
-              referral routes go live.
+            <p className="text-xs italic tracking-tight text-[#F4F1EA]/25">
+              Applications are reviewed manually before partner codes go live.
             </p>
           </div>
 
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.03] via-transparent to-black/10" />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.02] via-transparent to-black/10" />
         </div>
       </div>
       <Footer />

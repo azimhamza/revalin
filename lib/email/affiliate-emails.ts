@@ -6,7 +6,6 @@ const DEFAULT_AFFILIATE_REINSTATEMENT_TRANSACTIONAL_ID =
   "cmnj9xaj2009e0i1dgya1lguq";
 const DEFAULT_AFFILIATE_APPLICATION_TRANSACTIONAL_ID =
   "cmnmb8o0s00b40iuq46qek8jv";
-const DEFAULT_AFFILIATE_APPLICATION_RECIPIENT = "operations@revalin.ca";
 
 function getSiteUrl() {
   const explicit =
@@ -19,13 +18,6 @@ function getFirstName(name: string) {
   const normalized = name.trim();
   if (!normalized) return "there";
   return normalized.split(/\s+/)[0] || normalized;
-}
-
-function getAffiliateApplicationRecipient() {
-  return (
-    process.env.AFFILIATE_APPLICATION_EMAIL_TO?.trim() ||
-    DEFAULT_AFFILIATE_APPLICATION_RECIPIENT
-  );
 }
 
 export async function sendAffiliateApplicationReceivedEmail(args: {
@@ -55,8 +47,9 @@ export async function sendAffiliateApplicationReceivedEmail(args: {
     "Applicant";
 
   return sendTransactionalEmail({
-    email: getAffiliateApplicationRecipient(),
+    email: args.applicantEmail,
     transactionalId,
+    addToAudience: true,
     dataVariables: {
       first_name: getFirstName(firstNameSource),
     },

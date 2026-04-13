@@ -5,6 +5,7 @@ import {
   inArray,
   isNull,
   notInArray,
+  or,
 } from "drizzle-orm";
 
 import { db } from "@/lib/db";
@@ -25,6 +26,7 @@ import {
 import {
   formatPayoutPeriodLabel,
   buildWeeklyPayoutPeriod,
+  getDefaultPayoutTimezone,
   type WeeklyPayoutPeriod,
 } from "@/lib/checkout/payout-periods";
 import {
@@ -49,6 +51,10 @@ export type WeeklyPayoutBatchDetail = WeeklyPayoutBatchWithWallet & {
 type BatchGroupingRow = {
   earning: AffiliateEarningRecord;
   affiliate: typeof affiliates.$inferSelect | null;
+};
+
+type PayNowBatchGroupingRow = BatchGroupingRow & {
+  batch: WeeklyPayoutBatchRecord | null;
 };
 
 function logWeeklyPayoutError(scope: string, error: unknown, affiliateId?: string) {
@@ -103,6 +109,7 @@ async function getExistingBatchForGroup(args: {
         eq(affiliateWeeklyPayouts.commissionMonthKey, args.commissionMonthKey),
         eq(affiliateWeeklyPayouts.periodStart, args.period.start),
         eq(affiliateWeeklyPayouts.periodEnd, args.period.end),
+        eq(affiliateWeeklyPayouts.batchType, "weekly"),
       ),
     )
     .limit(1);
@@ -118,11 +125,47 @@ async function loadBatchGroupingRows(period: WeeklyPayoutPeriod) {
     })
     .from(affiliatePayouts)
     .leftJoin(affiliates, eq(affiliatePayouts.affiliateId, affiliates.id))
+    .leftJoin(
+      affiliateWeeklyPayouts,
+      eq(affiliatePayouts.weeklyPayoutId, affiliateWeeklyPayouts.id),
+    )
     .where(
       and(
         inArray(affiliatePayouts.status, ["pending", "approved"]),
         eq(affiliatePayouts.payoutPeriodStart, period.start),
         eq(affiliatePayouts.payoutPeriodEnd, period.end),
+        or(
+          isNull(affiliatePayouts.weeklyPayoutId),
+          eq(affiliateWeeklyPayouts.batchType, "weekly"),
+        ),
+      ),
+    )
+    .orderBy(desc(affiliatePayouts.earnedAt), desc(affiliatePayouts.createdAt));
+}
+
+async function loadPayNowBatchGroupingRows() {
+  return db
+    .select({
+      earning: affiliatePayouts,
+      affiliate: affiliates,
+      batch: affiliateWeeklyPayouts,
+    })
+    .from(affiliatePayouts)
+    .leftJoin(affiliates, eq(affiliatePayouts.affiliateId, affiliates.id))
+    .leftJoin(
+      affiliateWeeklyPayouts,
+      eq(affiliatePayouts.weeklyPayoutId, affiliateWeeklyPayouts.id),
+    )
+    .where(
+      and(
+        inArray(affiliatePayouts.status, ["pending", "approved"]),
+        or(
+          isNull(affiliatePayouts.weeklyPayoutId),
+          and(
+            eq(affiliateWeeklyPayouts.batchType, "pay_now"),
+            inArray(affiliateWeeklyPayouts.status, ["pending", "approved"]),
+          ),
+        ),
       ),
     )
     .orderBy(desc(affiliatePayouts.earnedAt), desc(affiliatePayouts.createdAt));
@@ -179,6 +222,44 @@ async function getCommissionSummaryMap(rows: BatchGroupingRow[]) {
   );
 }
 
+async function getExistingOpenPayNowBatchForGroup(args: {
+  affiliateId: string;
+  commissionMonthKey: string;
+}) {
+  const [row] = await db
+    .select()
+    .from(affiliateWeeklyPayouts)
+    .where(
+      and(
+        eq(affiliateWeeklyPayouts.affiliateId, args.affiliateId),
+        eq(affiliateWeeklyPayouts.commissionMonthKey, args.commissionMonthKey),
+        eq(affiliateWeeklyPayouts.batchType, "pay_now"),
+        inArray(affiliateWeeklyPayouts.status, ["pending", "approved"]),
+      ),
+    )
+    .orderBy(desc(affiliateWeeklyPayouts.createdAt))
+    .limit(1);
+
+  return row ?? null;
+}
+
+function getEarningTimestamp(earning: AffiliateEarningRecord) {
+  return earning.earnedAt ?? earning.createdAt;
+}
+
+function getPayNowPeriod(rows: BatchGroupingRow[], now: Date) {
+  const start = rows.reduce((earliest, row) => {
+    const earnedAt = getEarningTimestamp(row.earning);
+    return earnedAt < earliest ? earnedAt : earliest;
+  }, getEarningTimestamp(rows[0]!.earning));
+
+  return {
+    start,
+    end: now,
+    timezone: getDefaultPayoutTimezone(),
+  };
+}
+
 export async function generateWeeklyPayoutBatches(args?: {
   periodDate?: string | Date;
 }) {
@@ -232,6 +313,7 @@ export async function generateWeeklyPayoutBatches(args?: {
     const [batch] = await db
       .insert(affiliateWeeklyPayouts)
       .values({
+        batchType: "weekly",
         affiliateId: firstRow.earning.affiliateId,
         affiliateCode: firstRow.earning.affiliateCode,
         commissionMonthKey: firstRow.earning.commissionMonthKey,
@@ -261,6 +343,7 @@ export async function generateWeeklyPayoutBatches(args?: {
           affiliateWeeklyPayouts.commissionMonthKey,
           affiliateWeeklyPayouts.periodStart,
           affiliateWeeklyPayouts.periodEnd,
+          affiliateWeeklyPayouts.batchType,
         ],
         set: {
           affiliateCode: firstRow.earning.affiliateCode,
@@ -326,10 +409,134 @@ export async function generateWeeklyPayoutBatches(args?: {
   };
 }
 
+export async function generatePayNowPayoutBatches() {
+  await backfillLegacyOpenAffiliateEarnings();
+
+  const initialRows = (await loadPayNowBatchGroupingRows()) as PayNowBatchGroupingRow[];
+  const summaryByGroupKey = await getCommissionSummaryMap(initialRows);
+  const refreshedRows = (await loadPayNowBatchGroupingRows()) as PayNowBatchGroupingRow[];
+  const groupedRows = groupRowsByAffiliateMonth(refreshedRows);
+  const batches: WeeklyPayoutBatchRecord[] = [];
+  const now = new Date();
+
+  for (const [groupKey, rows] of groupedRows.entries()) {
+    const [firstRow] = rows;
+    if (!firstRow?.affiliate || !firstRow.earning.commissionMonthKey) {
+      continue;
+    }
+
+    const existingBatch = await getExistingOpenPayNowBatchForGroup({
+      affiliateId: firstRow.earning.affiliateId,
+      commissionMonthKey: firstRow.earning.commissionMonthKey,
+    });
+    const summary =
+      summaryByGroupKey.get(groupKey) ||
+      (
+        await getAffiliateCommissionOverview({
+          affiliateId: firstRow.earning.affiliateId,
+          monthKey: firstRow.earning.commissionMonthKey,
+        })
+      ).summary;
+    const earningIds = rows.map((row) => row.earning.id);
+    const period = getPayNowPeriod(rows, now);
+    const totalNormalizedCommissionAmount = formatAmount(
+      rows.reduce(
+        (sum, row) =>
+          sum +
+          parseAmount(
+            row.earning.normalizedCommissionAmount ?? row.earning.commissionAmount,
+          ),
+        0,
+      ),
+    );
+    const approvedAt = existingBatch?.approvedAt ?? now;
+    const batchValues = {
+      affiliateCode: firstRow.earning.affiliateCode,
+      periodStart: period.start,
+      periodEnd: period.end,
+      periodTimezone: period.timezone,
+      earningCount: rows.length,
+      totalNormalizedCommissionAmount,
+      payoutCurrencyCode: "USD",
+      currentTierKey: summary.tierKey,
+      currentTierLabel: summary.tierLabel,
+      nextTierKey: summary.nextTierKey,
+      nextTierLabel: summary.nextTierLabel,
+      amountToNextTier: summary.amountToNextTier,
+      effectiveRate: summary.effectiveRate,
+      encryptedWalletAddress: firstRow.affiliate.encryptedWalletAddress,
+      walletIv: firstRow.affiliate.walletIv,
+      walletTag: firstRow.affiliate.walletTag,
+      status: "approved" as const,
+      approvedAt,
+      rejectedAt: null,
+      updatedAt: now,
+    };
+
+    const [batch] = existingBatch
+      ? await db
+          .update(affiliateWeeklyPayouts)
+          .set(batchValues)
+          .where(eq(affiliateWeeklyPayouts.id, existingBatch.id))
+          .returning()
+      : await db
+          .insert(affiliateWeeklyPayouts)
+          .values({
+            batchType: "pay_now",
+            affiliateId: firstRow.earning.affiliateId,
+            commissionMonthKey: firstRow.earning.commissionMonthKey,
+            adminNotes: null,
+            ...batchValues,
+          })
+          .returning();
+
+    if (!batch) {
+      continue;
+    }
+
+    if (existingBatch) {
+      await db
+        .update(affiliatePayouts)
+        .set({
+          weeklyPayoutId: null,
+          status: "pending",
+          approvedAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(affiliatePayouts.weeklyPayoutId, existingBatch.id),
+            notInArray(affiliatePayouts.id, earningIds),
+            inArray(affiliatePayouts.status, ["pending", "approved"]),
+          ),
+        );
+    }
+
+    await db
+      .update(affiliatePayouts)
+      .set({
+        weeklyPayoutId: batch.id,
+        status: "approved",
+        approvedAt,
+        rejectedAt: null,
+        updatedAt: now,
+      })
+      .where(inArray(affiliatePayouts.id, earningIds));
+
+    batches.push(batch);
+  }
+
+  return {
+    batches,
+  };
+}
+
 export async function listWeeklyPayoutBatches(args?: {
   periodDate?: string | Date;
   affiliateId?: string;
   status?: WeeklyPayoutBatchRecord["status"];
+  batchType?: WeeklyPayoutBatchRecord["batchType"];
+  limit?: number;
 }) {
   const period = args?.periodDate ? getPeriodFromDate(args.periodDate) : null;
 
@@ -342,6 +549,9 @@ export async function listWeeklyPayoutBatches(args?: {
     if (args?.status) {
       conditions.push(eq(affiliateWeeklyPayouts.status, args.status));
     }
+    if (args?.batchType) {
+      conditions.push(eq(affiliateWeeklyPayouts.batchType, args.batchType));
+    }
     if (period) {
       conditions.push(eq(affiliateWeeklyPayouts.periodStart, period.start));
       conditions.push(eq(affiliateWeeklyPayouts.periodEnd, period.end));
@@ -352,7 +562,7 @@ export async function listWeeklyPayoutBatches(args?: {
       .from(affiliateWeeklyPayouts)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(affiliateWeeklyPayouts.periodStart), desc(affiliateWeeklyPayouts.createdAt))
-      .limit(500);
+      .limit(args?.limit ?? 500);
 
     return rows.map((row) => ({
       ...row,
@@ -362,6 +572,19 @@ export async function listWeeklyPayoutBatches(args?: {
     logWeeklyPayoutError("list", error, args?.affiliateId);
     return [];
   }
+}
+
+export async function listPayNowPayoutBatches(args?: {
+  affiliateId?: string;
+  status?: WeeklyPayoutBatchRecord["status"];
+  limit?: number;
+}) {
+  return listWeeklyPayoutBatches({
+    affiliateId: args?.affiliateId,
+    status: args?.status,
+    batchType: "pay_now",
+    limit: args?.limit,
+  });
 }
 
 export async function getWeeklyPayoutBatchById(batchId: string) {
@@ -486,7 +709,10 @@ export async function getWeeklyPayoutBatchesForAffiliate(affiliateId: string) {
 export async function getWeeklyPayoutBatchPeriodOverview(periodDate?: string | Date) {
   await backfillLegacyOpenAffiliateEarnings();
   const period = getPeriodFromDate(periodDate);
-  const batches = await listWeeklyPayoutBatches({ periodDate: period.start });
+  const batches = await listWeeklyPayoutBatches({
+    periodDate: period.start,
+    batchType: "weekly",
+  });
 
   return {
     period,

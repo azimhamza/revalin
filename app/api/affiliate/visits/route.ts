@@ -9,6 +9,10 @@ import {
   AFFILIATE_VISITOR_COOKIE_NAME,
 } from '@/lib/checkout/affiliate-constants';
 import { createAffiliateVisit } from '@/lib/checkout/affiliate-visit-service';
+import {
+  hasOpenPanelTrackingConfig,
+  trackOpenPanelServerEvent,
+} from '@/lib/analytics/openpanel';
 
 const visitSchema = z.object({
   code: z.string().trim().min(3),
@@ -67,6 +71,27 @@ export const POST = createApiRoute({
             }
           : undefined,
       };
+    }
+
+    // Fire-and-forget: track server-side so the event is recorded even when
+    // the client-side OpenPanel SDK hasn't initialised yet (first page load).
+    if (hasOpenPanelTrackingConfig()) {
+      trackOpenPanelServerEvent('affiliate_visit', {
+        affiliate_code: affiliate.code,
+        discount_code: body.discountCode ?? null,
+        referral_path: body.referralPath ?? null,
+        referrer: body.referrer ?? null,
+        device: /mobile|android|iphone|ipad/i.test(
+          request.headers.get('user-agent') ?? '',
+        )
+          ? 'Mobile'
+          : 'Desktop',
+      }).catch((err) => {
+        console.warn(
+          '[affiliate-visits] OpenPanel tracking failed',
+          err instanceof Error ? err.message : err,
+        );
+      });
     }
 
     return {

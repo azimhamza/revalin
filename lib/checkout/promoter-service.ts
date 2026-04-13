@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { and, desc, eq, ilike, inArray, ne, or, sql } from "drizzle-orm";
 
 import { db } from "@/lib/db";
-import { affiliates, promoterInvites, promoters, user } from "@/lib/db/schema";
+import { affiliates, promoterInvites, promoterPayouts, promoters, user } from "@/lib/db/schema";
 import { decrypt, encrypt } from "@/lib/db/encryption";
 import { normalizeAffiliateCode } from "@/lib/checkout/affiliate-service";
 import {
@@ -10,6 +10,7 @@ import {
   type AffiliateSocialProfile,
 } from "@/lib/checkout/affiliate-social-profiles";
 import { RESERVED_SLUGS } from "@/lib/checkout/affiliate-constants";
+import { resolveAutoActivationCommissionRate } from "@/lib/checkout/promoter-referral-logic";
 import {
   DEFAULT_PROMOTER_COMMISSION_RATE,
   normalizePromoterCommissionRateInput,
@@ -33,6 +34,7 @@ export type PromoterRecord = {
   email: string;
   userId: string | null;
   walletAddress: string;
+  socialProfiles: AffiliateSocialProfile[];
   defaultCommissionRate: string;
   status: "pending" | "approved" | "rejected" | "suspended";
   createdAt: Date;
@@ -64,6 +66,7 @@ function decryptPromoterRow(row: typeof promoters.$inferSelect): PromoterRecord 
       iv: row.walletIv,
       tag: row.walletTag,
     }),
+    socialProfiles: normalizeAffiliateSocialProfiles(row.socialProfiles || []),
     defaultCommissionRate: row.defaultCommissionRate,
     status: row.status,
     createdAt: row.createdAt,
@@ -85,7 +88,7 @@ function getSiteUrl() {
   return (explicit || "https://revalin.ca").replace(/\/$/, "");
 }
 
-function buildPromoterReferralLink(code: string) {
+export function buildPromoterReferralLink(code: string) {
   return `${getSiteUrl()}/grow/${encodeURIComponent(code)}`;
 }
 
@@ -96,6 +99,8 @@ function buildLegacyPromoterReferralLink(code: string) {
 export async function assertPromoterCodeAvailable(args: {
   code: string;
   excludePromoterId?: string | null;
+  allowAffiliateUserId?: string | null;
+  allowAffiliateEmail?: string | null;
 }) {
   const normalizedCode = normalizeAffiliateCode(args.code);
 
@@ -124,13 +129,50 @@ export async function assertPromoterCodeAvailable(args: {
     throw new Error("That promoter code is already assigned to another promoter.");
   }
 
-  const affiliateRows = await db
-    .select({ id: affiliates.id })
+  const [affiliateRow] = await db
+    .select({
+      id: affiliates.id,
+      userId: affiliates.userId,
+      email: affiliates.email,
+    })
     .from(affiliates)
     .where(eq(affiliates.code, normalizedCode))
     .limit(1);
 
-  if (affiliateRows[0]) {
+  if (affiliateRow) {
+    let allowAffiliateUserId = args.allowAffiliateUserId ?? null;
+    let allowAffiliateEmail = args.allowAffiliateEmail ?? null;
+
+    if (!allowAffiliateUserId && !allowAffiliateEmail && args.excludePromoterId) {
+      const [currentPromoter] = await db
+        .select({
+          userId: promoters.userId,
+          email: promoters.email,
+        })
+        .from(promoters)
+        .where(eq(promoters.id, args.excludePromoterId))
+        .limit(1);
+
+      allowAffiliateUserId = currentPromoter?.userId ?? null;
+      allowAffiliateEmail = currentPromoter?.email ?? null;
+    }
+
+    const normalizedAllowedEmail = allowAffiliateEmail?.trim().toLowerCase();
+    const affiliateBelongsToPromoter =
+      Boolean(
+        allowAffiliateUserId &&
+          affiliateRow.userId &&
+          affiliateRow.userId === allowAffiliateUserId,
+      ) ||
+      Boolean(
+        normalizedAllowedEmail &&
+          affiliateRow.email.trim().toLowerCase() === normalizedAllowedEmail,
+      );
+
+    if (affiliateBelongsToPromoter) {
+      return normalizedCode;
+    }
+
     throw new Error("That promoter code is already assigned to a Growth Partner.");
   }
 
@@ -207,16 +249,24 @@ export async function createPromoter(args: {
   userId?: string | null;
   code?: string | null;
   defaultCommissionRate?: string | number | null;
+  socialProfiles?: AffiliateSocialProfile[];
   status?: typeof promoters.$inferSelect["status"];
 }) {
   const normalizedEmail = normalizeEmail(args.email);
   const normalizedCode = args.code
-    ? await assertPromoterCodeAvailable({ code: args.code })
+    ? await assertPromoterCodeAvailable({
+        code: args.code,
+        allowAffiliateUserId: args.userId,
+        allowAffiliateEmail: normalizedEmail,
+      })
     : await generatePromoterCode();
   const normalizedRate = normalizePromoterCommissionRateInput(
     args.defaultCommissionRate ?? DEFAULT_PROMOTER_COMMISSION_RATE,
   );
   const encrypted = encrypt("");
+  const socialProfiles = normalizeAffiliateSocialProfiles(
+    args.socialProfiles || [],
+  );
 
   const [row] = await db
     .insert(promoters)
@@ -226,10 +276,11 @@ export async function createPromoter(args: {
       email: normalizedEmail,
       userId: args.userId ?? null,
       defaultCommissionRate: normalizedRate.stored,
+      socialProfiles,
       encryptedWalletAddress: encrypted.ciphertext,
       walletIv: encrypted.iv,
       walletTag: encrypted.tag,
-      status: args.status ?? "approved",
+      status: args.status ?? "pending",
     })
     .onConflictDoUpdate({
       target: promoters.email,
@@ -237,7 +288,8 @@ export async function createPromoter(args: {
         name: args.name.trim() || normalizedEmail.split("@")[0] || "Promoter",
         userId: args.userId ?? null,
         defaultCommissionRate: normalizedRate.stored,
-        status: args.status ?? "approved",
+        socialProfiles,
+        status: args.status ?? "pending",
         updatedAt: new Date(),
       },
     })
@@ -280,10 +332,25 @@ export async function ensurePromoterForUser(args: {
     return existing;
   }
 
+  const [approvedAffiliate] = await db
+    .select({ code: affiliates.code })
+    .from(affiliates)
+    .where(
+      and(
+        or(
+          eq(affiliates.userId, currentUser.id),
+          eq(affiliates.email, currentUser.email),
+        ),
+        eq(affiliates.status, "approved"),
+      ),
+    )
+    .limit(1);
+
   return createPromoter({
     name: currentUser.name,
     email: currentUser.email,
     userId: currentUser.id,
+    code: approvedAffiliate?.code,
     defaultCommissionRate: args.defaultCommissionRate,
     status: "approved",
   });
@@ -334,6 +401,55 @@ export async function updatePromoterWallet(args: {
       updatedAt: new Date(),
     })
     .where(eq(promoters.id, args.promoterId));
+}
+
+export async function updatePromoterCodeAndRate(args: {
+  promoterId: string;
+  code?: string | null;
+  defaultCommissionRate?: string | number | null;
+}) {
+  const [current] = await db
+    .select()
+    .from(promoters)
+    .where(eq(promoters.id, args.promoterId))
+    .limit(1);
+
+  if (!current) {
+    throw new Error("Promoter not found.");
+  }
+
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  let oldCode = current.code;
+  let newCode = current.code;
+
+  if (args.code != null && args.code.trim()) {
+    const normalizedCode = await assertPromoterCodeAvailable({
+      code: args.code,
+      excludePromoterId: args.promoterId,
+    });
+    updates.code = normalizedCode;
+    newCode = normalizedCode;
+  }
+
+  if (args.defaultCommissionRate != null) {
+    const normalizedRate = normalizePromoterCommissionRateInput(
+      args.defaultCommissionRate,
+    );
+    updates.defaultCommissionRate = normalizedRate.stored;
+  }
+
+  const [updated] = await db
+    .update(promoters)
+    .set(updates)
+    .where(eq(promoters.id, args.promoterId))
+    .returning();
+
+  return {
+    promoter: decryptPromoterRow(updated ?? current),
+    codeChanged: oldCode !== newCode,
+    oldCode,
+    newCode,
+  };
 }
 
 export async function updatePromoterStatus(args: {
@@ -392,6 +508,7 @@ export async function updatePromoterStatus(args: {
   ) {
     await sendPromoterReinstatementEmail({
       promoterEmail: updated.email,
+      promoterName: updated.name,
       reinstatementReason: args.reinstatementReason,
     });
   }
@@ -445,76 +562,6 @@ export async function listPromoterInvites(args?: {
     .limit(args?.limit ?? 500);
 
   return rows;
-}
-
-export async function createPromoterInvite(args: {
-  promoterId: string;
-  invitedEmail: string;
-  invitedName?: string | null;
-  socialProfiles?: AffiliateSocialProfile[];
-  notes?: string | null;
-  createdByUserId?: string | null;
-  sendEmail?: boolean;
-}) {
-  const promoter = await getPromoterById(args.promoterId);
-  if (!promoter || promoter.status !== "approved") {
-    throw new Error("Approved promoter not found.");
-  }
-
-  const normalizedEmail = normalizeEmail(args.invitedEmail);
-  const [invite] = await db
-    .insert(promoterInvites)
-    .values({
-      promoterId: promoter.id,
-      invitedEmail: normalizedEmail,
-      normalizedInvitedEmail: normalizedEmail,
-      invitedName: args.invitedName?.trim() || null,
-      socialProfiles: normalizeAffiliateSocialProfiles(args.socialProfiles || []),
-      notes: args.notes?.trim() || null,
-      referralCode: promoter.code,
-      createdByUserId: args.createdByUserId ?? null,
-      status: "invited",
-    })
-    .returning();
-
-  if (!invite) {
-    throw new Error("Failed to create promoter invite.");
-  }
-
-  if (args.sendEmail !== false) {
-    try {
-      await sendPromoterGrowthPartnerInviteEmail({
-        invitedEmail: normalizedEmail,
-        invitedName: args.invitedName,
-        promoterName: promoter.name,
-        signupLink: buildPromoterReferralLink(promoter.code),
-      });
-      const [updated] = await db
-        .update(promoterInvites)
-        .set({
-          inviteEmailSentAt: new Date(),
-          inviteEmailError: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(promoterInvites.id, invite.id))
-        .returning();
-      return updated ?? invite;
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to send invite email.";
-      const [updated] = await db
-        .update(promoterInvites)
-        .set({
-          inviteEmailError: message,
-          updatedAt: new Date(),
-        })
-        .where(eq(promoterInvites.id, invite.id))
-        .returning();
-      return updated ?? invite;
-    }
-  }
-
-  return invite;
 }
 
 export async function resendPromoterInviteEmail(inviteId: string) {
@@ -689,6 +736,54 @@ export async function markPromoterInviteSuccessful(args: {
   return updated ?? invite;
 }
 
+export async function autoActivatePromoterInviteForAffiliate(
+  affiliateId: string,
+) {
+  const [appliedInvite] = await db
+    .select({
+      invite: promoterInvites,
+      promoter: promoters,
+    })
+    .from(promoterInvites)
+    .innerJoin(promoters, eq(promoterInvites.promoterId, promoters.id))
+    .where(
+      and(
+        eq(promoterInvites.invitedAffiliateId, affiliateId),
+        eq(promoterInvites.status, "applied"),
+        eq(promoters.status, "approved"),
+      ),
+    )
+    .orderBy(desc(promoterInvites.createdAt))
+    .limit(1);
+
+  if (!appliedInvite) {
+    return null;
+  }
+
+  const commissionRate = resolveAutoActivationCommissionRate({
+    inviteCommissionRate: appliedInvite.invite.commissionRate,
+    promoterDefaultCommissionRate: appliedInvite.promoter.defaultCommissionRate,
+  });
+
+  const normalizedRate = normalizePromoterCommissionRateInput(commissionRate);
+  const now = new Date();
+  const [updated] = await db
+    .update(promoterInvites)
+    .set({
+      commissionRate: normalizedRate.stored,
+      status: "successful",
+      appliedAt: appliedInvite.invite.appliedAt ?? now,
+      successfulAt: now,
+      rejectedAt: null,
+      cancelledAt: null,
+      updatedAt: now,
+    })
+    .where(eq(promoterInvites.id, appliedInvite.invite.id))
+    .returning();
+
+  return updated ?? appliedInvite.invite;
+}
+
 export async function updatePromoterInviteStatus(args: {
   inviteId: string;
   status: "applied" | "rejected" | "cancelled";
@@ -813,8 +908,15 @@ export async function getPromoterTrackingInfo(promoter: PromoterRecord) {
 }
 
 export async function sendPromoterReferralLinkUpdateNotification(
-  promoterId: string,
+  input:
+    | string
+    | {
+        promoterId: string;
+        oldCode?: string | null;
+        newCode?: string | null;
+      },
 ) {
+  const promoterId = typeof input === "string" ? input : input.promoterId;
   const promoter = await getPromoterById(promoterId);
   if (!promoter) {
     throw new Error("Promoter not found.");
@@ -825,10 +927,19 @@ export async function sendPromoterReferralLinkUpdateNotification(
   }
 
   const trackingInfo = await getPromoterTrackingInfo(promoter);
-  const oldReferralLink = buildLegacyPromoterReferralLink(
-    trackingInfo.primaryCode,
-  );
-  const newReferralLink = trackingInfo.primaryLink;
+  const oldCode =
+    typeof input === "string"
+      ? trackingInfo.primaryCode
+      : normalizeAffiliateCode(input.oldCode || "") || trackingInfo.primaryCode;
+  const newCode =
+    typeof input === "string"
+      ? trackingInfo.primaryCode
+      : normalizeAffiliateCode(input.newCode || "") || trackingInfo.primaryCode;
+  const oldReferralLink = buildLegacyPromoterReferralLink(oldCode);
+  const newReferralLink =
+    typeof input === "string"
+      ? trackingInfo.primaryLink
+      : buildPromoterReferralLink(newCode);
 
   await sendPromoterReferralLinkUpdatedEmail({
     promoterEmail: promoter.email,
@@ -953,97 +1064,6 @@ export async function recordPromoterApplicationFromReferralCode(args: {
   };
 }
 
-export async function recordPromoterApplicationFromInviteEmail(args: {
-  affiliateId: string;
-  applicantName?: string | null;
-  applicantEmail: string;
-  socialProfiles?: AffiliateSocialProfile[];
-}) {
-  const normalizedEmail = normalizeEmail(args.applicantEmail);
-  const activeStatuses = ["invited", "applied"] as const;
-  const rows = await db
-    .select({
-      invite: promoterInvites,
-      promoter: promoters,
-    })
-    .from(promoterInvites)
-    .innerJoin(promoters, eq(promoterInvites.promoterId, promoters.id))
-    .where(
-      and(
-        eq(promoterInvites.normalizedInvitedEmail, normalizedEmail),
-        inArray(promoterInvites.status, activeStatuses),
-        eq(promoters.status, "approved"),
-      ),
-    )
-    .orderBy(desc(promoterInvites.createdAt))
-    .limit(2);
-
-  if (rows.length === 0) {
-    return { linked: false as const, reason: "no-invite" as const };
-  }
-
-  if (rows.length > 1) {
-    return { linked: false as const, reason: "ambiguous-invite" as const };
-  }
-
-  const [row] = rows;
-  if (!row) {
-    return { linked: false as const, reason: "no-invite" as const };
-  }
-
-  if (row.promoter.email.toLowerCase() === normalizedEmail) {
-    return { linked: false as const, reason: "self-referral" as const };
-  }
-
-  const [existingByAffiliate] = await db
-    .select()
-    .from(promoterInvites)
-    .where(
-      and(
-        eq(promoterInvites.invitedAffiliateId, args.affiliateId),
-        inArray(promoterInvites.status, ["invited", "applied", "successful"]),
-        ne(promoterInvites.id, row.invite.id),
-      ),
-    )
-    .limit(1);
-
-  if (existingByAffiliate) {
-    return {
-      linked: false as const,
-      reason: "already-attributed" as const,
-      invite: existingByAffiliate,
-    };
-  }
-
-  const now = new Date();
-  const socialProfiles = normalizeAffiliateSocialProfiles(
-    args.socialProfiles || [],
-  );
-  const invitedName = args.applicantName?.trim() || null;
-  const [updated] = await db
-    .update(promoterInvites)
-    .set({
-      invitedAffiliateId: args.affiliateId,
-      invitedName: row.invite.invitedName || invitedName,
-      socialProfiles: socialProfiles.length
-        ? socialProfiles
-        : row.invite.socialProfiles,
-      referralCode: row.invite.referralCode || row.promoter.code,
-      status: "applied",
-      appliedAt: row.invite.appliedAt ?? now,
-      rejectedAt: null,
-      updatedAt: now,
-    })
-    .where(eq(promoterInvites.id, row.invite.id))
-    .returning();
-
-  return {
-    linked: true as const,
-    invite: updated ?? row.invite,
-    source: "invited-email" as const,
-  };
-}
-
 export async function getSuccessfulPromoterForAffiliate(affiliateId: string) {
   const [row] = await db
     .select({
@@ -1070,5 +1090,51 @@ export async function getSuccessfulPromoterForAffiliate(affiliateId: string) {
     inviteId: row.invite.id,
     affiliateId,
     commissionRate: row.invite.commissionRate,
+  };
+}
+
+export async function getSuccessfulAffiliateCodesForPromoter(
+  promoterId: string,
+): Promise<string[]> {
+  const rows = await db
+    .select({ affiliateCode: affiliates.code })
+    .from(promoterInvites)
+    .innerJoin(affiliates, eq(promoterInvites.invitedAffiliateId, affiliates.id))
+    .where(
+      and(
+        eq(promoterInvites.promoterId, promoterId),
+        eq(promoterInvites.status, "successful"),
+        eq(affiliates.status, "approved"),
+      ),
+    );
+
+  return rows.map((row) => row.affiliateCode);
+}
+
+export async function deletePromoterRecord(args: {
+  promoterId: string;
+}) {
+  const promoter = await getPromoterById(args.promoterId);
+  if (!promoter) {
+    throw new Error("Promoter not found.");
+  }
+
+  const [hasPayout] = await db
+    .select({ id: promoterPayouts.id })
+    .from(promoterPayouts)
+    .where(eq(promoterPayouts.promoterId, promoter.id))
+    .limit(1);
+
+  if (hasPayout) {
+    throw new Error(
+      "This promoter has payout history and cannot be permanently deleted. Suspend the account instead.",
+    );
+  }
+
+  await db.delete(promoters).where(eq(promoters.id, promoter.id));
+
+  return {
+    promoterId: promoter.id,
+    deleted: true,
   };
 }

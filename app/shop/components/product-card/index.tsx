@@ -70,7 +70,7 @@ export const ProductCard = ({ product }: { product: Product }) => {
               </p>
             )}
             <Suspense fallback={null}>
-              <div className="self-start">
+              <div className="col-start-1 self-start">
                 <VariantSelector product={product} />
               </div>
             </Suspense>

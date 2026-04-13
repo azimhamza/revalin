@@ -315,7 +315,7 @@ export function GrowContent() {
             transition={{ duration: 0.8, delay: 0.15, ease: EASE }}
           >
             <Link
-              href="/promoter/signup"
+              href="/affiliate/signup"
               className="inline-flex items-center gap-2 rounded-[12px] px-5 py-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[#F4F1EA] transition-opacity hover:opacity-90"
               style={{ backgroundColor: '#0B2E2F' }}
             >
@@ -413,7 +413,7 @@ export function GrowContent() {
             transition={{ duration: 0.8, delay: 0.15, ease: EASE }}
           >
             <Link
-              href="/signup"
+              href="/promoter/signup"
               className="inline-flex items-center gap-2 rounded-[12px] px-5 py-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[#F4F1EA] transition-opacity hover:opacity-90"
               style={{ backgroundColor: '#0B2E2F' }}
             >

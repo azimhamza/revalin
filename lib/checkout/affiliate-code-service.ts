@@ -29,6 +29,7 @@ import {
   createAffiliate,
   getAffiliateByUserIdentity,
 } from "@/lib/checkout/affiliate-service";
+import { autoActivatePromoterInviteForAffiliate } from "@/lib/checkout/promoter-service";
 import {
   getCommissionMonthKey,
   normalizeCommissionRateInput,
@@ -488,6 +489,14 @@ export async function saveAffiliateCodeAssignment(args: {
         .update(user)
         .set({ role: "affiliate", updatedAt: new Date() })
         .where(eq(user.id, row.userId));
+    }
+  }
+
+  if (nextStatus === "approved") {
+    try {
+      await autoActivatePromoterInviteForAffiliate(row.id);
+    } catch (error) {
+      console.error("[AUTO-ACTIVATE-PROMOTER-INVITE]", error);
     }
   }
 

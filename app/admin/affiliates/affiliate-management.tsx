@@ -7,6 +7,7 @@ import {
   Copy,
   Loader2,
   MoreHorizontal,
+  RefreshCw,
   XCircle,
 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -2054,7 +2055,7 @@ export function AffiliateManagement({
 
       <AdminPanel className="space-y-3">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="grid gap-2 xl:w-full xl:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
+          <div className="grid gap-2 xl:w-full xl:grid-cols-[minmax(0,280px)_minmax(0,1fr)_auto]">
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -2088,6 +2089,16 @@ export function AffiliateManagement({
                 );
               })}
             </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="size-8 shrink-0 self-start"
+              onClick={() => router.refresh()}
+              title="Refresh data"
+            >
+              <RefreshCw className="size-3.5" />
+            </Button>
           </div>
         </div>
 

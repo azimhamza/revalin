@@ -6,24 +6,31 @@ import {
   getAffiliateByUserIdentity,
 } from '@/lib/checkout/affiliate-service';
 import { PROMOTER_REFERRAL_COOKIE_NAME } from '@/lib/checkout/affiliate-constants';
-import {
-  recordPromoterApplicationFromInviteEmail,
-  recordPromoterApplicationFromReferralCode,
-} from '@/lib/checkout/promoter-service';
+import { recordPromoterApplicationFromReferralCode } from '@/lib/checkout/promoter-service';
 import {
   MAX_AFFILIATE_SOCIAL_PROFILES,
-  normalizeAffiliateSocialUrl,
+  buildProfileUrl,
+  SOCIAL_PLATFORMS,
 } from '@/lib/checkout/affiliate-social-profiles';
 import { sendAffiliateApplicationReceivedEmail } from '@/lib/email/affiliate-emails';
 
-const socialProfileSchema = z.object({
-  platform: z.string().trim().min(2, 'Enter the social platform name.'),
-  url: z
-    .string()
-    .trim()
-    .transform((value) => normalizeAffiliateSocialUrl(value))
-    .pipe(z.string().url('Enter a valid social profile URL.')),
-});
+const validPlatformValues = SOCIAL_PLATFORMS.map((p) => p.value) as [string, ...string[]];
+
+const socialProfileSchema = z
+  .object({
+    platform: z.enum(validPlatformValues),
+    username: z.string().trim().min(1, 'Enter your username or profile URL.'),
+  })
+  .transform((profile) => ({
+    platform: profile.platform,
+    url: buildProfileUrl(profile.platform, profile.username),
+  }))
+  .pipe(
+    z.object({
+      platform: z.string(),
+      url: z.string().url('Enter a valid username or profile URL.'),
+    }),
+  );
 
 const affiliateApplicationSchema = z.object({
   socialProfiles: z
@@ -104,19 +111,11 @@ export const POST = createApiRoute({
       id: string;
       socialProfiles: typeof body.socialProfiles;
     }) {
-      try {
-        if (promoterReferralCode) {
-          await recordPromoterApplicationFromReferralCode({
-            referralCode: promoterReferralCode,
-            affiliateId: affiliate.id,
-            applicantName: session.user.name,
-            applicantEmail: session.user.email.toLowerCase(),
-            socialProfiles: affiliate.socialProfiles,
-          });
-          return;
-        }
+      if (!promoterReferralCode) return;
 
-        await recordPromoterApplicationFromInviteEmail({
+      try {
+        await recordPromoterApplicationFromReferralCode({
+          referralCode: promoterReferralCode,
           affiliateId: affiliate.id,
           applicantName: session.user.name,
           applicantEmail: session.user.email.toLowerCase(),

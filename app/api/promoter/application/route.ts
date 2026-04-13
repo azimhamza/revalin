@@ -6,9 +6,33 @@ import {
   createPromoter,
   getPromoterByUserIdentity,
 } from "@/lib/checkout/promoter-service";
+import {
+  buildProfileUrl,
+  SOCIAL_PLATFORMS,
+} from "@/lib/checkout/affiliate-social-profiles";
 import { sendPromoterApplicationReceivedEmail } from "@/lib/email/promoter-emails";
 
-const promoterApplicationSchema = z.object({});
+const validPlatformValues = SOCIAL_PLATFORMS.map((p) => p.value) as [string, ...string[]];
+
+const socialProfileSchema = z
+  .object({
+    platform: z.enum(validPlatformValues),
+    username: z.string().trim().min(1),
+  })
+  .transform((profile) => ({
+    platform: profile.platform,
+    url: buildProfileUrl(profile.platform, profile.username),
+  }))
+  .pipe(
+    z.object({
+      platform: z.string(),
+      url: z.string().url(),
+    }),
+  );
+
+const promoterApplicationSchema = z.object({
+  socialProfiles: z.array(socialProfileSchema).min(1).max(6),
+});
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +65,7 @@ export const POST = createApiRoute({
   access: "session",
   bodySchema: promoterApplicationSchema,
   cacheControl: "no-store",
-  handler: async ({ session }) => {
+  handler: async ({ session, body }) => {
     if (!session.user.email) {
       throw apiError.unauthenticated("Sign in to request Promoter access.");
     }
@@ -67,6 +91,7 @@ export const POST = createApiRoute({
       name: session.user.name?.trim() || "Promoter Applicant",
       email: session.user.email.toLowerCase(),
       userId: session.user.id,
+      socialProfiles: body.socialProfiles,
       status: "pending",
     });
 

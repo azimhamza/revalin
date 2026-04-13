@@ -45,9 +45,11 @@ export function buildPromoterApplicationReceivedEmailPayload(args: {
 }
 
 export function buildPromoterReinstatementEmailPayload(args: {
+  promoterName?: string | null;
   reinstatementReason?: string | null;
 }) {
   return {
+    first_name: getFirstName(args.promoterName),
     reinstatement_reason:
       args.reinstatementReason?.trim() ||
       "Your promoter access has been reinstated.",
@@ -63,6 +65,16 @@ export function buildPromoterReferralLinkUpdatedEmailPayload(args: {
     first_name: getFirstName(args.promoterName),
     OLD_REFERRAL_LINK: args.oldReferralLink,
     NEW_REFERRAL_LINK: args.newReferralLink,
+  };
+}
+
+export function buildPromoterApprovalEmailPayload(args: {
+  promoterName?: string | null;
+  referralLink: string;
+}) {
+  return {
+    first_name: getFirstName(args.promoterName),
+    REFERRAL_LINK: args.referralLink,
   };
 }
 

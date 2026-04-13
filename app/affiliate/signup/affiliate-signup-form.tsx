@@ -1,15 +1,47 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Globe, Loader2, Plus, Trash2 } from "lucide-react";
+import {
+  SiInstagram,
+  SiTiktok,
+  SiX,
+  SiFacebook,
+  SiYoutube,
+  SiPinterest,
+  SiSnapchat,
+  SiThreads,
+} from "react-icons/si";
+import { FaLinkedinIn } from "react-icons/fa";
 
 import { Button } from "@/components/ui/button";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   MAX_AFFILIATE_SOCIAL_PROFILES,
-  type AffiliateSocialProfile,
+  SOCIAL_PLATFORMS,
+  type SocialPlatformValue,
 } from "@/lib/checkout/affiliate-social-profiles";
 import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
+
+const PLATFORM_ICONS: Record<SocialPlatformValue, React.ComponentType<{ className?: string }>> = {
+  instagram: SiInstagram,
+  tiktok: SiTiktok,
+  twitter: SiX,
+  facebook: SiFacebook,
+  youtube: SiYoutube,
+  linkedin: FaLinkedinIn,
+  pinterest: SiPinterest,
+  snapchat: SiSnapchat,
+  threads: SiThreads,
+  other: Globe,
+};
 
 type AffiliateSignupFormProps = {
   initialName?: string;
@@ -22,8 +54,14 @@ type SubmissionState =
   | { status: "success"; message: string }
   | { status: "error"; message: string };
 
-function createEmptySocialProfile(): AffiliateSocialProfile {
-  return { platform: "", url: "" };
+type SocialProfileRow = {
+  id: string;
+  platform: string;
+  username: string;
+};
+
+function createEmptySocialProfile(id: number): SocialProfileRow {
+  return { id: `social-profile-${id}`, platform: "", username: "" };
 }
 
 export function AffiliateSignupForm({
@@ -33,9 +71,10 @@ export function AffiliateSignupForm({
 }: AffiliateSignupFormProps) {
   const searchParams = useSearchParams();
   const promoterReferralCode = searchParams.get("promoter")?.trim() || "";
+  const nextSocialProfileId = useRef(1);
   const [socialProfiles, setSocialProfiles] = useState<
-    AffiliateSocialProfile[]
-  >([createEmptySocialProfile()]);
+    SocialProfileRow[]
+  >([createEmptySocialProfile(0)]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submission, setSubmission] = useState<SubmissionState>({
     status: "idle",
@@ -52,7 +91,10 @@ export function AffiliateSignupForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          socialProfiles,
+          socialProfiles: socialProfiles.map(({ platform, username }) => ({
+            platform,
+            username,
+          })),
           promoterReferralCode: promoterReferralCode || undefined,
         }),
       });
@@ -89,7 +131,7 @@ export function AffiliateSignupForm({
 
   function updateSocialProfile(
     index: number,
-    field: keyof AffiliateSocialProfile,
+    field: "platform" | "username",
     value: string,
   ) {
     setSocialProfiles((current) =>
@@ -100,17 +142,22 @@ export function AffiliateSignupForm({
   }
 
   function addSocialProfile() {
+    if (socialProfiles.length >= MAX_AFFILIATE_SOCIAL_PROFILES) return;
+
+    const nextProfile = createEmptySocialProfile(nextSocialProfileId.current);
+    nextSocialProfileId.current += 1;
+
     setSocialProfiles((current) =>
       current.length >= MAX_AFFILIATE_SOCIAL_PROFILES
         ? current
-        : [...current, createEmptySocialProfile()],
+        : [...current, nextProfile],
     );
   }
 
   function removeSocialProfile(index: number) {
     setSocialProfiles((current) =>
       current.length === 1
-        ? [createEmptySocialProfile()]
+        ? current
         : current.filter((_, currentIndex) => currentIndex !== index),
     );
   }
@@ -173,59 +220,92 @@ export function AffiliateSignupForm({
           </Button>
         </div>
 
-        {socialProfiles.map((profile, index) => (
-          <div
-            key={`${index}-${profile.platform}-${profile.url}`}
-            className="grid gap-3 rounded-xl border border-border bg-background p-4 sm:grid-cols-[minmax(0,160px)_minmax(0,1fr)_auto]"
-          >
-            <label className="flex flex-col gap-1.5">
-              <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">
-                Platform
-              </span>
-              <input
-                type="text"
-                value={profile.platform}
-                onChange={(event) =>
-                  updateSocialProfile(index, "platform", event.target.value)
-                }
-                placeholder="Instagram"
-                required
-                className="h-11 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
-              />
-            </label>
+        {socialProfiles.map((profile, index) => {
+          const isOther = profile.platform === "other";
+          const platformConfig = SOCIAL_PLATFORMS.find(
+            (p) => p.value === profile.platform,
+          );
+          const PlatformIcon = profile.platform
+            ? PLATFORM_ICONS[profile.platform as SocialPlatformValue]
+            : null;
 
-            <label className="flex flex-col gap-1.5">
-              <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">
-                Profile URL
-              </span>
-              <input
-                type="text"
-                value={profile.url}
-                onChange={(event) =>
-                  updateSocialProfile(index, "url", event.target.value)
-                }
-                placeholder="https://instagram.com/your-handle"
-                required
-                autoCapitalize="off"
-                spellCheck={false}
-                className="h-11 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
-              />
-            </label>
+          return (
+            <div
+              key={profile.id}
+              className="grid gap-3 rounded-xl border border-border bg-background p-4 sm:grid-cols-[minmax(0,180px)_minmax(0,1fr)_auto]"
+            >
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">
+                  Platform
+                </span>
+                <Select
+                  value={profile.platform}
+                  onValueChange={(value) =>
+                    updateSocialProfile(index, "platform", value)
+                  }
+                  required
+                >
+                  <SelectTrigger className="h-11 w-full rounded-xl border-border bg-background text-sm text-foreground">
+                    <SelectValue placeholder="Select platform">
+                      {platformConfig ? (
+                        <>
+                          {PlatformIcon ? <PlatformIcon className="size-4 shrink-0" /> : null}
+                          {platformConfig.label}
+                        </>
+                      ) : null}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SOCIAL_PLATFORMS.map((p) => {
+                      const Icon = PLATFORM_ICONS[p.value];
+                      return (
+                        <SelectItem key={p.value} value={p.value}>
+                          <Icon className="size-4 shrink-0" />
+                          {p.label}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
 
-            <div className="flex items-end">
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={() => removeSocialProfile(index)}
-                disabled={socialProfiles.length === 1}
-                aria-label={`Remove social profile ${index + 1}`}
-              >
-                <Trash2 className="size-4" />
-              </Button>
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor={`${profile.id}-username`}
+                  className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55"
+                >
+                  {isOther ? "Profile URL" : "Username"}
+                </label>
+                <input
+                  id={`${profile.id}-username`}
+                  type="text"
+                  value={profile.username}
+                  onChange={(event) =>
+                    updateSocialProfile(index, "username", event.target.value)
+                  }
+                  placeholder={isOther ? "https://example.com/profile" : "@yourhandle"}
+                  required
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  className="h-11 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
+                />
+              </div>
+
+              <div className="flex items-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={() => removeSocialProfile(index)}
+                  disabled={socialProfiles.length === 1}
+                  aria-label={`Remove social profile ${index + 1}`}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <Button

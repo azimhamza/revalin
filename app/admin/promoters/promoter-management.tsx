@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Loader2, Search } from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2, RefreshCw, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +27,7 @@ import type {
   PromoterAffiliateCandidate,
   PromoterRecord,
 } from "@/lib/checkout/promoter-service";
+import type { AffiliateSocialProfile } from "@/lib/checkout/affiliate-social-profiles";
 import {
   adminFieldClass,
   adminPrimaryButtonClass,
@@ -36,11 +37,6 @@ import {
   AdminStatCard,
 } from "../_components/admin-shell";
 
-type SocialProfile = {
-  platform: string;
-  url: string;
-};
-
 type AdminInviteRow = {
   invite: {
     id: string;
@@ -49,7 +45,7 @@ type AdminInviteRow = {
     invitedName: string | null;
     invitedEmail: string;
     normalizedInvitedEmail: string;
-    socialProfiles: SocialProfile[];
+    socialProfiles: AffiliateSocialProfile[];
     notes: string | null;
     referralCode: string | null;
     commissionRate: string | null;
@@ -73,6 +69,12 @@ function formatRate(value: string | null | undefined) {
   return `${Number((numeric * 100).toFixed(2))}%`;
 }
 
+function formatRateForInput(value: string | null | undefined) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "2.5";
+  return String(Number((numeric * 100).toFixed(2)));
+}
+
 function statusVariant(
   status: AdminInviteRow["invite"]["status"],
 ): "default" | "secondary" | "destructive" | "outline" {
@@ -91,37 +93,43 @@ function promoterStatusVariant(
   return "outline";
 }
 
-function formatSocialProfiles(profiles: SocialProfile[]) {
+function formatSocialProfiles(profiles: AffiliateSocialProfile[]) {
   return profiles
     .filter((profile) => profile.platform.trim() && profile.url.trim())
     .map((profile) => `${profile.platform}: ${profile.url}`)
     .join(" | ");
 }
 
+// ── Review dialog for a single promoter ──────────────────────────
+
+type ReviewDialogState = {
+  promoter: PromoterRecord;
+  code: string;
+  rate: string;
+  codeAvailability: "idle" | "checking" | "available" | "unavailable";
+  sendApprovalEmail: boolean;
+  sendLinkUpdateEmail: boolean;
+  reinstatementReason: string;
+  sendReinstatementEmail: boolean;
+  removalReason: string;
+  removalStatus: "suspended" | "rejected";
+};
+
 export function PromoterManagement({
   promoters,
   invites,
   initialOpenUserId,
   initialOpenPromoterId,
+  canDelete = false,
 }: {
   promoters: PromoterRecord[];
   invites: AdminInviteRow[];
   initialOpenUserId: string | null;
   initialOpenPromoterId: string | null;
+  canDelete?: boolean;
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [createName, setCreateName] = useState("");
-  const [createEmail, setCreateEmail] = useState("");
-  const [createRate, setCreateRate] = useState("2.5");
-  const [invitePromoterId, setInvitePromoterId] = useState(
-    initialOpenPromoterId || promoters[0]?.id || "",
-  );
-  const [inviteName, setInviteName] = useState("");
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteSocialPlatform, setInviteSocialPlatform] = useState("Instagram");
-  const [inviteSocialUrl, setInviteSocialUrl] = useState("");
-  const [inviteNotes, setInviteNotes] = useState("");
   const [mappingInvite, setMappingInvite] = useState<AdminInviteRow | null>(null);
   const [candidateQuery, setCandidateQuery] = useState("");
   const [candidates, setCandidates] = useState<PromoterAffiliateCandidate[]>([]);
@@ -129,18 +137,18 @@ export function PromoterManagement({
   const [mappingRate, setMappingRate] = useState("2.5");
   const [mappingNotes, setMappingNotes] = useState("");
   const [mappingLoading, setMappingLoading] = useState(false);
-  const [reinstatementPromoter, setReinstatementPromoter] =
-    useState<PromoterRecord | null>(null);
-  const [reinstatementReason, setReinstatementReason] = useState("");
-  const [removalPromoter, setRemovalPromoter] = useState<PromoterRecord | null>(
-    null,
-  );
-  const [removalStatus, setRemovalStatus] = useState<
-    "suspended" | "rejected"
-  >("suspended");
-  const [removalReason, setRemovalReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [promoterSearch, setPromoterSearch] = useState("");
+  const [promoterStatusFilter, setPromoterStatusFilter] = useState<"all" | "pending" | "approved" | "suspended" | "rejected">("all");
+  const [inviteSearch, setInviteSearch] = useState("");
+  const [inviteStatusFilter, setInviteStatusFilter] = useState<"all" | "invited" | "applied" | "successful" | "rejected" | "cancelled">("all");
+
+  // ── Review dialog state ──
+  const [reviewDialog, setReviewDialog] = useState<ReviewDialogState | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const counts = useMemo(
     () => ({
@@ -151,12 +159,52 @@ export function PromoterManagement({
     }),
     [invites, promoters],
   );
+
+  const filteredPromoters = useMemo(() => {
+    let result = promoters;
+    if (promoterStatusFilter !== "all") {
+      result = result.filter((p) => p.status === promoterStatusFilter);
+    }
+    if (promoterSearch.trim()) {
+      const q = promoterSearch.toLowerCase();
+      result = result.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          p.email.toLowerCase().includes(q) ||
+          p.code.toLowerCase().includes(q),
+      );
+    }
+    return result;
+  }, [promoters, promoterStatusFilter, promoterSearch]);
+
+  const filteredInvites = useMemo(() => {
+    let result = invites;
+    if (inviteStatusFilter !== "all") {
+      result = result.filter((entry) => entry.invite.status === inviteStatusFilter);
+    }
+    if (inviteSearch.trim()) {
+      const q = inviteSearch.toLowerCase();
+      result = result.filter(
+        (entry) =>
+          entry.invite.invitedEmail.toLowerCase().includes(q) ||
+          (entry.invite.invitedName || "").toLowerCase().includes(q) ||
+          entry.promoterName.toLowerCase().includes(q) ||
+          entry.promoterEmail.toLowerCase().includes(q) ||
+          (entry.affiliateCode || "").toLowerCase().includes(q) ||
+          (entry.affiliateName || "").toLowerCase().includes(q) ||
+          (entry.affiliateEmail || "").toLowerCase().includes(q),
+      );
+    }
+    return result;
+  }, [invites, inviteStatusFilter, inviteSearch]);
+
   const selectedMappingCandidate = candidates.find(
     (candidate) => candidate.id === selectedAffiliateId,
   );
   const canActivatePromoterCommission =
     Boolean(selectedAffiliateId) && selectedMappingCandidate?.status === "approved";
 
+  // ── Handle openUser query param ──
   useEffect(() => {
     if (!initialOpenUserId) return;
 
@@ -176,7 +224,14 @@ export function PromoterManagement({
         if (!response.ok) {
           throw new Error(getApiErrorMessage(payload, "Failed to create promoter."));
         }
-        if (!cancelled) router.refresh();
+        const data = getApiData<{ promoter: PromoterRecord | null }>(payload);
+        if (!cancelled && data?.promoter) {
+          router.refresh();
+          // Auto-open the review dialog for the newly created promoter
+          openReviewDialog(data.promoter);
+        } else if (!cancelled) {
+          router.refresh();
+        }
       })
       .catch((caught) => {
         if (!cancelled) {
@@ -190,76 +245,206 @@ export function PromoterManagement({
     return () => {
       cancelled = true;
     };
-  }, [initialOpenUserId, router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialOpenUserId]);
 
-  async function createPromoter() {
-    setLoading(true);
-    setError(null);
-    setNotice(null);
+  // ── Handle openPromoter query param ──
+  useEffect(() => {
+    if (!initialOpenPromoterId) return;
+    const found = promoters.find((p) => p.id === initialOpenPromoterId);
+    if (found) {
+      openReviewDialog(found);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialOpenPromoterId]);
+
+  function openReviewDialog(promoter: PromoterRecord) {
+    setReviewDialog({
+      promoter,
+      code: promoter.code,
+      rate: formatRateForInput(promoter.defaultCommissionRate),
+      codeAvailability: "idle",
+      sendApprovalEmail: true,
+      sendLinkUpdateEmail: false,
+      reinstatementReason: "",
+      sendReinstatementEmail: true,
+      removalReason: "",
+      removalStatus: "suspended",
+    });
+    setReviewError(null);
+  }
+
+  function closeReviewDialog() {
+    setReviewDialog(null);
+    setReviewError(null);
+    setShowDeleteConfirm(false);
+  }
+
+  async function handleDeletePromoter() {
+    if (!reviewDialog) return;
+    setReviewLoading(true);
+    setReviewError(null);
     try {
-      const response = await fetch("/api/admin/promoters", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "create",
-          name: createName,
-          email: createEmail,
-          defaultCommissionRate: createRate,
-        }),
+      const response = await fetch(`/api/admin/promoters/${reviewDialog.promoter.id}`, {
+        method: "DELETE",
       });
       const payload = await readJsonSafely(response);
       if (!response.ok) {
-        throw new Error(getApiErrorMessage(payload, "Failed to create promoter."));
+        throw new Error(getApiErrorMessage(payload, "Failed to delete promoter."));
       }
-      setCreateName("");
-      setCreateEmail("");
+      closeReviewDialog();
       router.refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to create promoter.");
+      setReviewError(caught instanceof Error ? caught.message : "Failed to delete promoter.");
     } finally {
-      setLoading(false);
+      setReviewLoading(false);
     }
   }
 
-  async function createInvite() {
-    setLoading(true);
-    setError(null);
-    setNotice(null);
+  async function checkCodeAvailability() {
+    if (!reviewDialog) return;
+    setReviewDialog((s) => s ? { ...s, codeAvailability: "checking" } : s);
     try {
       const response = await fetch("/api/admin/promoters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "create_invite",
-          promoterId: invitePromoterId,
-          invitedName: inviteName,
-          invitedEmail: inviteEmail,
-          socialProfiles:
-            inviteSocialPlatform.trim() && inviteSocialUrl.trim()
-              ? [
-                  {
-                    platform: inviteSocialPlatform,
-                    url: inviteSocialUrl,
-                  },
-                ]
-              : [],
-          notes: inviteNotes,
+          action: "check_code_availability",
+          code: reviewDialog.code,
+          promoterId: reviewDialog.promoter.id,
+        }),
+      });
+      const payload = await readJsonSafely(response);
+      const data = getApiData<{ codeAvailable?: boolean }>(payload);
+      setReviewDialog((s) =>
+        s
+          ? {
+              ...s,
+              codeAvailability: data?.codeAvailable ? "available" : "unavailable",
+            }
+          : s,
+      );
+    } catch {
+      setReviewDialog((s) => s ? { ...s, codeAvailability: "unavailable" } : s);
+    }
+  }
+
+  async function handleReviewApprove() {
+    if (!reviewDialog) return;
+    setReviewLoading(true);
+    setReviewError(null);
+    try {
+      const response = await fetch("/api/admin/promoters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_status",
+          promoterId: reviewDialog.promoter.id,
+          status: "approved",
+          code: reviewDialog.code !== reviewDialog.promoter.code ? reviewDialog.code : undefined,
+          defaultCommissionRate: reviewDialog.rate,
+          sendApprovalEmail: reviewDialog.sendApprovalEmail,
+          sendReinstatementEmail: false,
         }),
       });
       const payload = await readJsonSafely(response);
       if (!response.ok) {
-        throw new Error(getApiErrorMessage(payload, "Failed to create invite."));
+        throw new Error(getApiErrorMessage(payload, "Failed to approve promoter."));
       }
-      setInviteName("");
-      setInviteEmail("");
-      setInviteSocialPlatform("Instagram");
-      setInviteSocialUrl("");
-      setInviteNotes("");
+      closeReviewDialog();
       router.refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to create invite.");
+      setReviewError(caught instanceof Error ? caught.message : "Failed to approve promoter.");
     } finally {
-      setLoading(false);
+      setReviewLoading(false);
+    }
+  }
+
+  async function handleReviewSaveChanges() {
+    if (!reviewDialog) return;
+    setReviewLoading(true);
+    setReviewError(null);
+    try {
+      const codeChanged = reviewDialog.code !== reviewDialog.promoter.code;
+      const response = await fetch("/api/admin/promoters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_promoter",
+          promoterId: reviewDialog.promoter.id,
+          code: codeChanged ? reviewDialog.code : undefined,
+          defaultCommissionRate: reviewDialog.rate,
+          sendLinkUpdateEmail: codeChanged && reviewDialog.sendLinkUpdateEmail,
+        }),
+      });
+      const payload = await readJsonSafely(response);
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, "Failed to update promoter."));
+      }
+      closeReviewDialog();
+      router.refresh();
+    } catch (caught) {
+      setReviewError(caught instanceof Error ? caught.message : "Failed to update promoter.");
+    } finally {
+      setReviewLoading(false);
+    }
+  }
+
+  async function handleReviewReject() {
+    if (!reviewDialog) return;
+    setReviewLoading(true);
+    setReviewError(null);
+    try {
+      const response = await fetch("/api/admin/promoters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_status",
+          promoterId: reviewDialog.promoter.id,
+          status: reviewDialog.removalStatus,
+          removalReason: reviewDialog.removalReason,
+          sendRemovalEmail: true,
+        }),
+      });
+      const payload = await readJsonSafely(response);
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, "Failed to update promoter."));
+      }
+      closeReviewDialog();
+      router.refresh();
+    } catch (caught) {
+      setReviewError(caught instanceof Error ? caught.message : "Failed to update promoter.");
+    } finally {
+      setReviewLoading(false);
+    }
+  }
+
+  async function handleReviewReinstate() {
+    if (!reviewDialog) return;
+    setReviewLoading(true);
+    setReviewError(null);
+    try {
+      const response = await fetch("/api/admin/promoters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_status",
+          promoterId: reviewDialog.promoter.id,
+          status: "approved",
+          reinstatementReason: reviewDialog.reinstatementReason,
+          sendReinstatementEmail: reviewDialog.sendReinstatementEmail,
+        }),
+      });
+      const payload = await readJsonSafely(response);
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, "Failed to reinstate promoter."));
+      }
+      closeReviewDialog();
+      router.refresh();
+    } catch (caught) {
+      setReviewError(caught instanceof Error ? caught.message : "Failed to reinstate promoter.");
+    } finally {
+      setReviewLoading(false);
     }
   }
 
@@ -356,77 +541,7 @@ export function PromoterManagement({
     }
   }
 
-  async function updateStatus(args: {
-    promoterId: string;
-    status: PromoterRecord["status"];
-    reinstatementReason?: string;
-    sendReinstatementEmail?: boolean;
-    removalReason?: string;
-    sendRemovalEmail?: boolean;
-  }) {
-    setLoading(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const response = await fetch("/api/admin/promoters", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "update_status",
-          promoterId: args.promoterId,
-          status: args.status,
-          reinstatementReason: args.reinstatementReason,
-          sendReinstatementEmail: args.sendReinstatementEmail,
-          removalReason: args.removalReason,
-          sendRemovalEmail: args.sendRemovalEmail,
-        }),
-      });
-      const payload = await readJsonSafely(response);
-      if (!response.ok) {
-        throw new Error(getApiErrorMessage(payload, "Failed to update promoter."));
-      }
-      setReinstatementPromoter(null);
-      setReinstatementReason("");
-      setRemovalPromoter(null);
-      setRemovalReason("");
-      router.refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to update promoter.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function sendLinkUpdateEmail(promoter: PromoterRecord) {
-    setLoading(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const response = await fetch("/api/admin/promoters", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "send_link_update_email",
-          promoterId: promoter.id,
-        }),
-      });
-      const payload = await readJsonSafely(response);
-      if (!response.ok) {
-        throw new Error(
-          getApiErrorMessage(payload, "Failed to send link update email."),
-        );
-      }
-      setNotice(`Link update email sent to ${promoter.email}.`);
-    } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Failed to send link update email.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
+  const codeChanged = reviewDialog ? reviewDialog.code !== reviewDialog.promoter.code : false;
 
   return (
     <div className="space-y-4">
@@ -453,85 +568,41 @@ export function PromoterManagement({
         </AdminPanel>
       ) : null}
 
-      <div className="grid gap-3 xl:grid-cols-2">
-        <AdminPanel className="space-y-3">
-          <h3 className="text-sm font-semibold text-foreground">Create promoter</h3>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="space-y-1.5">
-              <Label>Name</Label>
-              <Input value={createName} onChange={(e) => setCreateName(e.target.value)} className={adminFieldClass} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Email</Label>
-              <Input value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} className={adminFieldClass} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Default %</Label>
-              <Input value={createRate} onChange={(e) => setCreateRate(e.target.value)} className={adminFieldClass} />
-            </div>
+      {/* ── Promoters table ── */}
+      <AdminPanel className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={promoterSearch}
+              onChange={(e) => setPromoterSearch(e.target.value)}
+              className={`${adminFieldClass} pl-8`}
+              placeholder="Search promoters by name, email, or code"
+            />
           </div>
+          <select
+            value={promoterStatusFilter}
+            onChange={(e) => setPromoterStatusFilter(e.target.value as typeof promoterStatusFilter)}
+            className={adminFieldClass}
+          >
+            <option value="all">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="suspended">Suspended</option>
+            <option value="rejected">Rejected</option>
+          </select>
           <Button
             type="button"
-            className={adminPrimaryButtonClass}
-            disabled={loading || !createName.trim() || !createEmail.trim()}
-            onClick={createPromoter}
+            variant="outline"
+            size="icon"
+            className="size-8 shrink-0"
+            onClick={() => router.refresh()}
+            title="Refresh data"
           >
-            {loading ? <Loader2 className="size-4 animate-spin" /> : null}
-            Save promoter
+            <RefreshCw className="size-3.5" />
           </Button>
-        </AdminPanel>
-
-        <AdminPanel className="space-y-3">
-          <h3 className="text-sm font-semibold text-foreground">Send invite</h3>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>Promoter</Label>
-              <select
-                value={invitePromoterId}
-                onChange={(event) => setInvitePromoterId(event.target.value)}
-                className={adminFieldClass}
-              >
-                {promoters.map((promoter) => (
-                  <option key={promoter.id} value={promoter.id}>
-                    {promoter.name} ({promoter.email})
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Invited email</Label>
-              <Input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} className={adminFieldClass} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Invited name</Label>
-              <Input value={inviteName} onChange={(e) => setInviteName(e.target.value)} className={adminFieldClass} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Social platform</Label>
-              <Input value={inviteSocialPlatform} onChange={(e) => setInviteSocialPlatform(e.target.value)} className={adminFieldClass} placeholder="Instagram" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Social profile URL</Label>
-              <Input value={inviteSocialUrl} onChange={(e) => setInviteSocialUrl(e.target.value)} className={adminFieldClass} placeholder="https://instagram.com/account" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Notes</Label>
-              <Input value={inviteNotes} onChange={(e) => setInviteNotes(e.target.value)} className={adminFieldClass} />
-            </div>
-          </div>
-          <Button
-            type="button"
-            className={adminPrimaryButtonClass}
-            disabled={loading || !invitePromoterId || !inviteEmail.trim()}
-            onClick={createInvite}
-          >
-            {loading ? <Loader2 className="size-4 animate-spin" /> : null}
-            Send invite
-          </Button>
-        </AdminPanel>
-      </div>
-
-      <AdminPanel className="overflow-hidden p-0">
+        </div>
+        <div className="overflow-hidden rounded-none border border-border -mx-3 -mb-3 sm:-mx-4 sm:-mb-4">
         <Table>
           <TableHeader>
             <TableRow>
@@ -540,11 +611,11 @@ export function PromoterManagement({
               <TableHead>Code</TableHead>
               <TableHead>Default rate</TableHead>
               <TableHead>Wallet</TableHead>
-              <TableHead className="w-[220px]" />
+              <TableHead className="w-[120px]" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {promoters.map((promoter) => (
+            {filteredPromoters.map((promoter) => (
               <TableRow key={promoter.id}>
                 <TableCell>
                   <p className="text-xs font-semibold text-foreground">{promoter.name}</p>
@@ -565,106 +636,55 @@ export function PromoterManagement({
                   {promoter.walletAddress.trim() ? "Wallet on file" : "No wallet on file"}
                 </TableCell>
                 <TableCell>
-                  <div className="flex flex-wrap gap-2">
-                    {promoter.status === "approved" ? (
-                      <>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className={adminSecondaryButtonClass}
-                          disabled={loading}
-                          onClick={() => sendLinkUpdateEmail(promoter)}
-                        >
-                          Email link update
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className={adminSecondaryButtonClass}
-                          disabled={loading}
-                          onClick={() => {
-                            setRemovalPromoter(promoter);
-                            setRemovalStatus("suspended");
-                            setRemovalReason("");
-                          }}
-                        >
-                          Suspend
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className={adminSecondaryButtonClass}
-                          disabled={loading}
-                          onClick={() => {
-                            setRemovalPromoter(promoter);
-                            setRemovalStatus("rejected");
-                            setRemovalReason("");
-                          }}
-                        >
-                          Remove
-                        </Button>
-                      </>
-                    ) : promoter.status === "pending" ? (
-                      <>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className={adminSecondaryButtonClass}
-                          disabled={loading}
-                          onClick={() =>
-                            updateStatus({
-                              promoterId: promoter.id,
-                              status: "approved",
-                              sendReinstatementEmail: false,
-                            })
-                          }
-                        >
-                          Approve
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className={adminSecondaryButtonClass}
-                          disabled={loading}
-                          onClick={() => {
-                            setRemovalPromoter(promoter);
-                            setRemovalStatus("rejected");
-                            setRemovalReason("");
-                          }}
-                        >
-                          Reject
-                        </Button>
-                      </>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className={adminSecondaryButtonClass}
-                        disabled={loading}
-                        onClick={() => {
-                          setReinstatementPromoter(promoter);
-                          setReinstatementReason("");
-                        }}
-                      >
-                        Reinstate
-                      </Button>
-                    )}
-                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={adminSecondaryButtonClass}
+                    onClick={() => openReviewDialog(promoter)}
+                  >
+                    Review
+                  </Button>
                 </TableCell>
               </TableRow>
             ))}
-            {promoters.length === 0 ? (
+            {filteredPromoters.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="py-8 text-center text-xs text-muted-foreground">
-                  No promoters yet.
+                  {promoterSearch || promoterStatusFilter !== "all" ? "No promoters match your filters." : "No promoters yet."}
                 </TableCell>
               </TableRow>
             ) : null}
           </TableBody>
         </Table>
+        </div>
       </AdminPanel>
 
-      <AdminPanel className="overflow-hidden p-0">
+      {/* ── Invites table ── */}
+      <AdminPanel className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={inviteSearch}
+              onChange={(e) => setInviteSearch(e.target.value)}
+              className={`${adminFieldClass} pl-8`}
+              placeholder="Search invites by name, email, or Growth Partner"
+            />
+          </div>
+          <select
+            value={inviteStatusFilter}
+            onChange={(e) => setInviteStatusFilter(e.target.value as typeof inviteStatusFilter)}
+            className={adminFieldClass}
+          >
+            <option value="all">All statuses</option>
+            <option value="invited">Invited</option>
+            <option value="applied">Applied</option>
+            <option value="successful">Successful</option>
+            <option value="rejected">Rejected</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </div>
+        <div className="overflow-hidden rounded-none border border-border -mx-3 -mb-3 sm:-mx-4 sm:-mb-4">
         <Table>
           <TableHeader>
             <TableRow>
@@ -678,7 +698,7 @@ export function PromoterManagement({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {invites.map((entry) => (
+            {filteredInvites.map((entry) => (
               <TableRow key={entry.invite.id}>
                 <TableCell>
                   <p className="text-xs font-semibold text-foreground">
@@ -762,17 +782,19 @@ export function PromoterManagement({
                 </TableCell>
               </TableRow>
             ))}
-            {invites.length === 0 ? (
+            {filteredInvites.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="py-8 text-center text-xs text-muted-foreground">
-                  No promoter invites yet.
+                  {inviteSearch || inviteStatusFilter !== "all" ? "No invites match your filters." : "No promoter invites yet."}
                 </TableCell>
               </TableRow>
             ) : null}
           </TableBody>
         </Table>
+        </div>
       </AdminPanel>
 
+      {/* ── Activate commission dialog (unchanged) ── */}
       <Dialog open={Boolean(mappingInvite)} onOpenChange={(open) => !open && setMappingInvite(null)}>
         <DialogContent className="max-w-2xl rounded-none">
           <DialogHeader>
@@ -909,151 +931,379 @@ export function PromoterManagement({
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={Boolean(removalPromoter)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setRemovalPromoter(null);
-            setRemovalReason("");
-          }
-        }}
-      >
-        <DialogContent className="max-w-lg rounded-none">
+      {/* ── Promoter review dialog ── */}
+      <Dialog open={Boolean(reviewDialog)} onOpenChange={(open) => !open && closeReviewDialog()}>
+        <DialogContent className="max-w-2xl rounded-none">
           <DialogHeader>
-            <DialogTitle>
-              {removalStatus === "suspended"
-                ? "Suspend promoter access"
-                : "Remove promoter access"}
-            </DialogTitle>
+            <DialogTitle>Review promoter</DialogTitle>
           </DialogHeader>
-          {removalPromoter ? (
-            <div className="space-y-4">
-              <div className="rounded-none border border-border bg-muted/40 px-3 py-2 text-xs">
-                <p className="font-semibold text-foreground">
-                  {removalPromoter.name}
-                </p>
-                <p className="text-muted-foreground">
-                  {removalPromoter.email}
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <Label>
-                  {removalStatus === "suspended"
-                    ? "Suspension reason"
-                    : "Removal reason"}
-                </Label>
-                <Input
-                  value={removalReason}
-                  onChange={(event) => setRemovalReason(event.target.value)}
-                  className={adminFieldClass}
-                  placeholder={
-                    removalStatus === "suspended"
-                      ? "Explain why promoter access is being suspended"
-                      : "Explain why promoter access is being removed"
-                  }
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Sent in the promoter access email as removal_reason.
-                </p>
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className={adminSecondaryButtonClass}
-                  onClick={() => {
-                    setRemovalPromoter(null);
-                    setRemovalReason("");
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  className={adminPrimaryButtonClass}
-                  disabled={loading || !removalReason.trim()}
-                  onClick={() =>
-                    updateStatus({
-                      promoterId: removalPromoter.id,
-                      status: removalStatus,
-                      removalReason,
-                      sendRemovalEmail: true,
-                    })
-                  }
-                >
-                  {loading ? <Loader2 className="size-4 animate-spin" /> : null}
-                  {removalStatus === "suspended"
-                    ? "Suspend and email"
-                    : "Remove and email"}
-                </Button>
-              </div>
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+          {reviewDialog ? (
+            <div className="space-y-5">
+              {/* Header: name, email, status */}
+              <div className="rounded-none border border-border bg-muted/40 px-3 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">
+                      {reviewDialog.promoter.name}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {reviewDialog.promoter.email}
+                    </p>
+                  </div>
+                  <Badge variant={promoterStatusVariant(reviewDialog.promoter.status)}>
+                    {reviewDialog.promoter.status}
+                  </Badge>
+                </div>
 
-      <Dialog
-        open={Boolean(reinstatementPromoter)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setReinstatementPromoter(null);
-            setReinstatementReason("");
-          }
-        }}
-      >
-        <DialogContent className="max-w-lg rounded-none">
-          <DialogHeader>
-            <DialogTitle>Reinstate promoter access</DialogTitle>
-          </DialogHeader>
-          {reinstatementPromoter ? (
-            <div className="space-y-4">
-              <div className="rounded-none border border-border bg-muted/40 px-3 py-2 text-xs">
-                <p className="font-semibold text-foreground">
-                  {reinstatementPromoter.name}
-                </p>
-                <p className="text-muted-foreground">
-                  {reinstatementPromoter.email}
-                </p>
+                {/* Social profiles */}
+                {reviewDialog.promoter.socialProfiles.length > 0 ? (
+                  <div className="mt-3 space-y-1 border-t border-border pt-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Social profiles
+                    </p>
+                    {reviewDialog.promoter.socialProfiles.map((profile, idx) => (
+                      <div key={idx} className="flex items-center gap-2 text-xs">
+                        <span className="font-medium text-foreground">{profile.platform}</span>
+                        <a
+                          href={profile.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-blue-600 underline underline-offset-2"
+                        >
+                          {profile.url}
+                          <ExternalLink className="size-3" />
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 border-t border-border pt-3 text-[11px] text-muted-foreground">
+                    No social profiles submitted.
+                  </p>
+                )}
               </div>
-              <div className="space-y-1.5">
-                <Label>Reinstatement reason</Label>
-                <Input
-                  value={reinstatementReason}
-                  onChange={(event) => setReinstatementReason(event.target.value)}
-                  className={adminFieldClass}
-                  placeholder="Explain why promoter access is being reinstated"
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Sent in the promoter reinstatement email.
+
+              {reviewError ? (
+                <div className="rounded-none border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                  {reviewError}
+                </div>
+              ) : null}
+
+              {/* Code & Rate section */}
+              <div className="space-y-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Code &amp; Rate
                 </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Promoter code</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={reviewDialog.code}
+                        onChange={(e) =>
+                          setReviewDialog((s) =>
+                            s
+                              ? { ...s, code: e.target.value, codeAvailability: "idle" }
+                              : s,
+                          )
+                        }
+                        className={adminFieldClass}
+                        placeholder="promoter-code"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={adminSecondaryButtonClass}
+                        disabled={!reviewDialog.code.trim() || reviewDialog.codeAvailability === "checking"}
+                        onClick={checkCodeAvailability}
+                      >
+                        {reviewDialog.codeAvailability === "checking" ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          "Check"
+                        )}
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      revalin.ca/grow/{reviewDialog.code || "..."}
+                    </p>
+                    {reviewDialog.codeAvailability === "available" ? (
+                      <p className="text-xs text-emerald-700">Code is available.</p>
+                    ) : reviewDialog.codeAvailability === "unavailable" ? (
+                      <p className="text-xs text-red-700">Code is not available.</p>
+                    ) : null}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Default commission %</Label>
+                    <Input
+                      value={reviewDialog.rate}
+                      onChange={(e) =>
+                        setReviewDialog((s) =>
+                          s ? { ...s, rate: e.target.value } : s,
+                        )
+                      }
+                      className={adminFieldClass}
+                      placeholder="2.5"
+                    />
+                  </div>
+                </div>
               </div>
-              <div className="flex justify-end gap-2">
+
+              {/* Actions section — varies by status */}
+              <div className="space-y-3 border-t border-border pt-4">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Actions
+                </p>
+
+                {reviewDialog.promoter.status === "pending" ? (
+                  <div className="space-y-3">
+                    <label className="flex items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={reviewDialog.sendApprovalEmail}
+                        onChange={(e) =>
+                          setReviewDialog((s) =>
+                            s ? { ...s, sendApprovalEmail: e.target.checked } : s,
+                          )
+                        }
+                      />
+                      Send approval email
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        className={adminPrimaryButtonClass}
+                        disabled={reviewLoading || !reviewDialog.code.trim() || !reviewDialog.rate.trim()}
+                        onClick={handleReviewApprove}
+                      >
+                        {reviewLoading ? <Loader2 className="size-4 animate-spin" /> : null}
+                        Approve
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={adminSecondaryButtonClass}
+                        disabled={reviewLoading}
+                        onClick={() =>
+                          setReviewDialog((s) =>
+                            s ? { ...s, removalStatus: "rejected" } : s,
+                          )
+                        }
+                      >
+                        Reject
+                      </Button>
+                    </div>
+                    {reviewDialog.removalStatus === "rejected" ? (
+                      <div className="space-y-2 rounded-none border border-border bg-muted/40 p-3">
+                        <div className="space-y-1.5">
+                          <Label>Rejection reason</Label>
+                          <Input
+                            value={reviewDialog.removalReason}
+                            onChange={(e) =>
+                              setReviewDialog((s) =>
+                                s ? { ...s, removalReason: e.target.value } : s,
+                              )
+                            }
+                            className={adminFieldClass}
+                            placeholder="Explain why the application is being rejected"
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          className={adminPrimaryButtonClass}
+                          disabled={reviewLoading || !reviewDialog.removalReason.trim()}
+                          onClick={handleReviewReject}
+                        >
+                          {reviewLoading ? <Loader2 className="size-4 animate-spin" /> : null}
+                          Reject and email
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : reviewDialog.promoter.status === "approved" ? (
+                  <div className="space-y-3">
+                    {codeChanged ? (
+                      <label className="flex items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={reviewDialog.sendLinkUpdateEmail}
+                          onChange={(e) =>
+                            setReviewDialog((s) =>
+                              s ? { ...s, sendLinkUpdateEmail: e.target.checked } : s,
+                            )
+                          }
+                        />
+                        Send link update email (code changed)
+                      </label>
+                    ) : null}
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        className={adminPrimaryButtonClass}
+                        disabled={reviewLoading || !reviewDialog.code.trim() || !reviewDialog.rate.trim()}
+                        onClick={handleReviewSaveChanges}
+                      >
+                        {reviewLoading ? <Loader2 className="size-4 animate-spin" /> : null}
+                        Save changes
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={adminSecondaryButtonClass}
+                        disabled={reviewLoading}
+                        onClick={() =>
+                          setReviewDialog((s) =>
+                            s ? { ...s, removalStatus: "suspended" } : s,
+                          )
+                        }
+                      >
+                        Suspend
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={adminSecondaryButtonClass}
+                        disabled={reviewLoading}
+                        onClick={() =>
+                          setReviewDialog((s) =>
+                            s ? { ...s, removalStatus: "rejected" } : s,
+                          )
+                        }
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                    {(reviewDialog.removalStatus === "suspended" || reviewDialog.removalStatus === "rejected") &&
+                    reviewDialog.promoter.status === "approved" ? (
+                      <div className="space-y-2 rounded-none border border-border bg-muted/40 p-3">
+                        <div className="space-y-1.5">
+                          <Label>
+                            {reviewDialog.removalStatus === "suspended"
+                              ? "Suspension reason"
+                              : "Removal reason"}
+                          </Label>
+                          <Input
+                            value={reviewDialog.removalReason}
+                            onChange={(e) =>
+                              setReviewDialog((s) =>
+                                s ? { ...s, removalReason: e.target.value } : s,
+                              )
+                            }
+                            className={adminFieldClass}
+                            placeholder={
+                              reviewDialog.removalStatus === "suspended"
+                                ? "Explain why promoter access is being suspended"
+                                : "Explain why promoter access is being removed"
+                            }
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          className={adminPrimaryButtonClass}
+                          disabled={reviewLoading || !reviewDialog.removalReason.trim()}
+                          onClick={handleReviewReject}
+                        >
+                          {reviewLoading ? <Loader2 className="size-4 animate-spin" /> : null}
+                          {reviewDialog.removalStatus === "suspended"
+                            ? "Suspend and email"
+                            : "Remove and email"}
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  /* suspended or rejected */
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label>Reinstatement reason</Label>
+                      <Input
+                        value={reviewDialog.reinstatementReason}
+                        onChange={(e) =>
+                          setReviewDialog((s) =>
+                            s ? { ...s, reinstatementReason: e.target.value } : s,
+                          )
+                        }
+                        className={adminFieldClass}
+                        placeholder="Explain why promoter access is being reinstated"
+                      />
+                    </div>
+                    <label className="flex items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={reviewDialog.sendReinstatementEmail}
+                        onChange={(e) =>
+                          setReviewDialog((s) =>
+                            s ? { ...s, sendReinstatementEmail: e.target.checked } : s,
+                          )
+                        }
+                      />
+                      Send reinstatement email
+                    </label>
+                    <Button
+                      type="button"
+                      className={adminPrimaryButtonClass}
+                      disabled={reviewLoading || !reviewDialog.reinstatementReason.trim()}
+                      onClick={handleReviewReinstate}
+                    >
+                      {reviewLoading ? <Loader2 className="size-4 animate-spin" /> : null}
+                      Reinstate
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Delete record (dev only) */}
+              {canDelete ? (
+                <div className="space-y-3 border-t border-border pt-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Danger zone (dev only)
+                  </p>
+                  {showDeleteConfirm ? (
+                    <div className="space-y-2 rounded-none border border-red-200 bg-red-50 p-3">
+                      <p className="text-xs text-red-700">
+                        This will permanently delete {reviewDialog.promoter.name} and all their invites. This cannot be undone.
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          className="h-7 rounded-none bg-red-600 px-2.5 text-[10px] uppercase tracking-[0.14em] text-white hover:bg-red-700"
+                          disabled={reviewLoading}
+                          onClick={handleDeletePromoter}
+                        >
+                          {reviewLoading ? <Loader2 className="size-4 animate-spin" /> : null}
+                          Confirm delete
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className={adminSecondaryButtonClass}
+                          onClick={() => setShowDeleteConfirm(false)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      className="h-7 rounded-none bg-red-600 px-2.5 text-[10px] uppercase tracking-[0.14em] text-white hover:bg-red-700"
+                      onClick={() => setShowDeleteConfirm(true)}
+                    >
+                      Delete record
+                    </Button>
+                  )}
+                </div>
+              ) : null}
+
+              {/* Close button */}
+              <div className="flex justify-end border-t border-border pt-3">
                 <Button
                   type="button"
                   variant="outline"
                   className={adminSecondaryButtonClass}
-                  onClick={() => {
-                    setReinstatementPromoter(null);
-                    setReinstatementReason("");
-                  }}
+                  onClick={closeReviewDialog}
                 >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  className={adminPrimaryButtonClass}
-                  disabled={loading || !reinstatementReason.trim()}
-                  onClick={() =>
-                    updateStatus({
-                      promoterId: reinstatementPromoter.id,
-                      status: "approved",
-                      reinstatementReason,
-                      sendReinstatementEmail: true,
-                    })
-                  }
-                >
-                  {loading ? <Loader2 className="size-4 animate-spin" /> : null}
-                  Reinstate and email
+                  Close
                 </Button>
               </div>
             </div>

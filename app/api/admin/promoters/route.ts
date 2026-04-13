@@ -3,51 +3,34 @@ import { z } from "zod";
 import { apiError } from "@/lib/api/errors";
 import { createApiRoute } from "@/lib/api/route";
 import {
-  createPromoterInvite,
-  createPromoter,
+  assertPromoterCodeAvailable,
   ensurePromoterForUser,
+  getApprovedAffiliateCodeForPromoter,
+  getPromoterById,
+  getPromoterTrackingInfo,
   listPromoterInvites,
   listPromoters,
   sendPromoterReferralLinkUpdateNotification,
+  updatePromoterCodeAndRate,
   updatePromoterStatus,
   type PromoterInviteRecord,
   type PromoterRecord,
 } from "@/lib/checkout/promoter-service";
-import { normalizeAffiliateSocialUrl } from "@/lib/checkout/affiliate-social-profiles";
-
-const socialProfileSchema = z.object({
-  platform: z.string().trim().min(1),
-  url: z
-    .string()
-    .trim()
-    .transform((value) => normalizeAffiliateSocialUrl(value))
-    .pipe(z.string().url()),
-});
+import { sendPromoterApprovalEmail } from "@/lib/email/promoter-emails";
 
 const postSchema = z.union([
-  z.object({
-    action: z.literal("create"),
-    name: z.string().trim().min(1),
-    email: z.string().trim().email(),
-    defaultCommissionRate: z.string().trim().optional(),
-  }),
   z.object({
     action: z.literal("ensure_for_user"),
     userId: z.string().trim().min(1),
     defaultCommissionRate: z.string().trim().optional(),
   }),
   z.object({
-    action: z.literal("create_invite"),
-    promoterId: z.string().trim().min(1),
-    invitedName: z.string().trim().optional(),
-    invitedEmail: z.string().trim().email(),
-    socialProfiles: z.array(socialProfileSchema).max(6).optional(),
-    notes: z.string().trim().optional(),
-  }),
-  z.object({
     action: z.literal("update_status"),
     promoterId: z.string().trim().min(1),
     status: z.enum(["pending", "approved", "rejected", "suspended"]),
+    code: z.string().trim().optional(),
+    defaultCommissionRate: z.string().trim().optional(),
+    sendApprovalEmail: z.boolean().optional(),
     reinstatementReason: z.string().trim().optional(),
     sendReinstatementEmail: z.boolean().optional(),
     removalReason: z.string().trim().optional(),
@@ -56,6 +39,18 @@ const postSchema = z.union([
   z.object({
     action: z.literal("send_link_update_email"),
     promoterId: z.string().trim().min(1),
+  }),
+  z.object({
+    action: z.literal("check_code_availability"),
+    code: z.string().trim().min(1),
+    promoterId: z.string().trim().optional(),
+  }),
+  z.object({
+    action: z.literal("update_promoter"),
+    promoterId: z.string().trim().min(1),
+    code: z.string().trim().optional(),
+    defaultCommissionRate: z.string().trim().optional(),
+    sendLinkUpdateEmail: z.boolean().optional(),
   }),
 ]);
 
@@ -73,7 +68,7 @@ function normalizePromoterError(error: unknown) {
   }
 
   if (
-    /valid email|Commission rate|reinstatement reason|removal reason|Only approved promoters/i.test(
+    /valid email|Commission rate|reinstatement reason|removal reason|Only approved promoters|promoter code|already assigned|reserved by an existing route|at least 3 characters/i.test(
       error.message,
     )
   ) {
@@ -107,6 +102,7 @@ export const GET = createApiRoute({
 type AdminPromoterPostResponse = {
   invite: PromoterInviteRecord | null;
   promoter: PromoterRecord | null;
+  codeAvailable?: boolean;
 };
 
 export const POST = createApiRoute<
@@ -120,28 +116,71 @@ export const POST = createApiRoute<
   access: "admin",
   bodySchema: postSchema,
   cacheControl: "no-store",
-  handler: async ({ body, session }) => {
+  handler: async ({ body }) => {
     try {
-      if (body.action === "create_invite") {
-        const invite = await createPromoterInvite({
+      if (body.action === "check_code_availability") {
+        try {
+          await assertPromoterCodeAvailable({
+            code: body.code,
+            excludePromoterId: body.promoterId,
+          });
+          return {
+            data: { invite: null, promoter: null, codeAvailable: true },
+          };
+        } catch {
+          return {
+            data: { invite: null, promoter: null, codeAvailable: false },
+          };
+        }
+      }
+
+      if (body.action === "update_promoter") {
+        const result = await updatePromoterCodeAndRate({
           promoterId: body.promoterId,
-          invitedEmail: body.invitedEmail,
-          invitedName: body.invitedName,
-          socialProfiles: body.socialProfiles,
-          notes: body.notes,
-          createdByUserId: session.user.id,
+          code: body.code,
+          defaultCommissionRate: body.defaultCommissionRate,
         });
+
+        if (result.codeChanged && body.sendLinkUpdateEmail) {
+          await sendPromoterReferralLinkUpdateNotification({
+            promoterId: body.promoterId,
+            oldCode: result.oldCode,
+            newCode: result.newCode,
+          });
+        }
 
         return {
           data: {
-            invite,
-            promoter: null,
+            invite: null,
+            promoter: result.promoter,
           },
-          status: 201,
         };
       }
 
       if (body.action === "update_status") {
+        const currentPromoter =
+          body.status === "approved"
+            ? await getPromoterById(body.promoterId)
+            : null;
+        const approvedAffiliateCode =
+          currentPromoter?.status === "pending"
+            ? await getApprovedAffiliateCodeForPromoter(currentPromoter)
+            : null;
+        const approvalCode = body.code || approvedAffiliateCode || undefined;
+        const shouldUpdateApprovalCode =
+          approvalCode && approvalCode !== currentPromoter?.code;
+
+        if (
+          body.status === "approved" &&
+          (shouldUpdateApprovalCode || body.defaultCommissionRate)
+        ) {
+          await updatePromoterCodeAndRate({
+            promoterId: body.promoterId,
+            code: shouldUpdateApprovalCode ? approvalCode : undefined,
+            defaultCommissionRate: body.defaultCommissionRate,
+          });
+        }
+
         const promoter = await updatePromoterStatus({
           promoterId: body.promoterId,
           status: body.status,
@@ -150,6 +189,19 @@ export const POST = createApiRoute<
           removalReason: body.removalReason,
           sendRemovalEmail: body.sendRemovalEmail,
         });
+
+        if (body.status === "approved" && body.sendApprovalEmail) {
+          try {
+            const trackingInfo = await getPromoterTrackingInfo(promoter);
+            await sendPromoterApprovalEmail({
+              promoterEmail: promoter.email,
+              promoterName: promoter.name,
+              referralLink: trackingInfo.primaryLink,
+            });
+          } catch (error) {
+            console.error("[PROMOTER-APPROVAL-EMAIL]", error);
+          }
+        }
 
         return {
           data: {
@@ -172,18 +224,10 @@ export const POST = createApiRoute<
         };
       }
 
-      const promoter =
-        body.action === "ensure_for_user"
-          ? await ensurePromoterForUser({
-              userId: body.userId,
-              defaultCommissionRate: body.defaultCommissionRate,
-            })
-          : await createPromoter({
-              name: body.name,
-              email: body.email,
-              defaultCommissionRate: body.defaultCommissionRate,
-              status: "approved",
-            });
+      const promoter = await ensurePromoterForUser({
+        userId: body.userId,
+        defaultCommissionRate: body.defaultCommissionRate,
+      });
 
       return {
         data: {
