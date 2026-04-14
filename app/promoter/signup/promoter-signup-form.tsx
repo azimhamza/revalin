@@ -13,6 +13,7 @@ import {
   SiThreads,
 } from "react-icons/si";
 import { FaLinkedinIn } from "react-icons/fa";
+import type { IconType } from "react-icons";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -29,17 +30,25 @@ import {
   type SocialPlatformValue,
 } from "@/lib/checkout/affiliate-social-profiles";
 
-const PLATFORM_ICONS: Record<SocialPlatformValue, React.ComponentType<{ className?: string }>> = {
-  instagram: SiInstagram,
-  tiktok: SiTiktok,
-  twitter: SiX,
-  facebook: SiFacebook,
-  youtube: SiYoutube,
-  linkedin: FaLinkedinIn,
-  pinterest: SiPinterest,
-  snapchat: SiSnapchat,
-  threads: SiThreads,
-  other: Globe,
+type SocialIconProps = { className?: string };
+
+function wrapReactIcon(Icon: IconType) {
+  return function SocialIcon(props: SocialIconProps) {
+    return Icon(props) as React.ReactElement | null;
+  };
+}
+
+const PLATFORM_ICONS: Record<SocialPlatformValue, React.ComponentType<SocialIconProps>> = {
+  instagram: wrapReactIcon(SiInstagram),
+  tiktok: wrapReactIcon(SiTiktok),
+  twitter: wrapReactIcon(SiX),
+  facebook: wrapReactIcon(SiFacebook),
+  youtube: wrapReactIcon(SiYoutube),
+  linkedin: wrapReactIcon(FaLinkedinIn),
+  pinterest: wrapReactIcon(SiPinterest),
+  snapchat: wrapReactIcon(SiSnapchat),
+  threads: wrapReactIcon(SiThreads),
+  other: (props) => <Globe {...props} />,
 };
 
 type PromoterSignupFormProps = {

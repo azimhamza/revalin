@@ -7,7 +7,11 @@ import {
   type AffiliateSetupPreview,
   listAffiliateRoleOrphans,
 } from "@/lib/checkout/affiliate-service";
-import { listCommissionTierConfig } from "@/lib/checkout/commission-tier-service";
+import {
+  getBaselineCommissionRateFromConfig,
+  listCommissionTierConfig,
+} from "@/lib/checkout/commission-tier-service";
+import { normalizeCommissionRateInput } from "@/lib/checkout/affiliate-math";
 import { getCommissionMonthKey } from "@/lib/checkout/commission-service";
 import { CommissionTierManagement } from "./commission-tier-management";
 import { AffiliateManagement } from "./affiliate-management";
@@ -63,27 +67,32 @@ export default async function AffiliatesPage({
         affiliateId: requestedAffiliateId,
       }
     : requestedUserId
-      ? await getAffiliateSetupPreviewForUser({ userId: requestedUserId }).catch(
-          () => null,
-        )
+      ? await getAffiliateSetupPreviewForUser({
+          userId: requestedUserId,
+        }).catch(() => null)
       : null;
   const selectedAffiliateId =
     initialSetupTarget?.kind === "existing"
       ? initialSetupTarget.affiliateId
       : null;
 
-  const [baseRows, selectedRows, orphanUsers, commissionTiers] = await Promise.all([
-    db.select().from(affiliates).orderBy(desc(affiliates.createdAt)).limit(200),
-    selectedAffiliateId
-      ? db
-          .select()
-          .from(affiliates)
-          .where(eq(affiliates.id, selectedAffiliateId))
-          .limit(1)
-      : Promise.resolve([]),
-    listAffiliateRoleOrphans().catch(() => []),
-    listCommissionTierConfig({ includeInactive: true }).catch(() => []),
-  ]);
+  const [baseRows, selectedRows, orphanUsers, commissionTiers] =
+    await Promise.all([
+      db
+        .select()
+        .from(affiliates)
+        .orderBy(desc(affiliates.createdAt))
+        .limit(200),
+      selectedAffiliateId
+        ? db
+            .select()
+            .from(affiliates)
+            .where(eq(affiliates.id, selectedAffiliateId))
+            .limit(1)
+        : Promise.resolve([]),
+      listAffiliateRoleOrphans().catch(() => []),
+      listCommissionTierConfig({ includeInactive: true }).catch(() => []),
+    ]);
 
   const rows = [...selectedRows, ...baseRows].filter(
     (row, index, collection) =>
@@ -115,8 +124,7 @@ export default async function AffiliatesPage({
       summaryByAffiliateId.get(row.id)?.recognizedOrderCount ?? 0,
     currentCommissionRate:
       summaryByAffiliateId.get(row.id)?.effectiveRate ?? row.commissionRate,
-    currentCommissionTier:
-      summaryByAffiliateId.get(row.id)?.tierLabel ?? null,
+    currentCommissionTier: summaryByAffiliateId.get(row.id)?.tierLabel ?? null,
     currentCommissionOverride: Boolean(
       summaryByAffiliateId.get(row.id)?.overrideRate,
     ),
@@ -138,6 +146,9 @@ export default async function AffiliatesPage({
     status: row.status,
     createdAt: row.createdAt,
   }));
+  const defaultBaselineCommissionPercent = normalizeCommissionRateInput(
+    getBaselineCommissionRateFromConfig(commissionTiers),
+  ).percentDisplay;
 
   return (
     <div className="space-y-4">
@@ -146,6 +157,7 @@ export default async function AffiliatesPage({
         affiliates={decryptedRows}
         orphanUsers={orphanUsers}
         initialSetupTarget={initialSetupTarget}
+        defaultBaselineCommissionPercent={defaultBaselineCommissionPercent}
       />
     </div>
   );

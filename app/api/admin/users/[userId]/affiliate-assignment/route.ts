@@ -22,7 +22,7 @@ const saveRequestSchema = z.object({
   affiliateCode: z.string().trim().min(1),
   discountCode: z.string().trim().min(1),
   discountPercent: z.string().trim().min(1),
-  commissionRate: z.string().trim().min(1),
+  commissionRate: z.string().trim().optional(),
   sendApprovalEmail: z.boolean().optional(),
   changeReason: z.string().trim().optional(),
   reinstatementReason: z.string().trim().optional(),
@@ -43,7 +43,11 @@ function normalizeAssignmentError(error: unknown) {
     return apiError.notFound(error.message);
   }
 
-  if (/already linked to another user|cannot be converted to Growth Partners/i.test(error.message)) {
+  if (
+    /already linked to another user|cannot be converted to Growth Partners/i.test(
+      error.message,
+    )
+  ) {
     return apiError.conflict(error.message);
   }
 

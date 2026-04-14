@@ -27,7 +27,7 @@ export const DEFAULT_COMMISSION_TIER_CONFIG: CommissionTierConfig[] = [
     label: "Operator",
     minRevenue: "0.00",
     maxRevenue: "9999.99",
-    rate: "0.10",
+    rate: "0.15",
     sortOrder: 0,
     active: true,
   },
@@ -149,7 +149,9 @@ export function validateCommissionTierConfiguration(
       throw new Error(`Duplicate commission tier key "${tier.key}".`);
     }
     if (sortOrders.has(tier.sortOrder)) {
-      throw new Error(`Duplicate commission tier sort order "${tier.sortOrder}".`);
+      throw new Error(
+        `Duplicate commission tier sort order "${tier.sortOrder}".`,
+      );
     }
 
     keys.add(tier.key);
@@ -174,7 +176,9 @@ export function validateCommissionTierConfiguration(
     }
 
     if (index < normalized.length - 1 && maxRevenueCents === null) {
-      throw new Error("Only the last commission tier can have no maximum revenue.");
+      throw new Error(
+        "Only the last commission tier can have no maximum revenue.",
+      );
     }
 
     if (index === normalized.length - 1 && maxRevenueCents !== null) {
@@ -184,10 +188,14 @@ export function validateCommissionTierConfiguration(
     if (index > 0) {
       const previous = normalized[index - 1]!;
       const previousMaxRevenueCents =
-        previous.maxRevenue === null ? null : amountToCents(previous.maxRevenue);
+        previous.maxRevenue === null
+          ? null
+          : amountToCents(previous.maxRevenue);
 
       if (previousMaxRevenueCents === null) {
-        throw new Error("No tiers can come after an unbounded commission tier.");
+        throw new Error(
+          "No tiers can come after an unbounded commission tier.",
+        );
       }
 
       if (minRevenueCents !== previousMaxRevenueCents + 1) {
@@ -210,12 +218,41 @@ export function resolveCommissionTierFromConfig(
   const matchedTier = tiers.find((tier) => {
     const minimum = parseAmount(tier.minRevenue);
     const maximum =
-      tier.maxRevenue === null ? Number.POSITIVE_INFINITY : parseAmount(tier.maxRevenue);
+      tier.maxRevenue === null
+        ? Number.POSITIVE_INFINITY
+        : parseAmount(tier.maxRevenue);
 
     return revenue >= minimum && revenue <= maximum;
   });
 
   return matchedTier ?? tiers[0] ?? DEFAULT_COMMISSION_TIER_CONFIG[0]!;
+}
+
+export function resolveBaselineCommissionTierFromConfig(
+  tiers: CommissionTierConfig[],
+) {
+  const configuredTiers = tiers.filter((tier) => tier.active);
+  const fallbackTiers = DEFAULT_COMMISSION_TIER_CONFIG.filter(
+    (tier) => tier.active,
+  );
+  const sourceTiers =
+    configuredTiers.length > 0 ? configuredTiers : fallbackTiers;
+
+  return (
+    [...sourceTiers].sort((left, right) => {
+      const revenueDelta =
+        amountToCents(left.minRevenue) - amountToCents(right.minRevenue);
+      return revenueDelta === 0
+        ? left.sortOrder - right.sortOrder
+        : revenueDelta;
+    })[0] ?? DEFAULT_COMMISSION_TIER_CONFIG[0]!
+  );
+}
+
+export function getBaselineCommissionRateFromConfig(
+  tiers: CommissionTierConfig[],
+) {
+  return resolveBaselineCommissionTierFromConfig(tiers).rate;
 }
 
 export function getCommissionTierProgress(args: {
@@ -229,14 +266,17 @@ export function getCommissionTierProgress(args: {
 
   const currentTier = resolveCommissionTierFromConfig(args.revenue, tiers);
   const currentIndex = tiers.findIndex((tier) => tier.key === currentTier.key);
-  const nextTier = currentIndex >= 0 ? tiers[currentIndex + 1] ?? null : null;
+  const nextTier = currentIndex >= 0 ? (tiers[currentIndex + 1] ?? null) : null;
 
   return {
     currentTier,
     nextTier,
     amountToNextTier: nextTier
       ? formatAmount(
-          Math.max(0, parseAmount(nextTier.minRevenue) - Math.max(args.revenue, 0)),
+          Math.max(
+            0,
+            parseAmount(nextTier.minRevenue) - Math.max(args.revenue, 0),
+          ),
         )
       : null,
   } satisfies CommissionTierProgress;

@@ -1,4 +1,4 @@
-const FALLBACK_BASELINE_RATE = 0.1;
+const FALLBACK_BASELINE_RATE = 0.15;
 
 export function trimNumericString(value: string) {
   return value.replace(/\.?0+$/, "") || "0";
@@ -38,7 +38,11 @@ export function normalizeCommissionRateInput(
   value: string | number | null | undefined,
 ) {
   const raw =
-    typeof value === "string" ? value.trim() : value === null ? "" : `${value ?? ""}`;
+    typeof value === "string"
+      ? value.trim()
+      : value === null
+        ? ""
+        : `${value ?? ""}`;
   const parsed = Number(raw);
 
   if (!Number.isFinite(parsed) || parsed <= 0) {

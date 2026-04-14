@@ -56,10 +56,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
     case "affiliate_dashboard":
       redirectUrl = new URL("/affiliate/dashboard", request.url);
       break;
-    case "account_boost":
-      redirectUrl = new URL("/account", request.url);
-      redirectUrl.searchParams.set("promoter_boost", redirect.promoterCode);
-      break;
     case "account_no_boost":
       redirectUrl = new URL("/account", request.url);
       break;

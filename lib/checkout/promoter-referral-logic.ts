@@ -16,7 +16,6 @@ export type GrowRedirectInput = {
 
 export type GrowRedirectResult =
   | { destination: "affiliate_dashboard" }
-  | { destination: "account_boost"; promoterCode: string }
   | { destination: "account_no_boost" }
   | { destination: "affiliate_signup"; promoterCode: string }
   | {
@@ -31,17 +30,6 @@ export function resolveGrowRedirect(
   if (input.isLoggedIn) {
     if (input.affiliateStatus === "approved") {
       return { destination: "affiliate_dashboard" };
-    }
-
-    if (
-      input.affiliateStatus !== null &&
-      input.affiliateStatus !== "approved" &&
-      input.affiliateStatus !== "rejected"
-    ) {
-      return {
-        destination: "account_boost",
-        promoterCode: input.promoterCode,
-      };
     }
 
     if (input.affiliateStatus === "rejected") {

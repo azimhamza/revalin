@@ -4,6 +4,7 @@ import { affiliates, promoters, user } from "@/lib/db/schema";
 import { encrypt, decrypt } from "@/lib/db/encryption";
 import { RESERVED_SLUGS } from "@/lib/checkout/affiliate-constants";
 import { shouldPromoteToAffiliateRole } from "@/lib/checkout/affiliate-role";
+import { getBaselineCommissionRate } from "@/lib/checkout/commission-tier-service";
 import {
   normalizeAffiliateSocialProfiles,
   type AffiliateSocialProfile,
@@ -557,6 +558,7 @@ export async function createAffiliate(args: {
     ? await assertAffiliateCodeAvailable({ code: args.code })
     : await generateAffiliateCode({ name: args.name, email: args.email });
   const encrypted = encrypt(args.walletAddress?.trim() || "");
+  const commissionRate = await getBaselineCommissionRate().catch(() => "0.15");
 
   const [row] = await db
     .insert(affiliates)
@@ -571,6 +573,7 @@ export async function createAffiliate(args: {
       socialProfiles: normalizeAffiliateSocialProfiles(
         args.socialProfiles || [],
       ),
+      commissionRate,
       status: "pending",
     })
     .returning();

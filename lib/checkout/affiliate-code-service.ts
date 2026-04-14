@@ -36,6 +36,7 @@ import {
   syncAffiliateCommissionMonth,
   updateAffiliateBaselineCommission,
 } from "@/lib/checkout/commission-service";
+import { getBaselineCommissionRate } from "@/lib/checkout/commission-tier-service";
 
 type AffiliateRow = typeof affiliates.$inferSelect;
 
@@ -53,7 +54,7 @@ export type AffiliateCodeAssignment = {
 };
 
 export const DEFAULT_AFFILIATE_DISCOUNT_PERCENT = "10";
-export const DEFAULT_AFFILIATE_COMMISSION_RATE = "0.10";
+export const DEFAULT_AFFILIATE_COMMISSION_RATE = "0.15";
 
 export type AffiliateAvailabilityCheck = {
   affiliateCode: {
@@ -182,6 +183,16 @@ function isMissingSwellCouponError(error: unknown) {
   if (!(error instanceof Error)) return false;
 
   return /(\[404\]|\[410\]|not found)/i.test(error.message);
+}
+
+export async function getDefaultAffiliateCommissionRate() {
+  return getBaselineCommissionRate().catch(
+    () => DEFAULT_AFFILIATE_COMMISSION_RATE,
+  );
+}
+
+function shouldUseBaselineDefault(row: AffiliateRow) {
+  return row.status === "pending" && !row.discountCode && !row.swellCouponId;
 }
 
 export async function deleteSwellCouponIfPresent(couponId: string | null) {
@@ -420,7 +431,9 @@ export async function saveAffiliateCodeAssignment(args: {
   );
   const nextCommissionRate = args.commissionRate
     ? normalizeCommissionRateInput(args.commissionRate).stored
-    : row.commissionRate || DEFAULT_AFFILIATE_COMMISSION_RATE;
+    : shouldUseBaselineDefault(row)
+      ? await getDefaultAffiliateCommissionRate()
+      : row.commissionRate || (await getDefaultAffiliateCommissionRate());
 
   let swellCouponId = row.swellCouponId;
   const couponContext = { ...row, code: normalizedAffiliateCode };

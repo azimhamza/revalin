@@ -2,10 +2,17 @@ import { asc, eq } from "drizzle-orm";
 
 import { db } from "@/lib/db";
 import { affiliateCommissionTiers } from "@/lib/db/schema";
-import { formatAmount, formatRate, parseAmount, parseRate } from "@/lib/checkout/affiliate-math";
+import {
+  formatAmount,
+  formatRate,
+  parseAmount,
+  parseRate,
+} from "@/lib/checkout/affiliate-math";
 import {
   DEFAULT_COMMISSION_TIER_CONFIG,
+  getBaselineCommissionRateFromConfig,
   getCommissionTierProgress,
+  resolveBaselineCommissionTierFromConfig,
   resolveCommissionTierFromConfig,
   type CommissionTierConfig,
   type CommissionTierProgress,
@@ -14,7 +21,12 @@ import {
 
 export type CommissionTierRecord = typeof affiliateCommissionTiers.$inferSelect;
 export type { CommissionTierConfig, CommissionTierProgress };
-export { getCommissionTierProgress, resolveCommissionTierFromConfig };
+export {
+  getBaselineCommissionRateFromConfig,
+  getCommissionTierProgress,
+  resolveBaselineCommissionTierFromConfig,
+  resolveCommissionTierFromConfig,
+};
 
 function toTierConfig(row: CommissionTierRecord): CommissionTierConfig {
   return {
@@ -68,6 +80,12 @@ export async function listCommissionTierConfig(args?: {
 
   return rows.map(toTierConfig);
 }
+
+export async function getBaselineCommissionRate() {
+  const tiers = await listCommissionTierConfig({ includeInactive: false });
+  return getBaselineCommissionRateFromConfig(tiers);
+}
+
 export async function saveCommissionTierConfiguration(
   tiers: CommissionTierConfig[],
 ) {
@@ -81,7 +99,9 @@ export async function saveCommissionTierConfiguration(
         label: tier.label,
         minRevenue: formatAmount(parseAmount(tier.minRevenue)),
         maxRevenue:
-          tier.maxRevenue === null ? null : formatAmount(parseAmount(tier.maxRevenue)),
+          tier.maxRevenue === null
+            ? null
+            : formatAmount(parseAmount(tier.maxRevenue)),
         rate: formatRate(parseRate(tier.rate)),
         sortOrder: tier.sortOrder,
         active: tier.active,

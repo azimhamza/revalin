@@ -156,7 +156,7 @@ export function UserManagement({
 
   async function handleDeleteUser(entry: UserRow) {
     const confirmed = window.confirm(
-      `Permanently delete ${entry.email}?\n\nThis will remove the user from the database and from Loops. This action cannot be undone.`,
+      `Permanently delete ${entry.email}?\n\nThis will remove the user, linked Growth Partner and Promoter records, related payout rows, Swell coupon assignments, and the Loops contact. This action cannot be undone.`,
     );
     if (!confirmed) return;
 

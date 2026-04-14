@@ -20,8 +20,12 @@ export const SOCIAL_PLATFORMS = [
 
 export type SocialPlatformValue = (typeof SOCIAL_PLATFORMS)[number]["value"];
 
-const platformBaseUrls = new Map(
-  SOCIAL_PLATFORMS.filter((p) => p.baseUrl !== null).map((p) => [p.value, p.baseUrl]),
+const platformBaseUrlEntries: Array<[string, string]> = SOCIAL_PLATFORMS.flatMap(
+  (platform) =>
+    platform.baseUrl ? [[platform.value, platform.baseUrl]] : [],
+);
+const platformBaseUrls = new Map<string, string>(
+  platformBaseUrlEntries,
 );
 
 export function buildProfileUrl(platform: string, username: string): string {

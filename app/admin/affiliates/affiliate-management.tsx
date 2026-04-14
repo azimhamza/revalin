@@ -36,7 +36,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
+import {
+  getApiData,
+  getApiErrorMessage,
+  readJsonSafely,
+} from "@/lib/api/client";
 import type { AffiliateSetupPreview } from "@/lib/checkout/affiliate-service";
 
 import {
@@ -94,7 +98,13 @@ type AssignmentFormState = {
   confirmAssignment: boolean;
 };
 
-type DialogTab = "codes" | "rates" | "commission" | "history" | "options" | "danger";
+type DialogTab =
+  | "codes"
+  | "rates"
+  | "commission"
+  | "history"
+  | "options"
+  | "danger";
 
 type AssignmentResult = {
   affiliateCode: string;
@@ -232,10 +242,12 @@ export function AffiliateManagement({
   affiliates,
   orphanUsers,
   initialSetupTarget,
+  defaultBaselineCommissionPercent,
 }: {
   affiliates: AffiliateRow[];
   orphanUsers: OrphanAffiliateUser[];
   initialSetupTarget: AffiliateSetupPreview | null;
+  defaultBaselineCommissionPercent: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -257,7 +269,7 @@ export function AffiliateManagement({
   const [assignmentForm, setAssignmentForm] = useState<AssignmentFormState>({
     affiliateCode: "",
     discountPercent: "10",
-    commissionRate: "10",
+    commissionRate: defaultBaselineCommissionPercent,
     sendApprovalEmail: true,
     reinstatementReason: "",
     confirmAssignment: false,
@@ -381,13 +393,13 @@ export function AffiliateManagement({
     selectedAffiliate?.status === "rejected";
   const isDraftSetup = Boolean(selectedDraftSetup);
   const selectedSubject = selectedAffiliate
-      ? {
+    ? {
         name: selectedAffiliate.name,
         email: selectedAffiliate.email,
         status: selectedAffiliate.status,
         socialProfiles: selectedAffiliate.socialProfiles,
       }
-      : selectedDraftSetup
+    : selectedDraftSetup
       ? {
           name: selectedDraftSetup.name,
           email: selectedDraftSetup.email,
@@ -419,49 +431,62 @@ export function AffiliateManagement({
       }
     : null;
 
-  const openAssignmentDialog = useCallback((entry: AffiliateRow) => {
-    setSelectedAffiliate(entry);
-    setSelectedDraftSetup(null);
-    setAssignmentError(null);
-    setAssignmentResult(null);
-    setAvailability(null);
-    setActiveTab("codes");
-    setProfilesExpanded(false);
-    setAssignmentForm({
-      affiliateCode: entry.code,
-      discountPercent: entry.discountPercent || "10",
-      commissionRate: formatCommissionPercent(entry.commissionRate),
-      sendApprovalEmail: entry.status !== "approved",
-      reinstatementReason: "",
-      confirmAssignment: false,
-    });
-    setCommissionMonthKey(new Date().toISOString().slice(0, 7));
-    setOverrideRateInput("");
-    setOverrideReason("");
-    setAssignmentOpen(true);
-  }, []);
+  const openAssignmentDialog = useCallback(
+    (entry: AffiliateRow) => {
+      const shouldUseConfiguredBaseline =
+        entry.status === "pending" &&
+        !entry.discountCode &&
+        !entry.swellCouponId;
 
-  const openDraftAssignmentDialog = useCallback((entry: DraftAffiliateSetup) => {
-    setSelectedAffiliate(null);
-    setSelectedDraftSetup(entry);
-    setAssignmentError(null);
-    setAssignmentResult(null);
-    setAvailability(null);
-    setActiveTab("codes");
-    setProfilesExpanded(false);
-    setAssignmentForm({
-      affiliateCode: entry.affiliateCode,
-      discountPercent: "10",
-      commissionRate: "10",
-      sendApprovalEmail: true,
-      reinstatementReason: "",
-      confirmAssignment: false,
-    });
-    setCommissionMonthKey(new Date().toISOString().slice(0, 7));
-    setOverrideRateInput("");
-    setOverrideReason("");
-    setAssignmentOpen(true);
-  }, []);
+      setSelectedAffiliate(entry);
+      setSelectedDraftSetup(null);
+      setAssignmentError(null);
+      setAssignmentResult(null);
+      setAvailability(null);
+      setActiveTab("codes");
+      setProfilesExpanded(false);
+      setAssignmentForm({
+        affiliateCode: entry.code,
+        discountPercent: entry.discountPercent || "10",
+        commissionRate: shouldUseConfiguredBaseline
+          ? defaultBaselineCommissionPercent
+          : formatCommissionPercent(entry.commissionRate),
+        sendApprovalEmail: entry.status !== "approved",
+        reinstatementReason: "",
+        confirmAssignment: false,
+      });
+      setCommissionMonthKey(new Date().toISOString().slice(0, 7));
+      setOverrideRateInput("");
+      setOverrideReason("");
+      setAssignmentOpen(true);
+    },
+    [defaultBaselineCommissionPercent],
+  );
+
+  const openDraftAssignmentDialog = useCallback(
+    (entry: DraftAffiliateSetup) => {
+      setSelectedAffiliate(null);
+      setSelectedDraftSetup(entry);
+      setAssignmentError(null);
+      setAssignmentResult(null);
+      setAvailability(null);
+      setActiveTab("codes");
+      setProfilesExpanded(false);
+      setAssignmentForm({
+        affiliateCode: entry.affiliateCode,
+        discountPercent: "10",
+        commissionRate: defaultBaselineCommissionPercent,
+        sendApprovalEmail: true,
+        reinstatementReason: "",
+        confirmAssignment: false,
+      });
+      setCommissionMonthKey(new Date().toISOString().slice(0, 7));
+      setOverrideRateInput("");
+      setOverrideReason("");
+      setAssignmentOpen(true);
+    },
+    [defaultBaselineCommissionPercent],
+  );
 
   function handleAssignmentOpenChange(open: boolean) {
     setAssignmentOpen(open);
@@ -553,7 +578,12 @@ export function AffiliateManagement({
           discountHistory?: DiscountHistoryRow[];
         }>(payload);
         if (!response.ok) {
-          throw new Error(getApiErrorMessage(payload, "Failed to load Growth Partner detail."));
+          throw new Error(
+            getApiErrorMessage(
+              payload,
+              "Failed to load Growth Partner detail.",
+            ),
+          );
         }
 
         if (cancelled) return;
@@ -633,7 +663,9 @@ export function AffiliateManagement({
         availability?: AssignmentAvailability | null;
       }>(payload);
       if (!response.ok) {
-        throw new Error(getApiErrorMessage(payload, "Failed to check code availability."));
+        throw new Error(
+          getApiErrorMessage(payload, "Failed to check code availability."),
+        );
       }
 
       setAvailability(data.availability ?? null);
@@ -687,7 +719,12 @@ export function AffiliateManagement({
         summary?: BulkDiscountSummary | null;
       }>(payload);
       if (!response.ok) {
-        throw new Error(getApiErrorMessage(payload, "Failed to run the bulk discount update."));
+        throw new Error(
+          getApiErrorMessage(
+            payload,
+            "Failed to run the bulk discount update.",
+          ),
+        );
       }
 
       setBulkPreview(data.summary ?? null);
@@ -731,7 +768,12 @@ export function AffiliateManagement({
         commission?: CommissionOverview | null;
       }>(payload);
       if (!response.ok) {
-        throw new Error(getApiErrorMessage(payload, "Failed to update the commission override."));
+        throw new Error(
+          getApiErrorMessage(
+            payload,
+            "Failed to update the commission override.",
+          ),
+        );
       }
 
       setCommissionOverview(data.commission ?? null);
@@ -772,7 +814,9 @@ export function AffiliateManagement({
 
       const payload = await readJsonSafely(res);
       if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Failed to update Growth Partner."));
+        throw new Error(
+          getApiErrorMessage(payload, "Failed to update Growth Partner."),
+        );
       }
 
       router.refresh();
@@ -843,7 +887,9 @@ export function AffiliateManagement({
         assignment: AssignmentResult;
       }>(payload);
       if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Failed to save affiliate assignment."));
+        throw new Error(
+          getApiErrorMessage(payload, "Failed to save affiliate assignment."),
+        );
       }
 
       setAssignmentResult({
@@ -889,7 +935,9 @@ export function AffiliateManagement({
 
       const payload = await readJsonSafely(res);
       if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Failed to remove affiliate assignment."));
+        throw new Error(
+          getApiErrorMessage(payload, "Failed to remove affiliate assignment."),
+        );
       }
 
       setAssignmentOpen(false);
@@ -922,7 +970,12 @@ export function AffiliateManagement({
 
       const payload = await readJsonSafely(res);
       if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Failed to delete the Growth Partner record."));
+        throw new Error(
+          getApiErrorMessage(
+            payload,
+            "Failed to delete the Growth Partner record.",
+          ),
+        );
       }
 
       setAssignmentOpen(false);
@@ -994,9 +1047,12 @@ export function AffiliateManagement({
     setRepairingUserId(userId);
 
     try {
-      const res = await fetch(`/api/admin/affiliates/orphan-users/${userId}/repair`, {
-        method: "POST",
-      });
+      const res = await fetch(
+        `/api/admin/affiliates/orphan-users/${userId}/repair`,
+        {
+          method: "POST",
+        },
+      );
 
       const payload = await readJsonSafely(res);
       const data = unwrapAdminPayload<{
@@ -1005,7 +1061,12 @@ export function AffiliateManagement({
         };
       }>(payload);
       if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Failed to create the missing Growth Partner record."));
+        throw new Error(
+          getApiErrorMessage(
+            payload,
+            "Failed to create the missing Growth Partner record.",
+          ),
+        );
       }
 
       window.alert(
@@ -1085,20 +1146,20 @@ export function AffiliateManagement({
               ? "Assignment saved"
               : isDraftSetup
                 ? "Create Growth Partner assignment"
-              : selectedAffiliate?.status === "approved"
-                ? "Manage assignment"
-                : isReinstatementFlow
-                  ? "Reinstate affiliate"
-                  : "Approve affiliate"}
+                : selectedAffiliate?.status === "approved"
+                  ? "Manage assignment"
+                  : isReinstatementFlow
+                    ? "Reinstate affiliate"
+                    : "Approve affiliate"}
           </DialogTitle>
           <DialogDescription className="sr-only">
             {assignmentResult
               ? "Codes and links updated."
               : isDraftSetup
                 ? "Create the Growth Partner record and assignment."
-              : isReinstatementFlow
-                ? "Edit codes and reinstatement settings."
-                : "Edit codes and approval settings."}
+                : isReinstatementFlow
+                  ? "Edit codes and reinstatement settings."
+                  : "Edit codes and approval settings."}
           </DialogDescription>
 
           {selectedSubject && !assignmentResult ? (
@@ -1135,7 +1196,8 @@ export function AffiliateManagement({
                     </button>
                   ) : null}
                 </div>
-                {profilesExpanded && selectedSubject.socialProfiles.length > 0 ? (
+                {profilesExpanded &&
+                selectedSubject.socialProfiles.length > 0 ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {selectedSubject.socialProfiles.map((profile, index) => (
                       <a
@@ -1187,18 +1249,16 @@ export function AffiliateManagement({
                         <Label>Partner code</Label>
                         <Input
                           value={assignmentForm.affiliateCode}
-                          onChange={(event) =>
-                            {
-                              setAvailability(null);
-                              setAssignmentForm((current) => ({
-                                ...current,
-                                affiliateCode: sanitizePartnerCode(
-                                  event.target.value,
-                                ),
-                                confirmAssignment: false,
-                              }));
-                            }
-                          }
+                          onChange={(event) => {
+                            setAvailability(null);
+                            setAssignmentForm((current) => ({
+                              ...current,
+                              affiliateCode: sanitizePartnerCode(
+                                event.target.value,
+                              ),
+                              confirmAssignment: false,
+                            }));
+                          }}
                           className={adminFieldClass}
                           placeholder="e.g. azim-lab"
                           required
@@ -1272,7 +1332,9 @@ export function AffiliateManagement({
                                 <p className="text-xs text-[#0B2E2F]/58">
                                   Checked route{" "}
                                   <span className="font-mono">
-                                    /{assignmentForm.affiliateCode || "partner-code"}
+                                    /
+                                    {assignmentForm.affiliateCode ||
+                                      "partner-code"}
                                   </span>{" "}
                                   and Swell code{" "}
                                   <span className="font-mono">
@@ -1405,7 +1467,7 @@ export function AffiliateManagement({
                               }))
                             }
                             className={adminFieldClass}
-                            placeholder="10"
+                            placeholder={defaultBaselineCommissionPercent}
                             required
                           />
                           <p className="text-xs text-[#0B2E2F]/56">
@@ -1465,7 +1527,10 @@ export function AffiliateManagement({
                                 Orders
                               </p>
                               <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
-                                {commissionOverview.summary.recognizedOrderCount}
+                                {
+                                  commissionOverview.summary
+                                    .recognizedOrderCount
+                                }
                               </p>
                             </div>
                             <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
@@ -1927,9 +1992,7 @@ export function AffiliateManagement({
                           ) : (
                             <Copy className="size-4" />
                           )}
-                          {copiedField === "discount-code"
-                            ? "Copied"
-                            : "Copy"}
+                          {copiedField === "discount-code" ? "Copied" : "Copy"}
                         </Button>
                       ) : null}
                     </div>
@@ -1993,9 +2056,7 @@ export function AffiliateManagement({
                           ) : (
                             <Copy className="size-4" />
                           )}
-                          {copiedField === "checkout-link"
-                            ? "Copied"
-                            : "Copy"}
+                          {copiedField === "checkout-link" ? "Copied" : "Copy"}
                         </Button>
                       </div>
                     </div>
@@ -2462,7 +2523,7 @@ export function AffiliateManagement({
                           variant="ghost"
                           size="icon-sm"
                           disabled={loadingId === entry.id}
-                        className="h-7 w-7 rounded-none border border-[#0B2E2F]/12 text-[#0B2E2F]/56 hover:bg-[#EFE7D8] hover:text-[#0B2E2F]"
+                          className="h-7 w-7 rounded-none border border-[#0B2E2F]/12 text-[#0B2E2F]/56 hover:bg-[#EFE7D8] hover:text-[#0B2E2F]"
                         >
                           <MoreHorizontal className="size-4" />
                         </Button>

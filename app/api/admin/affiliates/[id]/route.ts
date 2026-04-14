@@ -6,7 +6,6 @@ import { apiError } from "@/lib/api/errors";
 import { db } from "@/lib/db";
 import { affiliates } from "@/lib/db/schema";
 import {
-  DEFAULT_AFFILIATE_COMMISSION_RATE,
   DEFAULT_AFFILIATE_DISCOUNT_PERCENT,
   checkAffiliateAssignmentAvailability,
   deleteAffiliateRecord,
@@ -207,10 +206,7 @@ export const PATCH = createApiRoute<
           affiliateCode: body.affiliateCode ?? current.code,
           discountCode: effectiveDiscountCode,
           discountPercent: effectiveDiscountPercent,
-          commissionRate:
-            body.commissionRate ??
-            current.commissionRate ??
-            DEFAULT_AFFILIATE_COMMISSION_RATE,
+          commissionRate: body.commissionRate,
           approve: body.status === "approved",
           sendEmail: body.sendApprovalEmail ?? body.status === "approved",
           changedByUserId: session.user.id,

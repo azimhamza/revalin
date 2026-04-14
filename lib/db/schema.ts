@@ -275,7 +275,7 @@ export const affiliates = pgTable(
       .default([])
       .notNull(),
     commissionRate: varchar("commission_rate", { length: 16 })
-      .default("0.10")
+      .default("0.15")
       .notNull(),
     status: affiliateStatusEnum("status").default("pending").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -326,7 +326,9 @@ export const affiliateWeeklyPayouts = pgTable(
       .notNull()
       .references(() => affiliates.id, { onDelete: "cascade" }),
     affiliateCode: varchar("affiliate_code", { length: 64 }).notNull(),
-    commissionMonthKey: varchar("commission_month_key", { length: 7 }).notNull(),
+    commissionMonthKey: varchar("commission_month_key", {
+      length: 7,
+    }).notNull(),
     periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
     periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
     periodTimezone: varchar("period_timezone", { length: 64 })
@@ -374,7 +376,9 @@ export const affiliateWeeklyPayouts = pgTable(
     ),
     uniqueIndex("affiliate_weekly_payouts_open_pay_now_idx")
       .on(table.affiliateId, table.commissionMonthKey)
-      .where(sql`${table.batchType} = 'pay_now' AND ${table.status} IN ('pending', 'approved')`),
+      .where(
+        sql`${table.batchType} = 'pay_now' AND ${table.status} IN ('pending', 'approved')`,
+      ),
     index("affiliate_weekly_payouts_affiliate_id_idx").on(table.affiliateId),
     index("affiliate_weekly_payouts_status_idx").on(table.status),
     index("affiliate_weekly_payouts_period_start_idx").on(table.periodStart),
@@ -512,9 +516,12 @@ export const promoterInvites = pgTable(
     createdByUserId: text("created_by_user_id").references(() => user.id, {
       onDelete: "set null",
     }),
-    successfulByUserId: text("successful_by_user_id").references(() => user.id, {
-      onDelete: "set null",
-    }),
+    successfulByUserId: text("successful_by_user_id").references(
+      () => user.id,
+      {
+        onDelete: "set null",
+      },
+    ),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -525,17 +532,23 @@ export const promoterInvites = pgTable(
   (table) => [
     index("promoter_invites_promoter_id_idx").on(table.promoterId),
     index("promoter_invites_status_idx").on(table.status),
-    index("promoter_invites_invited_email_idx").on(table.normalizedInvitedEmail),
+    index("promoter_invites_invited_email_idx").on(
+      table.normalizedInvitedEmail,
+    ),
     index("promoter_invites_invited_affiliate_id_idx").on(
       table.invitedAffiliateId,
     ),
     index("promoter_invites_referral_code_idx").on(table.referralCode),
     uniqueIndex("promoter_invites_active_affiliate_idx")
       .on(table.invitedAffiliateId)
-      .where(sql`${table.status} IN ('invited', 'applied', 'successful') AND ${table.invitedAffiliateId} IS NOT NULL`),
+      .where(
+        sql`${table.status} IN ('invited', 'applied', 'successful') AND ${table.invitedAffiliateId} IS NOT NULL`,
+      ),
     uniqueIndex("promoter_invites_successful_affiliate_idx")
       .on(table.invitedAffiliateId)
-      .where(sql`${table.status} = 'successful' AND ${table.invitedAffiliateId} IS NOT NULL`),
+      .where(
+        sql`${table.status} = 'successful' AND ${table.invitedAffiliateId} IS NOT NULL`,
+      ),
   ],
 );
 
@@ -547,7 +560,9 @@ export const promoterWeeklyPayouts = pgTable(
     promoterId: uuid("promoter_id")
       .notNull()
       .references(() => promoters.id, { onDelete: "cascade" }),
-    commissionMonthKey: varchar("commission_month_key", { length: 7 }).notNull(),
+    commissionMonthKey: varchar("commission_month_key", {
+      length: 7,
+    }).notNull(),
     periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
     periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
     periodTimezone: varchar("period_timezone", { length: 64 })
@@ -589,7 +604,9 @@ export const promoterWeeklyPayouts = pgTable(
     ),
     uniqueIndex("promoter_weekly_payouts_open_pay_now_idx")
       .on(table.promoterId, table.commissionMonthKey)
-      .where(sql`${table.batchType} = 'pay_now' AND ${table.status} IN ('pending', 'approved')`),
+      .where(
+        sql`${table.batchType} = 'pay_now' AND ${table.status} IN ('pending', 'approved')`,
+      ),
     index("promoter_weekly_payouts_promoter_id_idx").on(table.promoterId),
     index("promoter_weekly_payouts_status_idx").on(table.status),
     index("promoter_weekly_payouts_period_start_idx").on(table.periodStart),
@@ -715,7 +732,9 @@ export const affiliateCommissionTiers = pgTable(
   },
   (table) => [
     uniqueIndex("affiliate_commission_tiers_key_idx").on(table.key),
-    uniqueIndex("affiliate_commission_tiers_sort_order_idx").on(table.sortOrder),
+    uniqueIndex("affiliate_commission_tiers_sort_order_idx").on(
+      table.sortOrder,
+    ),
     index("affiliate_commission_tiers_active_idx").on(table.active),
   ],
 );
@@ -735,7 +754,9 @@ export const affiliateCommissionMonths = pgTable(
     recognizedRevenue: varchar("recognized_revenue", { length: 32 })
       .default("0.00")
       .notNull(),
-    recognizedOrderCount: integer("recognized_order_count").default(0).notNull(),
+    recognizedOrderCount: integer("recognized_order_count")
+      .default(0)
+      .notNull(),
     tierKey: varchar("tier_key", { length: 32 }).notNull(),
     tierLabel: varchar("tier_label", { length: 64 }).notNull(),
     effectiveRate: varchar("effective_rate", { length: 16 }).notNull(),
@@ -930,9 +951,7 @@ export const productNotificationSubscriptions = pgTable(
       .notNull(),
   },
   (table) => [
-    uniqueIndex(
-      "product_notification_subscriptions_pending_email_variant_idx",
-    )
+    uniqueIndex("product_notification_subscriptions_pending_email_variant_idx")
       .on(table.normalizedEmail, table.productHandle, table.variantKey)
       .where(sql`${table.status} = 'pending'`),
     index("product_notification_subscriptions_status_idx").on(table.status),
@@ -986,11 +1005,9 @@ export const productNotificationDispatchProducts = pgTable(
     index("product_notification_dispatch_products_variant_key_idx").on(
       table.variantKey,
     ),
-    uniqueIndex("product_notification_dispatch_products_dispatch_target_idx").on(
-      table.dispatchId,
-      table.productHandle,
-      table.variantKey,
-    ),
+    uniqueIndex(
+      "product_notification_dispatch_products_dispatch_target_idx",
+    ).on(table.dispatchId, table.productHandle, table.variantKey),
   ],
 );
 
