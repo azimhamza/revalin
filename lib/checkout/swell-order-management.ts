@@ -68,6 +68,13 @@ export type SwellBackendCart = {
   };
 };
 
+export type SwellBackendOrderItem = {
+  id: string;
+  product_id: string;
+  variant_id?: string;
+  quantity: number;
+};
+
 export type SwellBackendOrder = {
   id: string;
   number?: string;
@@ -87,6 +94,20 @@ export type SwellBackendOrder = {
     intent?: Record<string, unknown>;
   };
   metadata?: Record<string, unknown>;
+  items?: SwellBackendOrderItem[];
+};
+
+export type SwellBackendShipment = {
+  id: string;
+  order_id: string;
+  tracking_code?: string;
+  carrier_name?: string;
+  service_name?: string;
+  items?: Array<{
+    order_item_id?: string;
+    product_id?: string;
+    quantity?: number;
+  }>;
 };
 
 export type SwellBackendAccount = {
@@ -980,5 +1001,30 @@ export async function updateSwellAffiliateCoupon(args: {
         value_percent: args.percentOff,
       },
     ],
+  });
+}
+
+export async function getSwellOrder(
+  orderId: string,
+  params?: Record<string, QueryValue>,
+) {
+  return swellBackendRequest<SwellBackendOrder>("GET", `/orders/${orderId}`, {
+    params,
+  });
+}
+
+export async function createSwellShipment(body: {
+  order_id: string;
+  tracking_code?: string;
+  carrier_name?: string;
+  service_name?: string;
+  items?: Array<{
+    order_item_id?: string;
+    product_id?: string;
+    quantity?: number;
+  }>;
+}) {
+  return swellBackendRequest<SwellBackendShipment>("POST", "/shipments", {
+    body,
   });
 }

@@ -77,6 +77,14 @@ type ShipEngineLabelResponse = {
   errors?: ShipEngineApiError[];
 };
 
+type ShipEngineTrackingResponse = {
+  tracking_number?: string;
+  tracking_url?: string;
+  status_code?: string;
+  status_description?: string;
+  errors?: ShipEngineApiError[];
+};
+
 export type ShipEngineCheckoutRate = {
   id: string;
   name: string;
@@ -236,6 +244,48 @@ async function shipEngineRequest<T>(path: string, init: RequestInit): Promise<T>
   }
 
   return payload as T;
+}
+
+async function getShipEngineTrackingUrl(args: {
+  trackingNumber?: string | null;
+  carrierCode?: string | null;
+  carrierId?: string | null;
+}) {
+  const trackingNumber = args.trackingNumber?.trim();
+  if (!trackingNumber) {
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    tracking_number: trackingNumber,
+  });
+
+  const carrierCode = args.carrierCode?.trim();
+  const carrierId = args.carrierId?.trim();
+  if (carrierCode) {
+    params.set('carrier_code', carrierCode);
+  } else if (carrierId) {
+    params.set('carrier_id', carrierId);
+  }
+
+  try {
+    const tracking = await shipEngineRequest<ShipEngineTrackingResponse>(
+      `/v1/tracking?${params.toString()}`,
+      {
+        method: 'GET',
+      }
+    );
+
+    return tracking.tracking_url?.trim() || null;
+  } catch (error) {
+    console.warn('Unable to fetch ShipEngine tracking URL after label purchase.', {
+      trackingNumber,
+      carrierCode: carrierCode || null,
+      carrierId: carrierId || null,
+      error: error instanceof Error ? error.message : 'Unknown tracking lookup error',
+    });
+    return null;
+  }
 }
 
 let discoveredCarrierIdsPromise: Promise<string[]> | null = null;
@@ -399,9 +449,11 @@ export async function purchaseShipEngineLabel(args: {
     }),
   });
 
-  const trackingUrl = label.tracking_number
-    ? `https://track.shipengine.com/${label.tracking_number}`
-    : null;
+  const trackingUrl = await getShipEngineTrackingUrl({
+    trackingNumber: label.tracking_number,
+    carrierCode: label.carrier_code || selectedRate.carrier_code,
+    carrierId: selectedRate.carrier_id,
+  });
 
   return {
     trackingCode: label.tracking_number || null,

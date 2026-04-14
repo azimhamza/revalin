@@ -295,7 +295,9 @@ export async function getProduct(handle: string, currencyCode?: string): Promise
 
 export async function getLiveProduct(handle: string, currencyCode?: string): Promise<Product | null> {
   try {
-    const swellProduct = await getSwellProduct(handle, currencyCode);
+    const swellProduct = await getSwellProduct(handle, currencyCode, {
+      cache: 'no-store',
+    });
     return swellProduct ? adaptSwellProduct(swellProduct) : null;
   } catch (error) {
     console.error(`getLiveProduct(${handle}): error fetching product:`, error);
@@ -327,9 +329,19 @@ export async function getProducts(params: {
   reverse?: boolean;
   query?: string;
   currencyCode?: string;
+  live?: boolean;
 }): Promise<Product[]> {
   try {
-    return await getProductsCached(params);
+    const { live, ...swellParams } = params;
+    if (live) {
+      const swellProducts = await getSwellProducts({
+        ...swellParams,
+        cache: 'no-store',
+      });
+      return swellProducts.map(adaptSwellProduct);
+    }
+
+    return await getProductsCached(swellParams);
   } catch (error) {
     console.error('getProducts: error fetching products:', error);
     return [];
@@ -359,9 +371,19 @@ export async function getCollectionProducts(params: {
   reverse?: boolean;
   query?: string;
   currencyCode?: string;
+  live?: boolean;
 }): Promise<Product[]> {
   try {
-    return await getCollectionProductsCached(params);
+    const { live, ...swellParams } = params;
+    if (live) {
+      const swellProducts = await getSwellCollectionProducts({
+        ...swellParams,
+        cache: 'no-store',
+      });
+      return swellProducts.map(adaptSwellProduct);
+    }
+
+    return await getCollectionProductsCached(swellParams);
   } catch (error) {
     console.error(
       `getCollectionProducts(${params.collection}): error fetching collection products:`,
@@ -407,9 +429,37 @@ async function getRelatedProductsCached(
 export async function getRelatedProducts(
   product: Product,
   limit = 4,
-  currencyCode?: string
+  currencyCode?: string,
+  options: { live?: boolean } = {}
 ): Promise<Product[]> {
   try {
+    if (options.live) {
+      let candidates: Product[] = [];
+
+      if (product.categoryId) {
+        const categoryProducts = await getCollectionProducts({
+          collection: product.categoryId,
+          limit: limit + 1,
+          currencyCode,
+          live: true,
+        });
+        candidates = categoryProducts.filter(p => p.id !== product.id);
+      }
+
+      if (candidates.length < limit) {
+        const allProducts = await getProducts({
+          limit: limit + 1 + candidates.length,
+          currencyCode,
+          live: true,
+        });
+        const existingIds = new Set([product.id, ...candidates.map(p => p.id)]);
+        const extras = allProducts.filter(p => !existingIds.has(p.id));
+        candidates = [...candidates, ...extras];
+      }
+
+      return candidates.slice(0, limit);
+    }
+
     return await getRelatedProductsCached(product, limit, currencyCode);
   } catch (error) {
     console.error(`getRelatedProducts(${product.handle}): error fetching related products:`, error);

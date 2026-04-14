@@ -4,7 +4,7 @@ import { ValidationSection } from '@/components/home/validation-section';
 import { LatestProductCard } from '@/components/products/latest-product-card';
 import { MobileShopAllTile } from '@/components/home/mobile-shop-all-tile';
 import { Badge } from '@/components/ui/badge';
-import { getCollectionProducts, getCollections, getProduct, getProducts } from '@/lib/swell';
+import { getCollections, getLiveProduct, getProducts } from '@/lib/swell';
 import { resolveRequestCurrencyCode } from '@/lib/swell/currency';
 import { Product } from '../lib/swell/types';
 import { hasAnyVariantInStock } from '@/lib/inventory';
@@ -17,6 +17,8 @@ export const metadata = {
     canonical: '/',
   },
 };
+
+export const dynamic = 'force-dynamic';
 
 const FEATURED_PRODUCT_HANDLE = 'glp-3-triple-agonist';
 const FEATURED_PRODUCT_KEYWORDS = ['glp-3', 'glp-3rt', 'triple-agonist'];
@@ -51,14 +53,14 @@ export default async function Home() {
 
   try {
     // Fetch the full catalog so we can pick the best products to feature
-    const allProducts = await getProducts({ limit: 100, currencyCode });
-    const featuredSearchMatches = await getProducts({ limit: 20, query: 'glp-3', currencyCode });
+    const allProducts = await getProducts({ limit: 100, currencyCode, live: true });
+    const featuredSearchMatches = await getProducts({ limit: 20, query: 'glp-3', currencyCode, live: true });
 
     let featuredMatch: Product | null =
       featuredSearchMatches.find(isFeaturedProduct) || allProducts.find(isFeaturedProduct) || null;
 
     if (!featuredMatch) {
-      featuredMatch = await getProduct(FEATURED_PRODUCT_HANDLE, currencyCode);
+      featuredMatch = await getLiveProduct(FEATURED_PRODUCT_HANDLE, currencyCode);
     }
 
     featuredProducts = uniqueProducts([...allProducts, ...featuredSearchMatches]).slice(

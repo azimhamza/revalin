@@ -388,6 +388,7 @@ export function createPaymentLifecycle(
 
     await dependencies.updateCheckoutOrder(order.orderId, current => ({
       ...current,
+      fulfillmentStatus: 'label_ready',
       shipengine: {
         ...current.shipengine,
         trackingCode: labelResult.trackingCode || undefined,
@@ -497,7 +498,7 @@ export function createPaymentLifecycle(
       case 'shippingLabelEmail':
         return !order.shipengine?.labelUrl;
       case 'shippedEmail':
-        return !order.shipengine?.labelUrl;
+        return true; // Now triggered manually by admin via fulfillment page
       default:
         return false;
     }
@@ -574,6 +575,7 @@ export function createPaymentLifecycle(
         if (step === 'labelPurchase') {
           await dependencies.updateCheckoutOrder(orderId, current => ({
             ...current,
+            fulfillmentStatus: 'error',
             shipengine: {
               ...current.shipengine,
               labelError: message,

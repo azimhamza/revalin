@@ -103,8 +103,8 @@ export function buildOrderShippedDataVariables(order: CheckoutOrderRecord) {
     order.totals.discountAmount && Number(order.totals.discountAmount.amount) > 0
       ? `-${formatCurrency(order.totals.discountAmount.amount, order.currencyCode)}`
       : "$0.00";
-  const shippedAt = formatEmailDate(order.shipengine?.labelPurchasedAt);
-  const deliveryDate = estimateDeliveryDate(order.shipengine?.labelPurchasedAt, order.shippingService?.estimatedDays);
+  const shippedAt = formatEmailDate(order.shipengine?.handedToCarrierAt || order.shipengine?.labelPurchasedAt);
+  const deliveryDate = estimateDeliveryDate(order.shipengine?.handedToCarrierAt || order.shipengine?.labelPurchasedAt, order.shippingService?.estimatedDays);
 
   const vars: Record<string, string | number | Array<Record<string, string | number>>> = {
     order_number: order.swell.orderNumber || order.orderId,

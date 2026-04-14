@@ -1,7 +1,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { checkoutOrders } from '@/lib/db/schema';
-import type { CheckoutOrderPayment, CheckoutOrderProcessing, CheckoutOrderRecord } from '@/lib/checkout/types';
+import type { CheckoutOrderPayment, CheckoutOrderProcessing, CheckoutOrderRecord, FulfillmentStatus } from '@/lib/checkout/types';
 import { isReusableCheckoutOrder } from '@/lib/checkout/order-recovery';
 
 type StoredCheckoutOrderPayment = CheckoutOrderPayment & {
@@ -62,6 +62,7 @@ function recordToRow(order: CheckoutOrderRecord) {
     affiliate: order.affiliate ?? null,
     promoter: order.promoter ?? null,
     ipnEvents: order.ipnEvents ?? null,
+    fulfillmentStatus: (order.fulfillmentStatus as typeof checkoutOrders.$inferInsert.fulfillmentStatus) ?? null,
     latestError: order.latestError ?? null,
     createdAt: new Date(order.createdAt),
     updatedAt: new Date(order.updatedAt),
@@ -89,6 +90,7 @@ function rowToRecord(row: typeof checkoutOrders.$inferSelect): CheckoutOrderReco
     affiliate: (row.affiliate as CheckoutOrderRecord['affiliate']) ?? undefined,
     promoter: (row.promoter as CheckoutOrderRecord['promoter']) ?? undefined,
     processing,
+    fulfillmentStatus: (row.fulfillmentStatus as FulfillmentStatus) ?? null,
     ipnEvents: (row.ipnEvents as CheckoutOrderRecord['ipnEvents']) ?? undefined,
     latestError: row.latestError ?? null,
     createdAt: row.createdAt.toISOString(),
@@ -113,6 +115,7 @@ function stripOrderForEquality(order: CheckoutOrderRecord) {
     affiliate: order.affiliate ?? null,
     promoter: order.promoter ?? null,
     processing: order.processing ?? null,
+    fulfillmentStatus: order.fulfillmentStatus ?? null,
     ipnEvents: order.ipnEvents ?? null,
     latestError: order.latestError ?? null,
     createdAt: order.createdAt,
@@ -154,6 +157,7 @@ export async function saveCheckoutOrder(order: CheckoutOrderRecord): Promise<Che
         affiliate: row.affiliate,
         promoter: row.promoter,
         ipnEvents: row.ipnEvents,
+        fulfillmentStatus: row.fulfillmentStatus,
         latestError: row.latestError,
         updatedAt: new Date(),
       },
@@ -202,6 +206,7 @@ export async function updateCheckoutOrder(
         affiliate: row.affiliate,
         promoter: row.promoter,
         ipnEvents: row.ipnEvents,
+        fulfillmentStatus: row.fulfillmentStatus,
         latestError: row.latestError,
         updatedAt: now,
       })

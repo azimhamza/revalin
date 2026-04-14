@@ -62,6 +62,14 @@ export const payoutBatchTypeEnum = pgEnum("payout_batch_type", [
   "pay_now",
 ]);
 
+export const fulfillmentStatusEnum = pgEnum("fulfillment_status", [
+  "pending",
+  "label_ready",
+  "packed",
+  "handed_to_carrier",
+  "error",
+]);
+
 export const checkoutSessionStatusEnum = pgEnum("checkout_session_status", [
   "draft",
   "quoted",
@@ -208,6 +216,9 @@ export const checkoutOrders = pgTable(
     affiliate: jsonb("affiliate"),
     promoter: jsonb("promoter"),
     ipnEvents: jsonb("ipn_events"),
+    fulfillmentStatus: fulfillmentStatusEnum("fulfillment_status").default(
+      "pending",
+    ),
     latestError: text("latest_error"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -226,6 +237,9 @@ export const checkoutOrders = pgTable(
       table.userId,
     ),
     index("checkout_orders_updated_at_idx").on(table.updatedAt),
+    index("checkout_orders_fulfillment_status_idx").on(
+      table.fulfillmentStatus,
+    ),
   ],
 );
 

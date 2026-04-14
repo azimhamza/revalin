@@ -12,7 +12,7 @@ export function RelatedProducts({
   currencyCode?: string;
   className?: string;
 }) {
-  const related = use(getRelatedProducts(product, 4, currencyCode));
+  const related = use(getRelatedProducts(product, 4, currencyCode, { live: true }));
 
   if (related.length === 0) return null;
 

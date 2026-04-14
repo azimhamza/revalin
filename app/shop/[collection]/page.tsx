@@ -1,24 +1,9 @@
 import { Metadata } from 'next';
-import { getCollection, getCollections } from '@/lib/swell';
+import { getCollection } from '@/lib/swell';
 import { notFound } from 'next/navigation';
 import ProductList from '../components/product-list';
 
-// Generate static params for all collections at build time
-export async function generateStaticParams() {
-  try {
-    const collections = await getCollections();
-
-    return collections.map(collection => ({
-      collection: collection.handle,
-    }));
-  } catch (error) {
-    console.error('Error generating static params:', error);
-    return [];
-  }
-}
-
-// Enable ISR with 1 minute revalidation
-export const revalidate = 60;
+export const dynamic = 'force-dynamic';
 
 export async function generateMetadata(props: { params: Promise<{ collection: string }> }): Promise<Metadata> {
   const params = await props.params;

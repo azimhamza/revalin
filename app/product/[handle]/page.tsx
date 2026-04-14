@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
-import { getCollection, getLiveProduct, getProducts } from '@/lib/swell';
+import { getCollection, getLiveProduct } from '@/lib/swell';
 import { HIDDEN_PRODUCT_TAG } from '@/lib/constants';
 import { resolveRequestCurrencyCode } from '@/lib/swell/currency';
 import {
@@ -33,19 +33,7 @@ import { ProductInventoryPanel } from './components/product-inventory-panel';
 import { ProductViewTracker } from './components/product-view-tracker';
 import { getInventoryState } from '@/lib/inventory';
 
-// Generate static params for all products at build time
-export async function generateStaticParams() {
-  try {
-    const products = await getProducts({ limit: 100 }); // Get first 100 products
-
-    return products.map(product => ({
-      handle: product.handle,
-    }));
-  } catch (error) {
-    console.error('Error generating static params for products:', error);
-    return [];
-  }
-}
+export const dynamic = 'force-dynamic';
 
 export async function generateMetadata(props: { params: Promise<{ handle: string }> }): Promise<Metadata> {
   const params = await props.params;

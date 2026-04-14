@@ -75,7 +75,7 @@ export function FeaturedProductLabel({
         )}
 
         {/* Price — left column, same row as CTA on desktop */}
-        <div className="col-start-1 row-start-3 mt-6 flex items-baseline gap-3 md:mt-4 md:self-end">
+        <div className="col-start-1 row-start-3 mt-6 flex items-center gap-3 md:mt-4 md:self-end">
           <span className="text-[2rem] font-bold leading-none tracking-tight text-[#0B2E2F] md:text-[1.75rem]">
             {formatPrice(displayPrice.amount, displayPrice.currencyCode)}
           </span>

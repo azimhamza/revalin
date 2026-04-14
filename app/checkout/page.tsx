@@ -10,9 +10,11 @@ export const metadata: Metadata = {
   description: 'Secure crypto checkout for Revalin research orders.',
 };
 
+export const dynamic = 'force-dynamic';
+
 export default async function CheckoutPage() {
   const currencyCode = await resolveRequestCurrencyCode();
-  const quickAddProducts = await getProducts({ limit: 8, currencyCode });
+  const quickAddProducts = await getProducts({ limit: 8, currencyCode, live: true });
 
   return (
     <PageLayout className="bg-muted min-h-screen">

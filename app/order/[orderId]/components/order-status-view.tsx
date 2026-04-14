@@ -34,12 +34,15 @@ type OrderStatus = 'processing' | 'shipped' | 'delivered';
 
 function deriveStatus(order: CheckoutOrderPublic): OrderStatus {
   const paymentStatus = order.payment.status;
-  const hasTracking = Boolean(order.shipengine?.trackingCode);
+  const isPaid = paymentStatus === 'finished' || paymentStatus === 'paid';
 
-  if (paymentStatus === 'finished' || paymentStatus === 'paid') {
-    if (hasTracking) return 'shipped';
-    return 'processing';
-  }
+  if (!isPaid) return 'processing';
+
+  // Use fulfillmentStatus if available
+  if (order.fulfillmentStatus === 'handed_to_carrier') return 'shipped';
+
+  // Fallback for pre-migration orders
+  if (order.shipengine?.handedToCarrierAt) return 'shipped';
 
   return 'processing';
 }
@@ -165,6 +168,12 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/50">
             Tracking
           </p>
+          {status === 'processing' ? (
+            <div className="mt-3 flex items-center gap-2 rounded-xl bg-blue-50 px-3.5 py-2.5 text-sm text-blue-900">
+              <Package className="size-4 shrink-0" />
+              <p>Your shipping label has been created. We&apos;ll notify you when your package ships.</p>
+            </div>
+          ) : null}
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div>
               <p className="text-xs text-[#0B2E2F]/50">Carrier</p>

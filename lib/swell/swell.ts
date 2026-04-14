@@ -93,6 +93,13 @@ const CATEGORY_KEYWORD_FALLBACKS: Record<string, string[]> = {
 const CATEGORY_KEYWORD_STOPWORDS = new Set(['peptide', 'peptides', 'compound', 'compounds', 'supply', 'supplies']);
 
 type QueryValue = string | number | boolean | null | undefined | QueryValue[] | { [key: string]: QueryValue };
+type SwellFetchCacheMode = 'force-cache' | 'no-store';
+
+type SwellFetchOptions = {
+  allowExpandFallback?: boolean;
+  currencyCode?: string;
+  cache?: SwellFetchCacheMode;
+};
 
 type CartLineState = {
   id: string;
@@ -283,12 +290,26 @@ async function fetchSwellResponseCached(
   return { ok: response.ok, status: response.status, body };
 }
 
+async function fetchSwellResponseUncached(
+  requestUrl: string,
+  headers: Record<string, string>
+): Promise<{ ok: boolean; status: number; body: string }> {
+  const response = await fetch(requestUrl, {
+    method: 'GET',
+    headers,
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  const body = (await response.text()).trim();
+  return { ok: response.ok, status: response.status, body };
+}
+
 async function swellFetch<T>(
   path: string,
   params?: { [key: string]: QueryValue },
-  options: { allowExpandFallback?: boolean; currencyCode?: string } = {}
+  options: SwellFetchOptions = {}
 ): Promise<T> {
-  const { allowExpandFallback = true, currencyCode } = options;
+  const { allowExpandFallback = true, currencyCode, cache = 'force-cache' } = options;
   const normalizedCurrency = normalizeCurrencyCode(currencyCode, DEFAULT_CURRENCY);
   const requestUrls = buildApiUrls(path, params);
   const errors: string[] = [];
@@ -307,11 +328,14 @@ async function swellFetch<T>(
         'X-Currency': normalizedCurrency,
       };
 
-      const { ok, status, body } = await fetchSwellResponseCached(
-        requestUrl,
-        mergedHeaders,
-        normalizedCurrency
-      );
+      const { ok, status, body } =
+        cache === 'no-store'
+          ? await fetchSwellResponseUncached(requestUrl, mergedHeaders)
+          : await fetchSwellResponseCached(
+              requestUrl,
+              mergedHeaders,
+              normalizedCurrency
+            );
 
       if (ok) {
         return JSON.parse(body) as T;
@@ -332,6 +356,7 @@ async function swellFetch<T>(
             return await swellFetch<T>(path, fallbackParams, {
               allowExpandFallback: false,
               currencyCode: normalizedCurrency,
+              cache,
             });
           } catch (fallbackError) {
             errors.push(
@@ -1092,7 +1117,8 @@ function hasResolvedVariants(product: SwellApiProduct): boolean {
 
 async function hydrateProductForVariants(
   product: SwellApiProduct,
-  currencyCode?: string
+  currencyCode?: string,
+  cache: SwellFetchCacheMode = 'force-cache'
 ): Promise<SwellApiProduct> {
   if (!product.id) return product;
   if (!hasVariantOptions(product) || hasResolvedVariants(product)) return product;
@@ -1103,7 +1129,7 @@ async function hydrateProductForVariants(
       {
         expand: PRODUCT_EXPAND_FIELDS,
       },
-      { currencyCode }
+      { currencyCode, cache }
     );
     return hydrated || product;
   } catch (error) {
@@ -1120,6 +1146,7 @@ async function getSwellProducts(params: {
   query?: string;
   categoryHandle?: string;
   currencyCode?: string;
+  cache?: SwellFetchCacheMode;
 }): Promise<AppProduct[]> {
   const {
     first = DEFAULT_PAGE_SIZE,
@@ -1129,6 +1156,7 @@ async function getSwellProducts(params: {
     query,
     categoryHandle,
     currencyCode,
+    cache = 'force-cache',
   } = params;
 
   const pageSize = Math.max(limit || first, DEFAULT_PAGE_SIZE);
@@ -1160,7 +1188,7 @@ async function getSwellProducts(params: {
         category: categoryFilter,
         search: query,
       },
-      { currencyCode }
+      { currencyCode, cache }
     );
 
     const batch = unwrapResults(productsResponse);
@@ -1200,7 +1228,7 @@ async function getSwellProducts(params: {
           expand: PRODUCT_EXPAND_FIELDS,
           search: query,
         },
-        { currencyCode }
+        { currencyCode, cache }
       );
 
       const fallbackBatch = unwrapResults(fallbackResponse);
@@ -1235,11 +1263,17 @@ async function getSwellProducts(params: {
   const sorted = sortProducts(filtered, sortKey, reverse);
   const pageProducts = sorted.slice(0, pageSize);
 
-  const hydratedProducts = await Promise.all(pageProducts.map(product => hydrateProductForVariants(product, currencyCode)));
+  const hydratedProducts = await Promise.all(
+    pageProducts.map(product => hydrateProductForVariants(product, currencyCode, cache))
+  );
   return hydratedProducts.map(product => mapSwellProduct(product, currencyCode));
 }
 
-async function getProductByVariantId(variantId: string, currencyCode?: string): Promise<AppProduct | null> {
+async function getProductByVariantId(
+  variantId: string,
+  currencyCode?: string,
+  options: { cache?: SwellFetchCacheMode } = {}
+): Promise<AppProduct | null> {
   const parsed = extractIdsFromVariantId(variantId);
   if (!parsed) return null;
 
@@ -1248,7 +1282,7 @@ async function getProductByVariantId(variantId: string, currencyCode?: string): 
   const now = Date.now();
   const cached = productByVariantCache.get(cacheKey);
 
-  if (cached && cached.expiresAt > now) {
+  if (options.cache !== 'no-store' && cached && cached.expiresAt > now) {
     return cached.value;
   }
 
@@ -1259,7 +1293,7 @@ async function getProductByVariantId(variantId: string, currencyCode?: string): 
         {
           expand: PRODUCT_EXPAND_FIELDS,
         },
-        { currencyCode: normalizedCurrency }
+        { currencyCode: normalizedCurrency, cache: options.cache }
       );
 
       return mapSwellProduct(product, normalizedCurrency);
@@ -1269,10 +1303,12 @@ async function getProductByVariantId(variantId: string, currencyCode?: string): 
     }
   })();
 
-  productByVariantCache.set(cacheKey, {
-    expiresAt: now + PRODUCT_LOOKUP_TTL_MS,
-    value: lookupPromise,
-  });
+  if (options.cache !== 'no-store') {
+    productByVariantCache.set(cacheKey, {
+      expiresAt: now + PRODUCT_LOOKUP_TTL_MS,
+      value: lookupPromise,
+    });
+  }
 
   try {
     const product = await lookupPromise;
@@ -1344,6 +1380,38 @@ function resolveCartAvailableQuantity(
   return null;
 }
 
+function applyProductSnapshotToCartLine(line: CartLineState, product: AppProduct) {
+  const selectedVariant =
+    product.variants.edges.find(edge => edge.node.id === line.variantId)?.node || product.variants.edges[0]?.node;
+  const availableQuantity = resolveCartAvailableQuantity(product, selectedVariant);
+  const variantTiers = selectedVariant?.bulkPriceTiers;
+
+  line.bulkPriceTiers = variantTiers?.length ? variantTiers : product.bulkPriceTiers || undefined;
+  line.merchandise.title = selectedVariant?.title || product.title;
+  line.merchandise.sku = selectedVariant?.sku || undefined;
+  line.merchandise.price = selectedVariant?.price || product.priceRange.minVariantPrice;
+  line.merchandise.availableQuantity = availableQuantity;
+  line.merchandise.selectedOptions = selectedVariant?.selectedOptions || [];
+  line.merchandise.product.availableForSale = selectedVariant?.availableForSale ?? product.availableForSale;
+  line.merchandise.product.stockStatus = selectedVariant?.stockStatus ?? product.stockStatus;
+  line.merchandise.product.stockLevel = selectedVariant?.stockLevel ?? product.stockLevel;
+  line.merchandise.product.compareAtPrice =
+    selectedVariant?.compareAtPrice ?? product.compareAtPriceRange?.minVariantPrice;
+}
+
+async function refreshCartStateLines(state: CartState, currencyCode?: string) {
+  await Promise.all(
+    state.lines.map(async line => {
+      const product = await getProductByVariantId(line.variantId, currencyCode, {
+        cache: 'no-store',
+      });
+      if (product) {
+        applyProductSnapshotToCartLine(line, product);
+      }
+    })
+  );
+}
+
 // Get all products
 export async function getProducts({
   first = DEFAULT_PAGE_SIZE,
@@ -1352,6 +1420,7 @@ export async function getProducts({
   reverse = false,
   query: searchQuery,
   currencyCode,
+  cache,
 }: {
   first?: number;
   limit?: number;
@@ -1359,6 +1428,7 @@ export async function getProducts({
   reverse?: boolean;
   query?: string;
   currencyCode?: string;
+  cache?: SwellFetchCacheMode;
 }): Promise<AppProduct[]> {
   return getSwellProducts({
     first,
@@ -1367,11 +1437,16 @@ export async function getProducts({
     reverse,
     query: searchQuery,
     currencyCode,
+    cache,
   });
 }
 
 // Get single product by handle
-export async function getProduct(handle: string, currencyCode?: string): Promise<AppProduct | null> {
+export async function getProduct(
+  handle: string,
+  currencyCode?: string,
+  options: { cache?: SwellFetchCacheMode } = {}
+): Promise<AppProduct | null> {
   const normalizedHandle = normalizeHandle(handle);
   const matchingProducts = await swellFetch<SwellApiListResponse<SwellApiProduct>>(
     '/products',
@@ -1381,14 +1456,14 @@ export async function getProduct(handle: string, currencyCode?: string): Promise
       page: 1,
       expand: PRODUCT_EXPAND_FIELDS,
     },
-    { currencyCode }
+    { currencyCode, cache: options.cache }
   );
 
   const matchedProduct = unwrapResults(matchingProducts).find(
     item => normalizeHandle(item.slug || '') === normalizedHandle
   );
   if (matchedProduct && (matchedProduct.active ?? true) !== false) {
-    const hydratedProduct = await hydrateProductForVariants(matchedProduct, currencyCode);
+    const hydratedProduct = await hydrateProductForVariants(matchedProduct, currencyCode, options.cache);
     return mapSwellProduct(hydratedProduct, currencyCode);
   }
 
@@ -1400,12 +1475,12 @@ export async function getProduct(handle: string, currencyCode?: string): Promise
       page: 1,
       expand: PRODUCT_EXPAND_FIELDS,
     },
-    { currencyCode }
+    { currencyCode, cache: options.cache }
   );
 
   const fallback = unwrapResults(products).find(item => normalizeHandle(item.slug || '') === normalizedHandle);
   if (fallback && (fallback.active ?? true) !== false) {
-    const hydratedFallback = await hydrateProductForVariants(fallback, currencyCode);
+    const hydratedFallback = await hydrateProductForVariants(fallback, currencyCode, options.cache);
     return mapSwellProduct(hydratedFallback, currencyCode);
   }
 
@@ -1429,6 +1504,7 @@ export async function getCollectionProducts({
   query: searchQuery,
   reverse = false,
   currencyCode,
+  cache,
 }: {
   collection: string;
   limit?: number;
@@ -1436,6 +1512,7 @@ export async function getCollectionProducts({
   query?: string;
   reverse?: boolean;
   currencyCode?: string;
+  cache?: SwellFetchCacheMode;
 }): Promise<AppProduct[]> {
   return getSwellProducts({
     limit,
@@ -1444,6 +1521,7 @@ export async function getCollectionProducts({
     query: searchQuery,
     categoryHandle: collection,
     currencyCode,
+    cache,
   });
 }
 
@@ -1470,7 +1548,9 @@ export async function addCartLines(
   for (const line of lines) {
     const quantity = Math.max(1, Number(line.quantity) || 1);
     const existing = state.lines.find(item => item.variantId === line.merchandiseId);
-    const product = await getProductByVariantId(line.merchandiseId, currencyCode);
+    const product = await getProductByVariantId(line.merchandiseId, currencyCode, {
+      cache: 'no-store',
+    });
     if (!product) continue;
     const selectedVariant =
       product.variants.edges.find(edge => edge.node.id === line.merchandiseId)?.node || product.variants.edges[0]?.node;
@@ -1480,12 +1560,7 @@ export async function addCartLines(
 
     if (existing) {
       existing.quantity = maxQuantity === null ? existing.quantity + quantity : Math.min(existing.quantity + quantity, maxQuantity);
-      existing.merchandise.availableQuantity = availableQuantity;
-      existing.merchandise.product.availableForSale = selectedVariant?.availableForSale ?? product.availableForSale;
-      existing.merchandise.product.stockStatus = selectedVariant?.stockStatus ?? product.stockStatus;
-      existing.merchandise.product.stockLevel = selectedVariant?.stockLevel ?? product.stockLevel;
-      existing.merchandise.product.compareAtPrice =
-        selectedVariant?.compareAtPrice ?? product.compareAtPriceRange?.minVariantPrice;
+      applyProductSnapshotToCartLine(existing, product);
       continue;
     }
 
@@ -1558,7 +1633,9 @@ export async function updateCartLines(
       state.lines.splice(index, 1);
     } else {
       const line = state.lines[index];
-      const product = await getProductByVariantId(line.variantId, currencyCode);
+      const product = await getProductByVariantId(line.variantId, currencyCode, {
+        cache: 'no-store',
+      });
       const selectedVariant =
         product?.variants.edges.find(edge => edge.node.id === line.variantId)?.node || product?.variants.edges[0]?.node;
       const availableQuantity = product
@@ -1570,11 +1647,7 @@ export async function updateCartLines(
       line.merchandise.availableQuantity = availableQuantity;
 
       if (product) {
-        line.merchandise.product.availableForSale = selectedVariant?.availableForSale ?? product.availableForSale;
-        line.merchandise.product.stockStatus = selectedVariant?.stockStatus ?? product.stockStatus;
-        line.merchandise.product.stockLevel = selectedVariant?.stockLevel ?? product.stockLevel;
-        line.merchandise.product.compareAtPrice =
-          selectedVariant?.compareAtPrice ?? product.compareAtPriceRange?.minVariantPrice;
+        applyProductSnapshotToCartLine(line, product);
       }
     }
   }
@@ -1596,5 +1669,6 @@ export async function removeCartLines(cartId: string, lineIds: string[], currenc
 export async function getCart(cartId: string, currencyCode?: string): Promise<AppCart | null> {
   const state = cartStore.get(cartId);
   if (!state) return null;
+  await refreshCartStateLines(state, currencyCode);
   return toSwellCart(state, currencyCode);
 }

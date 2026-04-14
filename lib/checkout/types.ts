@@ -148,6 +148,11 @@ export type CheckoutOrderShipEngine = {
   publicTrackingUrl?: string;
   labelPurchasedAt?: string;
   labelError?: string;
+  handedToCarrierAt?: string;
+  packedAt?: string;
+  shippedEmailSentAt?: string;
+  swellShipmentId?: string;
+  markedShippedByUserId?: string;
 };
 
 export type CheckoutProcessingStepStatus =
@@ -199,6 +204,8 @@ export type CheckoutOrderPromoter = {
   source: 'promoter_invite';
 };
 
+export type FulfillmentStatus = 'pending' | 'label_ready' | 'packed' | 'handed_to_carrier' | 'error';
+
 export type CheckoutOrderRecord = {
   orderId: string;
   accessKey: string;
@@ -217,12 +224,14 @@ export type CheckoutOrderRecord = {
   affiliate?: CheckoutOrderAffiliate | null;
   promoter?: CheckoutOrderPromoter | null;
   processing?: CheckoutOrderProcessing;
+  fulfillmentStatus?: FulfillmentStatus | null;
   latestError?: string | null;
   ipnEvents?: CheckoutIpnEvent[];
 };
 
 export type CheckoutOrderPublic = Omit<CheckoutOrderRecord, 'accessKey' | 'payment' | 'processing' | 'userId'> & {
   payment: CheckoutOrderPublicPayment;
+  fulfillmentStatus?: FulfillmentStatus | null;
 };
 
 function toPublicCheckoutPayment(payment: CheckoutOrderPayment): CheckoutOrderPublicPayment {

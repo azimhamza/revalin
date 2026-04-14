@@ -5,6 +5,7 @@ import {
   Handshake,
   LayoutDashboard,
   Megaphone,
+  Package,
   Users,
   Wallet,
 } from "lucide-react";
@@ -40,6 +41,12 @@ export const ADMIN_NAVIGATION_ITEMS: AdminNavigationItem[] = [
     href: "/admin/research",
     description: "Author, publish, and manage peptides and research papers.",
     icon: BookOpen,
+  },
+  {
+    title: "Fulfillment",
+    href: "/admin/fulfillment",
+    description: "Pack orders, print labels, and mark shipments.",
+    icon: Package,
   },
   {
     title: "Growth Partners",

@@ -37,6 +37,7 @@ async function getProductListData({
         query,
         reverse,
         currencyCode,
+        live: true,
       });
     } else {
       products = await getCollectionProducts({
@@ -46,6 +47,7 @@ async function getProductListData({
         sortKey: sortKey as ProductCollectionSortKey,
         reverse,
         currencyCode,
+        live: true,
       });
     }
   } catch (error) {
