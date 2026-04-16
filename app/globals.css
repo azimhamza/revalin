@@ -210,6 +210,12 @@
   .prose {
     @apply text-xs leading-tight text-neutral-800;
   }
+  .prose-revalin {
+    @apply text-base leading-7 md:text-lg md:leading-8;
+  }
+  .prose-revalin :where(p, li, blockquote):not(:where(.not-prose, .not-prose *)) {
+    @apply text-base leading-7 md:text-lg md:leading-8;
+  }
 
   /* Base flow & spacing */
   .prose

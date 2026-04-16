@@ -33,6 +33,21 @@ const FIGURE_ALIGN_CLASS: Record<FigureAlign, string> = {
   right: "ml-auto",
 };
 
+/** Validate an image src so a malformed value can't throw out of next/image. */
+function safeImageSrc(src: unknown): string | null {
+  if (typeof src !== "string") return null;
+  const trimmed = src.trim();
+  if (!trimmed) return null;
+  if (trimmed === "#" || trimmed.startsWith("javascript:")) return null;
+  return trimmed;
+}
+
+/** Coerce width/height to a finite positive number, or fall back. */
+function safeDim(value: unknown, fallback: number): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 function Figure({
   src,
   alt,
@@ -42,15 +57,19 @@ function Figure({
   size = "full",
   align = "center",
 }: FigureProps) {
-  const wrapperClass = `my-8 ${FIGURE_SIZE_CLASS[size]} ${FIGURE_ALIGN_CLASS[align]}`;
+  const safeSrc = safeImageSrc(src);
+  if (!safeSrc) return null;
+  const w = safeDim(width, 1280);
+  const h = safeDim(height, 720);
+  const wrapperClass = `my-8 ${FIGURE_SIZE_CLASS[size] ?? FIGURE_SIZE_CLASS.full} ${FIGURE_ALIGN_CLASS[align] ?? FIGURE_ALIGN_CLASS.center}`;
   return (
     <figure className={wrapperClass}>
       <div className="relative w-full overflow-hidden rounded-lg bg-muted">
         <Image
-          src={src}
-          alt={alt}
-          width={width}
-          height={height}
+          src={safeSrc}
+          alt={alt ?? ""}
+          width={w}
+          height={h}
           className="h-auto w-full object-cover"
         />
       </div>
@@ -151,13 +170,14 @@ function PubMedLink({
 }
 
 function MdxImg({ src, alt = "", width, height }: ComponentPropsWithoutRef<"img">) {
-  if (!src || typeof src !== "string") return null;
-  const w = typeof width === "number" ? width : Number(width) || 1280;
-  const h = typeof height === "number" ? height : Number(height) || 720;
+  const safeSrc = safeImageSrc(src);
+  if (!safeSrc) return null;
+  const w = safeDim(width, 1280);
+  const h = safeDim(height, 720);
   return (
     <Image
-      src={src}
-      alt={alt}
+      src={safeSrc}
+      alt={alt ?? ""}
       width={w}
       height={h}
       className="my-6 h-auto w-full rounded-md"
@@ -230,12 +250,13 @@ export const mdxComponents = {
  * ---------------------------------------------------------------------------*/
 
 function PreviewImg({ src, alt = "", width, height }: ComponentPropsWithoutRef<"img">) {
-  if (!src || typeof src !== "string") return null;
+  const safeSrc = safeImageSrc(src);
+  if (!safeSrc) return null;
   // eslint-disable-next-line @next/next/no-img-element
   return (
     <img
-      src={src}
-      alt={alt}
+      src={safeSrc}
+      alt={alt ?? ""}
       width={typeof width === "number" ? width : undefined}
       height={typeof height === "number" ? height : undefined}
       className="my-6 h-auto w-full rounded-md"
@@ -265,16 +286,20 @@ function PreviewFigure({
   size = "full",
   align = "center",
 }: FigureProps) {
-  const wrapperClass = `my-8 ${FIGURE_SIZE_CLASS[size]} ${FIGURE_ALIGN_CLASS[align]}`;
+  const safeSrc = safeImageSrc(src);
+  if (!safeSrc) return null;
+  const w = safeDim(width, 1280);
+  const h = safeDim(height, 720);
+  const wrapperClass = `my-8 ${FIGURE_SIZE_CLASS[size] ?? FIGURE_SIZE_CLASS.full} ${FIGURE_ALIGN_CLASS[align] ?? FIGURE_ALIGN_CLASS.center}`;
   return (
     <figure className={wrapperClass}>
       <div className="relative w-full overflow-hidden rounded-lg bg-muted">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={src}
-          alt={alt}
-          width={width}
-          height={height}
+          src={safeSrc}
+          alt={alt ?? ""}
+          width={w}
+          height={h}
           className="h-auto w-full object-cover"
         />
       </div>

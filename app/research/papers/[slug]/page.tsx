@@ -8,7 +8,7 @@ import {
   listPublishedPapers,
   listRelatedPapers,
 } from "@/lib/research/queries";
-import { renderMdx } from "@/lib/research/mdx";
+import { renderMdx, renderMdxHtml } from "@/lib/research/mdx";
 
 import { PaperHero } from "./components/paper-hero";
 import { PaperMeta } from "./components/paper-meta";
@@ -19,6 +19,15 @@ import { ResearchDisclaimerFooter } from "./components/research-disclaimer-foote
 export const revalidate = 3600;
 
 const SITE_URL = "https://revalin.com";
+
+function resolveSiteUrl(pathOrUrl: string) {
+  try {
+    return new URL(pathOrUrl).toString();
+  } catch {
+    const normalizedPath = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
+    return `${SITE_URL}${normalizedPath}`;
+  }
+}
 
 export async function generateStaticParams() {
   try {
@@ -117,12 +126,31 @@ export default async function PaperPage({
 
   const paper = result;
   const peptideIds = paper.peptides.map((p) => p.id);
-  const [related, content] = await Promise.all([
-    listRelatedPapers(paper.id, peptideIds, 3),
-    renderMdx(paper.mdxContent),
-  ]);
 
-  const canonicalUrl = `${SITE_URL}${paper.canonicalUrl ?? `/research/papers/${paper.slug}`}`;
+  let content: Awaited<ReturnType<typeof renderMdx>> = null;
+  let contentHtml: string | null = null;
+  let mdxError: string | null = null;
+  try {
+    if (process.env.NODE_ENV === "development") {
+      contentHtml = await renderMdxHtml(paper.mdxContent);
+    } else {
+      content = await renderMdx(paper.mdxContent);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[research/papers] MDX render failed for slug=${paper.slug}:`,
+      message,
+    );
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    mdxError = message;
+  }
+
+  const related = await listRelatedPapers(paper.id, peptideIds, 3);
+
+  const canonicalUrl = resolveSiteUrl(
+    paper.canonicalUrl ?? `/research/papers/${paper.slug}`,
+  );
   const imageUrl = paper.ogImageUrl ?? paper.heroImageUrl ?? undefined;
 
   const scholarlyJsonLd = {
@@ -238,7 +266,27 @@ export default async function PaperPage({
       />
 
       <article className="prose prose-revalin mx-auto mt-12 max-w-[72ch] px-sides text-[#0B2E2F] prose-headings:text-[#0B2E2F] prose-headings:tracking-[-0.03em] prose-p:text-[#0B2E2F]/80 prose-a:text-[#0B2E2F] prose-a:underline prose-strong:text-[#0B2E2F] prose-blockquote:border-l-[#0B2E2F]/20 prose-blockquote:text-[#0B2E2F]/72 prose-code:text-[#0B2E2F] prose-hr:border-[#0B2E2F]/12">
-        {content ?? (
+        {mdxError ? (
+          admin ? (
+            <div className="not-prose rounded-md border border-red-500/40 bg-red-500/5 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-red-700">
+                MDX render error (admin only)
+              </p>
+              <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-red-700">
+                {mdxError}
+              </pre>
+            </div>
+          ) : (
+            <p className="text-[#0B2E2F]/55">
+              This paper is temporarily unavailable.
+            </p>
+          )
+        ) : contentHtml !== null ? (
+          <div
+            className="contents"
+            dangerouslySetInnerHTML={{ __html: contentHtml }}
+          />
+        ) : content ?? (
           <p className="text-[#0B2E2F]/55">
             This paper does not have content yet.
           </p>

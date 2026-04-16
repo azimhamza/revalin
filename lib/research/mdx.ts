@@ -60,6 +60,22 @@ export async function renderMdxPreview(source: string) {
 }
 
 /**
+ * Development-only article renderer.
+ *
+ * `next-mdx-remote/rsc` returns dynamically compiled React elements that can
+ * miss the dev-only debug stack metadata expected by Next's RSC serializer when
+ * `experimental.useCache` is enabled. Rendering those elements to static HTML
+ * keeps local article pages debuggable without changing the production path.
+ */
+export async function renderMdxHtml(source: string): Promise<string | null> {
+  const content = await renderMdxPreview(source);
+  if (!content) return null;
+
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  return renderToStaticMarkup(content);
+}
+
+/**
  * Rough reading-time calculation. Strips common MDX syntax tokens before
  * counting so component tags and code fences don't inflate the estimate.
  */
