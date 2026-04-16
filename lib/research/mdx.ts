@@ -1,15 +1,28 @@
 import { compileMDX } from "next-mdx-remote/rsc";
 import remarkGfm from "remark-gfm";
+import remarkCustomHeadingId from "remark-custom-heading-id";
 import rehypeSlug from "rehype-slug";
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import rehypePrettyCode from "rehype-pretty-code";
 import readingTime from "reading-time";
 
-import { mdxComponents } from "./mdx-components";
+import { mdxComponents, mdxPreviewComponents } from "./mdx-components";
 
 const prettyCodeOptions = {
   theme: "github-dark-dimmed",
   keepBackground: true,
+} as const;
+
+const sharedMdxOptions = {
+  parseFrontmatter: false,
+  mdxOptions: {
+    remarkPlugins: [remarkGfm, remarkCustomHeadingId],
+    rehypePlugins: [
+      rehypeSlug,
+      [rehypeAutolinkHeadings, { behavior: "wrap" }],
+      [rehypePrettyCode, prettyCodeOptions],
+    ],
+  },
 } as const;
 
 /**
@@ -22,17 +35,25 @@ export async function renderMdx(source: string) {
   const { content } = await compileMDX({
     source,
     components: mdxComponents as any,
-    options: {
-      parseFrontmatter: false,
-      mdxOptions: {
-        remarkPlugins: [remarkGfm],
-        rehypePlugins: [
-          rehypeSlug,
-          [rehypeAutolinkHeadings, { behavior: "wrap" }],
-          [rehypePrettyCode, prettyCodeOptions],
-        ],
-      },
-    },
+    options: sharedMdxOptions as any,
+  });
+
+  return content;
+}
+
+/**
+ * Variant for the admin live preview. Uses plain <a>/<img> instead of
+ * next/link and next/image so the legacy (non-RSC) `renderToStaticMarkup`
+ * renderer used by the preview API can traverse the tree without hitting
+ * client-component boundaries.
+ */
+export async function renderMdxPreview(source: string) {
+  if (!source) return null;
+
+  const { content } = await compileMDX({
+    source,
+    components: mdxPreviewComponents as any,
+    options: sharedMdxOptions as any,
   });
 
   return content;

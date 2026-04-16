@@ -2,17 +2,49 @@ import Image from "next/image";
 import Link from "next/link";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 
+type FigureSize = "xs" | "sm" | "md" | "lg" | "full";
+type FigureAlign = "left" | "center" | "right";
+
 type FigureProps = {
   src: string;
   alt: string;
   caption?: string;
+  /** Intrinsic image width for next/image (aspect ratio). Default 1280. */
   width?: number;
+  /** Intrinsic image height for next/image (aspect ratio). Default 720. */
   height?: number;
+  /** Rendered max-width of the figure. Default "full". */
+  size?: FigureSize;
+  /** Horizontal alignment within the article column. Default "center". */
+  align?: FigureAlign;
 };
 
-function Figure({ src, alt, caption, width = 1280, height = 720 }: FigureProps) {
+const FIGURE_SIZE_CLASS: Record<FigureSize, string> = {
+  xs: "max-w-xs",
+  sm: "max-w-sm",
+  md: "max-w-md",
+  lg: "max-w-2xl",
+  full: "max-w-full",
+};
+
+const FIGURE_ALIGN_CLASS: Record<FigureAlign, string> = {
+  left: "mr-auto",
+  center: "mx-auto",
+  right: "ml-auto",
+};
+
+function Figure({
+  src,
+  alt,
+  caption,
+  width = 1280,
+  height = 720,
+  size = "full",
+  align = "center",
+}: FigureProps) {
+  const wrapperClass = `my-8 ${FIGURE_SIZE_CLASS[size]} ${FIGURE_ALIGN_CLASS[align]}`;
   return (
-    <figure className="my-8">
+    <figure className={wrapperClass}>
       <div className="relative w-full overflow-hidden rounded-lg bg-muted">
         <Image
           src={src}
@@ -185,4 +217,79 @@ export const mdxComponents = {
   Callout,
   Citation,
   PubMedLink,
+};
+
+/* -----------------------------------------------------------------------------
+ * Preview-safe variants
+ *
+ * The admin MDX preview renders via `renderToStaticMarkup`, which is the legacy
+ * (non-RSC) React SSR renderer. It cannot invoke client components like
+ * `next/link` or `next/image`. These preview components swap those out for
+ * plain <a>/<img> so the live preview doesn't error out. The production
+ * research page still uses the optimized components via `mdxComponents`.
+ * ---------------------------------------------------------------------------*/
+
+function PreviewImg({ src, alt = "", width, height }: ComponentPropsWithoutRef<"img">) {
+  if (!src || typeof src !== "string") return null;
+  // eslint-disable-next-line @next/next/no-img-element
+  return (
+    <img
+      src={src}
+      alt={alt}
+      width={typeof width === "number" ? width : undefined}
+      height={typeof height === "number" ? height : undefined}
+      className="my-6 h-auto w-full rounded-md"
+    />
+  );
+}
+
+function PreviewLink({ href = "", children, ...rest }: ComponentPropsWithoutRef<"a">) {
+  const isExternal = /^https?:\/\//i.test(href);
+  return (
+    <a
+      href={href}
+      {...(isExternal ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+      {...rest}
+    >
+      {children}
+    </a>
+  );
+}
+
+function PreviewFigure({
+  src,
+  alt,
+  caption,
+  width = 1280,
+  height = 720,
+  size = "full",
+  align = "center",
+}: FigureProps) {
+  const wrapperClass = `my-8 ${FIGURE_SIZE_CLASS[size]} ${FIGURE_ALIGN_CLASS[align]}`;
+  return (
+    <figure className={wrapperClass}>
+      <div className="relative w-full overflow-hidden rounded-lg bg-muted">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt={alt}
+          width={width}
+          height={height}
+          className="h-auto w-full object-cover"
+        />
+      </div>
+      {caption ? (
+        <figcaption className="mt-2 text-center text-xs text-muted-foreground">
+          {caption}
+        </figcaption>
+      ) : null}
+    </figure>
+  );
+}
+
+export const mdxPreviewComponents = {
+  ...mdxComponents,
+  img: PreviewImg,
+  a: PreviewLink,
+  Figure: PreviewFigure,
 };
