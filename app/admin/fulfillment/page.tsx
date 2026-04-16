@@ -5,6 +5,8 @@ export const metadata = {
   title: 'Fulfillment | Revalin Admin',
 };
 
+const isDev = process.env.NODE_ENV === 'development';
+
 type FulfillmentPageProps = {
   searchParams?: Promise<{
     status?: string | string[] | undefined;
@@ -24,12 +26,13 @@ export default async function FulfillmentPage({
     'handed_to_carrier',
     'error',
     'all',
-  ] as const;
+    ...(isDev ? ['pending'] as const : []),
+  ];
   const status =
     validStatuses.find((s) => s === statusParam) || 'label_ready';
 
   const result = await listFulfillmentOrders({
-    status,
+    status: status as Parameters<typeof listFulfillmentOrders>[0]['status'],
     page: 1,
     pageSize: 100,
   });
@@ -38,7 +41,8 @@ export default async function FulfillmentPage({
     <FulfillmentTable
       initialOrders={result.data}
       initialTotal={result.total}
-      initialStatus={status}
+      initialStatus={status as 'label_ready'}
+      isDev={isDev}
     />
   );
 }

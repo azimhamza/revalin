@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -12,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ChevronDown, Loader2, Search, Send } from "lucide-react";
+import { ChevronDown, Loader2, RefreshCw, Search, Send } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type {
   ProductNotificationAdminData,
@@ -221,7 +221,7 @@ function TrendChart({ items }: { items: Array<{ date: string; signupCount: numbe
 }
 
 export function ProductNotificationManagement({
-  data,
+  data: initialData,
   initialQuery,
 }: {
   data: ProductNotificationAdminData;
@@ -229,10 +229,11 @@ export function ProductNotificationManagement({
 }) {
   const router = useRouter();
   const [query, setQuery] = useState(initialQuery);
+  const [data, setData] = useState(initialData);
   const [expandedHandles, setExpandedHandles] = useState<Set<string>>(
     () =>
       new Set(
-        data.products
+        initialData.products
           .filter((product) => product.pendingSignupCount > 0)
           .slice(0, 6)
           .map((product) => product.productHandle),
@@ -240,7 +241,16 @@ export function ProductNotificationManagement({
   );
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [activeSendKey, setActiveSendKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    setData(initialData);
+  }, [initialData]);
+
+  useEffect(() => {
+    setQuery(initialQuery);
+  }, [initialQuery]);
 
   const selectedTargets = useMemo(() => {
     const targets: ProductNotificationAdminTarget[] = [];
@@ -327,7 +337,7 @@ export function ProductNotificationManagement({
         }),
       });
       const payload = await readJsonSafely(response);
-      const data =
+      const responseData =
         getApiData<{
           result?: {
             notifiedCount: number;
@@ -351,7 +361,7 @@ export function ProductNotificationManagement({
         setSelectedKeys(new Set());
       }
 
-      const result = data.result;
+      const result = responseData.result;
       if (!result) {
         throw new Error("The notification dispatch response was missing a result.");
       }
@@ -368,6 +378,53 @@ export function ProductNotificationManagement({
     } finally {
       setBulkLoading(false);
       setActiveSendKey(null);
+    }
+  }
+
+  async function refreshLatestProducts() {
+    setRefreshing(true);
+
+    try {
+      const normalizedQuery = query.trim();
+      const refreshUrl = normalizedQuery
+        ? `/api/admin/product-notification-dispatches?q=${encodeURIComponent(normalizedQuery)}`
+        : "/api/admin/product-notification-dispatches";
+      const response = await fetch(refreshUrl, { cache: "no-store" });
+      const payload = await readJsonSafely(response);
+      const refreshedData =
+        getApiData<ProductNotificationAdminData>(payload) ??
+        (payload as ProductNotificationAdminData | null);
+
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, "Failed to refresh latest Swell products."));
+      }
+
+      if (!refreshedData?.products) {
+        throw new Error("The refresh response was missing product notification data.");
+      }
+
+      setData(refreshedData);
+      setSelectedKeys((current) => {
+        const validKeys = new Set(
+          refreshedData.products.flatMap((product) =>
+            product.targets.map((target) =>
+              buildProductNotificationSelectionKey({
+                productHandle: target.productHandle,
+                variantKey: target.variantKey,
+              }),
+            ),
+          ),
+        );
+        return new Set(Array.from(current).filter((key) => validKeys.has(key)));
+      });
+    } catch (error) {
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to refresh latest Swell products.",
+      );
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -478,13 +535,30 @@ export function ProductNotificationManagement({
       </AdminPanel>
 
       <AdminPanel className="overflow-hidden p-0">
-        <div className="border-b border-border/70 px-3 py-2.5">
-          <h3 className="text-sm font-semibold tracking-[-0.03em] text-foreground">
-            Latest updated Swell products
-          </h3>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Expand a product to review dosage-level demand and send readiness.
-          </p>
+        <div className="flex flex-col gap-2 border-b border-border/70 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold tracking-[-0.03em] text-foreground">
+              Latest updated Swell products
+            </h3>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Expand a product to review dosage-level demand and send readiness.
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={refreshing}
+            onClick={refreshLatestProducts}
+            className={adminSecondaryButtonClass}
+          >
+            {refreshing ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            Refresh
+          </Button>
         </div>
 
         <Table>

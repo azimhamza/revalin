@@ -16,14 +16,16 @@ type TabKey =
   | 'packed'
   | 'handed_to_carrier'
   | 'error'
-  | 'all';
+  | 'all'
+  | 'pending';
 
-const TABS: { key: TabKey; label: string }[] = [
+const TABS: { key: TabKey; label: string; devOnly?: boolean }[] = [
   { key: 'label_ready', label: 'Label Ready' },
   { key: 'packed', label: 'Packed' },
   { key: 'handed_to_carrier', label: 'Shipped' },
   { key: 'error', label: 'Errors' },
   { key: 'all', label: 'All' },
+  { key: 'pending', label: 'Pending Payment', devOnly: true },
 ];
 
 function formatAge(createdAt: string) {
@@ -45,6 +47,7 @@ function formatCurrency(amount: string, currencyCode: string) {
 
 function StatusBadge({ status }: { status: string | null }) {
   const colors: Record<string, string> = {
+    pending: 'bg-gray-100 text-gray-600',
     label_ready: 'bg-blue-100 text-blue-800',
     packed: 'bg-amber-100 text-amber-800',
     handed_to_carrier: 'bg-green-100 text-green-800',
@@ -52,6 +55,7 @@ function StatusBadge({ status }: { status: string | null }) {
   };
 
   const labels: Record<string, string> = {
+    pending: 'Pending',
     label_ready: 'Label Ready',
     packed: 'Packed',
     handed_to_carrier: 'Shipped',
@@ -74,12 +78,14 @@ type Props = {
   initialOrders: FulfillmentOrderListItem[];
   initialTotal: number;
   initialStatus: TabKey;
+  isDev?: boolean;
 };
 
 export function FulfillmentTable({
   initialOrders,
   initialTotal,
   initialStatus,
+  isDev,
 }: Props) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabKey>(initialStatus);
@@ -87,6 +93,8 @@ export function FulfillmentTable({
   const [total, setTotal] = useState(initialTotal);
   const [isPending, startTransition] = useTransition();
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const visibleTabs = TABS.filter((tab) => !tab.devOnly || isDev);
 
   const switchTab = useCallback(
     (tab: TabKey) => {
@@ -119,7 +127,7 @@ export function FulfillmentTable({
       {/* Tab bar */}
       <div className="flex items-center justify-between">
         <div className="flex gap-1 rounded-xl bg-[#0B2E2F]/5 p-1">
-          {TABS.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab.key}
               onClick={() => switchTab(tab.key)}
@@ -128,6 +136,7 @@ export function FulfillmentTable({
                 activeTab === tab.key
                   ? 'bg-white text-[#0B2E2F] shadow-sm'
                   : 'text-[#0B2E2F]/50 hover:text-[#0B2E2F]/80',
+                tab.devOnly && 'border border-dashed border-orange-300',
               )}
             >
               {tab.label}
@@ -251,6 +260,7 @@ export function FulfillmentTable({
                   <FulfillmentActions
                     order={order}
                     onActionComplete={refreshList}
+                    isDev={isDev}
                   />
                 </td>
               </tr>

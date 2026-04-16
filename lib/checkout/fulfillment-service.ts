@@ -66,7 +66,7 @@ function rowToListItem(row: FulfillmentOrderRow): FulfillmentOrderListItem {
 }
 
 export async function listFulfillmentOrders(args: {
-  status?: FulfillmentStatus | 'all';
+  status?: FulfillmentStatus | 'all' | 'pending';
   page?: number;
   pageSize?: number;
 }) {

@@ -8,13 +8,16 @@ import {
   Loader2,
   Mail,
   Package,
+  Play,
   Truck,
+  Zap,
 } from 'lucide-react';
 import type { FulfillmentOrderListItem } from '@/lib/checkout/fulfillment-service';
 
 type Props = {
   order: FulfillmentOrderListItem;
   onActionComplete: () => void;
+  isDev?: boolean;
 };
 
 async function postAction(orderId: string, action: string) {
@@ -120,7 +123,7 @@ function ShipConfirmModal({
   );
 }
 
-export function FulfillmentActions({ order, onActionComplete }: Props) {
+export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showShipModal, setShowShipModal] = useState(false);
@@ -171,9 +174,53 @@ export function FulfillmentActions({ order, onActionComplete }: Props) {
   const canResendShipped =
     order.fulfillmentStatus === 'handed_to_carrier';
 
+  // Dev: show force-payment for orders that haven't paid yet
+  const canForcePayment =
+    isDev &&
+    order.paymentStatus !== 'finished' &&
+    order.paymentStatus !== 'paid';
+  // Dev: show rerun-processing for paid orders that need reprocessing
+  const canRerunProcessing =
+    isDev &&
+    (order.paymentStatus === 'finished' || order.paymentStatus === 'paid');
+
   return (
     <>
       <div className="flex items-center justify-end gap-1.5">
+        {/* Dev: Force Payment */}
+        {canForcePayment ? (
+          <button
+            onClick={() => handleAction('dev-force-payment')}
+            disabled={loading !== null}
+            className="flex items-center gap-1 rounded-lg border border-dashed border-orange-300 bg-orange-50 px-2.5 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-100 transition-colors disabled:opacity-40"
+            title="DEV: Force payment to finished and run processing pipeline"
+          >
+            {loading === 'dev-force-payment' ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Zap className="size-3.5" />
+            )}
+            Force Pay
+          </button>
+        ) : null}
+
+        {/* Dev: Rerun Processing */}
+        {canRerunProcessing ? (
+          <button
+            onClick={() => handleAction('dev-rerun-processing')}
+            disabled={loading !== null}
+            className="flex items-center gap-1 rounded-lg border border-dashed border-orange-300 bg-orange-50 px-2.5 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-100 transition-colors disabled:opacity-40"
+            title="DEV: Rerun successful order processing pipeline"
+          >
+            {loading === 'dev-rerun-processing' ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Play className="size-3.5" />
+            )}
+            Rerun
+          </button>
+        ) : null}
+
         {/* Open label */}
         {order.labelUrl ? (
           <a
