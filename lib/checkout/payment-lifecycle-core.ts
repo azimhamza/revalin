@@ -481,7 +481,11 @@ export function createPaymentLifecycle(
   }
 
   function isNonBlockingProcessingStep(step: CheckoutProcessingStepName) {
-    return step === 'paymentCompletedEvent' || step === 'purchaseTelemetry';
+    return (
+      step === 'swellPayment' ||
+      step === 'paymentCompletedEvent' ||
+      step === 'purchaseTelemetry'
+    );
   }
 
   function shouldSkipProcessingStep(
@@ -660,6 +664,7 @@ export function createPaymentLifecycle(
         ...current,
         payment: nextPayment,
         processing: ensureCheckoutOrderProcessing(current.processing),
+        fulfillmentStatus: targetSuccess && !current.fulfillmentStatus ? 'pending' : current.fulfillmentStatus,
         latestError: targetSuccess ? null : current.latestError,
         ipnEvents: args.ipnEvent
           ? [...(current.ipnEvents || []), args.ipnEvent]

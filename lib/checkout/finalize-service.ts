@@ -833,10 +833,10 @@ export function createFinalizeCheckoutSession(
         });
 
         let paymentAmount = orderTotal;
-        if (fiatCurrency === 'cad') {
+        if (fiatCurrency !== 'usd') {
           const converted = await dependencies.convertToUsd({
             amount: orderTotal,
-            fromCurrency: 'CAD',
+            fromCurrency: fiatCurrency.toUpperCase(),
           });
           paymentAmount = Number(converted.value_coin);
         }
@@ -845,7 +845,7 @@ export function createFinalizeCheckoutSession(
           addressIn: scWallet.address_in,
           amount: paymentAmount,
           email: args.shippingAddress.email,
-          currency: fiatCurrency === 'cad' ? 'USD' : fiatCurrency.toUpperCase(),
+          currency: 'USD',
         });
 
         await dependencies.updateSwellOrder(swellOrder.id, {

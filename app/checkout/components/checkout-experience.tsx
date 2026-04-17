@@ -648,6 +648,69 @@ function CheckoutQuickAddCard({ product }: { product: Product }) {
   );
 }
 
+function DevPaymentSimulator({
+  orderId,
+  onSuccess,
+}: {
+  orderId: string;
+  onSuccess: (order: CheckoutOrderPublic) => void;
+}) {
+  const [loading, setLoading] = useState<'complete' | 'fail' | null>(null);
+
+  const simulate = async (action: 'complete' | 'fail') => {
+    setLoading(action);
+    try {
+      const response = await fetch('/api/checkout/v2/dev/simulate-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, action }),
+      });
+
+      const payload = await readJsonSafely(response);
+
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, `Simulation failed (${action}).`));
+      }
+
+      const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
+      if (data?.order) {
+        onSuccess(data.order);
+        toast.success(action === 'complete' ? 'Payment marked as complete' : 'Payment marked as failed');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Simulation failed.');
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-50/50 px-3 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-700">Dev Payment Testing</p>
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          onClick={() => simulate('complete')}
+          disabled={loading !== null}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-amber-500/40 bg-white px-2 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-50 disabled:opacity-50"
+        >
+          {loading === 'complete' ? <Loader2 className="size-3 animate-spin" /> : <CheckCircle2 className="size-3" />}
+          Simulate Complete
+        </button>
+        <button
+          type="button"
+          onClick={() => simulate('fail')}
+          disabled={loading !== null}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-amber-500/40 bg-white px-2 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-50 disabled:opacity-50"
+        >
+          {loading === 'fail' ? <Loader2 className="size-3 animate-spin" /> : <X className="size-3" />}
+          Simulate Failed
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps) {
   const { cart } = useCart();
   const pathname = usePathname();
@@ -1903,6 +1966,15 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                     Dev mode: status polling active (no IPN callbacks on localhost).
                   </div>
                 ) : null}
+
+                {process.env.NODE_ENV === 'development' && activeOrder ? (
+                  <DevPaymentSimulator
+                    orderId={activeOrder.orderId}
+                    onSuccess={(updatedOrder) => {
+                      setCheckoutSession(current => current ? { ...current, order: updatedOrder } : current);
+                    }}
+                  />
+                ) : null}
               </div>
             </div>
 
@@ -2298,67 +2370,174 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
             ) : (
               /* ── Post-order: payment view ── */
               <div className="space-y-5">
-                <div className="rounded-[26px] border border-border/70 bg-card p-4 shadow-[0_20px_48px_rgba(11,46,47,0.04)] md:p-5">
-                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-3">
-                        <h2 className="text-2xl font-semibold tracking-tight">Complete payment</h2>
-                        <span className={cn('rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em]', paymentStatusTone(paymentStatus))}>
-                          {formatPaymentStatus(paymentStatus)}
-                        </span>
+                {(paymentStatus === 'finished' || paymentStatus === 'paid') ? (
+                  /* ── Order confirmed view ── */
+                  <div className="space-y-5">
+                    <div className="rounded-[26px] border border-border/70 bg-card p-5 shadow-[0_20px_48px_rgba(11,46,47,0.04)] md:p-8">
+                      <div className="flex flex-col items-center text-center">
+                        <div className="flex size-14 items-center justify-center rounded-full bg-[#0B2E2F]">
+                          <CheckCircle2 className="size-7 text-[#F4F1EA]" />
+                        </div>
+                        <h2 className="mt-4 text-2xl font-semibold tracking-tight">Order confirmed</h2>
+                        <p className="mt-2 text-sm text-foreground/60">
+                          Order {activeOrder.swell.orderNumber || activeOrder.swell.orderId} has been placed successfully.
+                        </p>
+                        <p className="mt-1 text-sm text-foreground/60">
+                          A confirmation email will be sent to{' '}
+                          <span className="font-medium text-foreground">{activeOrder.shippingAddress.email}</span>.
+                        </p>
                       </div>
-                      <p className="mt-2 text-sm text-foreground/60">
-                        Order {activeOrder.swell.orderNumber || activeOrder.swell.orderId}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button type="button" variant="outline" size="sm" onClick={refreshStatus} disabled={isRefreshingStatus}>
-                        <RefreshCw className={cn('size-3.5', isRefreshingStatus && 'animate-spin')} />
-                        Refresh
-                      </Button>
-                      {!isTerminalPaymentStatus(paymentStatus) ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => releaseActiveOrder(shieldClimbPayment ? 'crypto' : 'card')}
-                          disabled={isReleasingOrder}
+
+                      {/* ── Order items ── */}
+                      <div className="mt-6 space-y-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Items ordered</p>
+                        <div className="divide-y divide-border/50">
+                          {activeOrder.lines.map(line => (
+                            <div key={line.id} className="flex items-center gap-3 py-3">
+                              {line.imageUrl ? (
+                                <img src={line.imageUrl} alt={line.productTitle} className="size-12 rounded-lg border border-border/40 object-cover" />
+                              ) : (
+                                <div className="flex size-12 items-center justify-center rounded-lg border border-border/40 bg-background text-xs text-foreground/30">img</div>
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium truncate">{line.productTitle}</p>
+                                {line.variantTitle ? (
+                                  <p className="text-xs text-foreground/50">{line.variantTitle}</p>
+                                ) : null}
+                                <p className="text-xs text-foreground/50">Qty: {line.quantity}</p>
+                              </div>
+                              <p className="text-sm font-semibold">{formatPrice(line.lineTotal.amount, line.lineTotal.currencyCode)}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* ── Order details grid ── */}
+                      <div className="mt-6 grid gap-4 md:grid-cols-2">
+                        <div className="rounded-2xl border border-border/60 bg-background/60 p-4">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Shipping to</p>
+                          <div className="mt-2 space-y-1 text-sm">
+                            <p className="font-medium">{activeOrder.shippingAddress.firstName} {activeOrder.shippingAddress.lastName}</p>
+                            <p className="text-foreground/65">{activeOrder.shippingAddress.address1}</p>
+                            {activeOrder.shippingAddress.address2 ? <p className="text-foreground/65">{activeOrder.shippingAddress.address2}</p> : null}
+                            <p className="text-foreground/65">{activeOrder.shippingAddress.city}, {activeOrder.shippingAddress.province} {activeOrder.shippingAddress.postalCode}</p>
+                          </div>
+                          {activeOrder.shippingService ? (
+                            <div className="mt-3 rounded-lg bg-[#0B2E2F]/5 px-3 py-2 text-xs">
+                              <p className="font-semibold">{activeOrder.shippingService.name}</p>
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="rounded-2xl border border-border/60 bg-background/60 p-4">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Order summary</p>
+                          <div className="mt-2 space-y-1.5 text-sm">
+                            <div className="flex justify-between">
+                              <span className="text-foreground/65">Subtotal</span>
+                              <span>{formatPrice(activeOrder.totals.subtotalAmount.amount, activeOrder.totals.subtotalAmount.currencyCode)}</span>
+                            </div>
+                            {activeOrder.totals.discountAmount && Number(activeOrder.totals.discountAmount.amount) > 0 ? (
+                              <div className="flex justify-between">
+                                <span className="text-foreground/65">Discount</span>
+                                <span>-{formatPrice(activeOrder.totals.discountAmount.amount, activeOrder.totals.discountAmount.currencyCode)}</span>
+                              </div>
+                            ) : null}
+                            {activeOrder.totals.shippingAmount ? (
+                              <div className="flex justify-between">
+                                <span className="text-foreground/65">Shipping</span>
+                                <span>{Number(activeOrder.totals.shippingAmount.amount) === 0 ? 'Free' : formatPrice(activeOrder.totals.shippingAmount.amount, activeOrder.totals.shippingAmount.currencyCode)}</span>
+                              </div>
+                            ) : null}
+                            {activeOrder.totals.taxAmount && Number(activeOrder.totals.taxAmount.amount) > 0 ? (
+                              <div className="flex justify-between">
+                                <span className="text-foreground/65">Tax</span>
+                                <span>{formatPrice(activeOrder.totals.taxAmount.amount, activeOrder.totals.taxAmount.currencyCode)}</span>
+                              </div>
+                            ) : null}
+                            <div className="flex justify-between border-t border-border/50 pt-1.5 font-semibold">
+                              <span>Total</span>
+                              <span>{formatPrice(activeOrder.totals.totalAmount.amount, activeOrder.totals.totalAmount.currencyCode)}</span>
+                            </div>
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <div className="rounded-lg bg-[#0B2E2F]/5 px-2.5 py-1.5 text-xs">
+                              <p className="text-foreground/45">Method</p>
+                              <p className="font-semibold">{shieldClimbPayment ? 'Card' : 'Crypto'}</p>
+                            </div>
+                            <div className="rounded-lg bg-[#0B2E2F]/5 px-2.5 py-1.5 text-xs">
+                              <p className="text-foreground/45">Status</p>
+                              <p className="font-semibold capitalize">{formatPaymentStatus(paymentStatus)}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* ── Actions ── */}
+                      <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
+                        <Link
+                          href={`/order/${encodeURIComponent(activeOrder.orderId)}?key=${encodeURIComponent(checkoutSession!.accessKey)}`}
+                          className="inline-flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-semibold transition-colors"
+                          style={{ backgroundColor: '#0B2E2F', color: '#F4F1EA' }}
                         >
-                          {isReleasingOrder ? (
-                            <>
-                              <Loader2 className="size-3.5 animate-spin" />
-                              Switching...
-                            </>
-                          ) : (
-                            'Choose different payment'
-                          )}
+                          View order status
+                          <ArrowRight className="size-4" />
+                        </Link>
+                        <Button type="button" variant="outline" size="sm" onClick={clearCheckoutSession}>
+                          Order more
                         </Button>
-                      ) : (
-                        <Button type="button" variant="ghost" size="sm" onClick={clearCheckoutSession}>
-                          Start new checkout
-                        </Button>
-                      )}
+                      </div>
                     </div>
                   </div>
-
-                  <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_200px]">
-                    <div className="space-y-4 rounded-2xl border border-border/70 bg-background/60 p-4 md:p-5">
-                      {(paymentStatus === 'finished' || paymentStatus === 'paid') ? (
-                        <div className="rounded-2xl border border-[#0B2E2F]/15 bg-white px-4 py-4">
-                          <div className="flex items-center gap-3 text-[#0B2E2F]">
-                            <CheckCircle2 className="size-5" />
-                            <p className="text-lg font-semibold">Payment received</p>
-                          </div>
-                          <p className="mt-2 text-sm text-foreground/65">
-                            Your payment is confirmed and the order is being processed.
-                          </p>
+                ) : (
+                  /* ── Payment pending view ── */
+                  <div className="rounded-[26px] border border-border/70 bg-card p-4 shadow-[0_20px_48px_rgba(11,46,47,0.04)] md:p-5">
+                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <h2 className="text-2xl font-semibold tracking-tight">Complete payment</h2>
+                          <span className={cn('rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em]', paymentStatusTone(paymentStatus))}>
+                            {formatPaymentStatus(paymentStatus)}
+                          </span>
                         </div>
-                      ) : null}
+                        <p className="mt-2 text-sm text-foreground/60">
+                          Order {activeOrder.swell.orderNumber || activeOrder.swell.orderId}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button type="button" variant="outline" size="sm" onClick={refreshStatus} disabled={isRefreshingStatus}>
+                          <RefreshCw className={cn('size-3.5', isRefreshingStatus && 'animate-spin')} />
+                          Refresh
+                        </Button>
+                        {!isTerminalPaymentStatus(paymentStatus) ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => releaseActiveOrder(shieldClimbPayment ? 'crypto' : 'card')}
+                            disabled={isReleasingOrder}
+                          >
+                            {isReleasingOrder ? (
+                              <>
+                                <Loader2 className="size-3.5 animate-spin" />
+                                Switching...
+                              </>
+                            ) : (
+                              'Choose different payment'
+                            )}
+                          </Button>
+                        ) : (
+                          <Button type="button" variant="ghost" size="sm" onClick={clearCheckoutSession}>
+                            Start new checkout
+                          </Button>
+                        )}
+                      </div>
+                    </div>
 
-                      {/* ── ShieldClimb (card) payment view ── */}
-                      {shieldClimbPayment ? (
-                        <>
-                          {shieldClimbPayment.status !== 'paid' ? (
+                    <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_200px]">
+                      <div className="space-y-4 rounded-2xl border border-border/70 bg-background/60 p-4 md:p-5">
+                        {/* ── ShieldClimb (card) payment view ── */}
+                        {shieldClimbPayment ? (
+                          <>
                             <div className="rounded-2xl border border-[#0B2E2F]/15 bg-white px-4 py-4">
                               <p className="text-sm text-foreground/65 mb-3">
                                 Complete your payment on the secure checkout page, or switch payment methods without creating a second order.
@@ -2373,126 +2552,126 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                                 <ArrowRight className="size-4" />
                               </a>
                             </div>
-                          ) : null}
 
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Reference</p>
-                              <p className="mt-1 text-sm font-semibold">{activeOrder.orderId}</p>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Reference</p>
+                                <p className="mt-1 text-sm font-semibold">{activeOrder.orderId}</p>
+                              </div>
+                              <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Method</p>
+                                <p className="mt-1 text-sm font-semibold">Debit / Credit Card</p>
+                              </div>
                             </div>
-                            <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Method</p>
-                              <p className="mt-1 text-sm font-semibold">Debit / Credit Card</p>
-                            </div>
-                          </div>
-                        </>
-                      ) : null}
+                          </>
+                        ) : null}
 
-                      {/* ── NOWPayments (crypto) payment view ── */}
-                      {nowPayment ? (
-                        <>
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div className="rounded-2xl border border-border/60 bg-white p-4">
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Send exactly</p>
-                              <div className="mt-2 flex items-center justify-between gap-3">
-                                <p className="text-xl font-semibold tracking-tight">
-                                  {nowPayment.payAmount} {formatTicker(nowPayment.paymentCurrency)}
+                        {/* ── NOWPayments (crypto) payment view ── */}
+                        {nowPayment ? (
+                          <>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="rounded-2xl border border-border/60 bg-white p-4">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Send exactly</p>
+                                <div className="mt-2 flex items-center justify-between gap-3">
+                                  <p className="text-xl font-semibold tracking-tight">
+                                    {nowPayment.payAmount} {formatTicker(nowPayment.paymentCurrency)}
+                                  </p>
+                                  <button type="button" onClick={() => copyText('Amount', nowPayment.payAmount)} className="rounded-full border border-border bg-background p-1.5 text-foreground/70 transition-colors hover:text-foreground" aria-label="Copy payment amount">
+                                    <Copy className="size-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="rounded-2xl border border-border/60 bg-white p-4">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Network</p>
+                                <p className="mt-2 text-xl font-semibold tracking-tight">
+                                  {nowPayment.network ? nowPayment.network.toUpperCase() : formatTicker(nowPayment.paymentCurrency)}
                                 </p>
-                                <button type="button" onClick={() => copyText('Amount', nowPayment.payAmount)} className="rounded-full border border-border bg-background p-1.5 text-foreground/70 transition-colors hover:text-foreground" aria-label="Copy payment amount">
-                                  <Copy className="size-3.5" />
-                                </button>
                               </div>
                             </div>
-                            <div className="rounded-2xl border border-border/60 bg-white p-4">
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Network</p>
-                              <p className="mt-2 text-xl font-semibold tracking-tight">
-                                {nowPayment.network ? nowPayment.network.toUpperCase() : formatTicker(nowPayment.paymentCurrency)}
-                              </p>
-                            </div>
-                          </div>
 
-                          <div className="rounded-2xl border border-border/60 bg-white p-4">
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Deposit address</p>
-                                <p className="mt-2 break-all text-sm leading-6">{nowPayment.payAddress}</p>
-                              </div>
-                              <button type="button" onClick={() => copyText('Address', nowPayment.payAddress)} className="rounded-full border border-border bg-background p-1.5 text-foreground/70 transition-colors hover:text-foreground" aria-label="Copy payment address">
-                                <Copy className="size-3.5" />
-                              </button>
-                            </div>
-                          </div>
-
-                          {nowPayment.sourceWalletAddress ? (
                             <div className="rounded-2xl border border-border/60 bg-white p-4">
                               <div className="flex items-start justify-between gap-3">
                                 <div>
-                                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Paying from</p>
-                                  <p className="mt-2 break-all text-sm leading-6">{nowPayment.sourceWalletAddress}</p>
+                                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Deposit address</p>
+                                  <p className="mt-2 break-all text-sm leading-6">{nowPayment.payAddress}</p>
                                 </div>
-                                <button type="button" onClick={() => copyText('Wallet', nowPayment.sourceWalletAddress)} className="rounded-full border border-border bg-background p-1.5 text-foreground/70 transition-colors hover:text-foreground" aria-label="Copy source wallet address">
+                                <button type="button" onClick={() => copyText('Address', nowPayment.payAddress)} className="rounded-full border border-border bg-background p-1.5 text-foreground/70 transition-colors hover:text-foreground" aria-label="Copy payment address">
                                   <Copy className="size-3.5" />
                                 </button>
                               </div>
                             </div>
-                          ) : null}
 
-                          {nowPayment.payinExtraId ? (
-                            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                              <p className="font-semibold">Memo / destination tag required</p>
-                              <div className="mt-2 flex items-center justify-between gap-3">
-                                <p className="break-all">{nowPayment.payinExtraId}</p>
-                                <button type="button" onClick={() => copyText('Memo', nowPayment.payinExtraId)} className="rounded-full border border-amber-200 bg-white p-1.5 text-amber-900" aria-label="Copy memo">
-                                  <Copy className="size-3.5" />
-                                </button>
+                            {nowPayment.sourceWalletAddress ? (
+                              <div className="rounded-2xl border border-border/60 bg-white p-4">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Paying from</p>
+                                    <p className="mt-2 break-all text-sm leading-6">{nowPayment.sourceWalletAddress}</p>
+                                  </div>
+                                  <button type="button" onClick={() => copyText('Wallet', nowPayment.sourceWalletAddress)} className="rounded-full border border-border bg-background p-1.5 text-foreground/70 transition-colors hover:text-foreground" aria-label="Copy source wallet address">
+                                    <Copy className="size-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {nowPayment.payinExtraId ? (
+                              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                                <p className="font-semibold">Memo / destination tag required</p>
+                                <div className="mt-2 flex items-center justify-between gap-3">
+                                  <p className="break-all">{nowPayment.payinExtraId}</p>
+                                  <button type="button" onClick={() => copyText('Memo', nowPayment.payinExtraId)} className="rounded-full border border-amber-200 bg-white p-1.5 text-amber-900" aria-label="Copy memo">
+                                    <Copy className="size-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Reference</p>
+                                <p className="mt-1 text-sm font-semibold">{activeOrder.orderId}</p>
+                              </div>
+                              <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Expires</p>
+                                <p className="mt-1 text-sm font-semibold">{paymentExpiresAt || 'Refresh to check'}</p>
                               </div>
                             </div>
-                          ) : null}
+                          </>
+                        ) : null}
 
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Reference</p>
-                              <p className="mt-1 text-sm font-semibold">{activeOrder.orderId}</p>
+                        {copiedValue ? <p className="text-sm font-medium text-[#0B2E2F]">{copiedValue} copied.</p> : null}
+                      </div>
+
+                      <div className="space-y-4">
+                        {nowPayment?.payAddress ? (
+                          <div className="rounded-2xl border border-border/70 bg-white p-4 text-center">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Scan to pay</p>
+                            <div className="mt-3 flex justify-center">
+                              <QRCodeSVG value={nowPayment.payAddress} size={140} />
                             </div>
-                            <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Expires</p>
-                              <p className="mt-1 text-sm font-semibold">{paymentExpiresAt || 'Refresh to check'}</p>
-                            </div>
-                          </div>
-                        </>
-                      ) : null}
-
-                      {copiedValue ? <p className="text-sm font-medium text-[#0B2E2F]">{copiedValue} copied.</p> : null}
-                    </div>
-
-                    <div className="space-y-4">
-                      {nowPayment?.payAddress ? (
-                        <div className="rounded-2xl border border-border/70 bg-white p-4 text-center">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Scan to pay</p>
-                          <div className="mt-3 flex justify-center">
-                            <QRCodeSVG value={nowPayment.payAddress} size={140} />
-                          </div>
-                        </div>
-                      ) : null}
-
-                      <div className="rounded-2xl border border-border/70 bg-[#0B2E2F] p-3.5 text-[#F4F1EA]">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/60">Shipping to</p>
-                        <div className="mt-3 space-y-1.5 text-sm leading-6">
-                          <p className="font-semibold">{activeOrder.shippingAddress.firstName} {activeOrder.shippingAddress.lastName}</p>
-                          <p>{activeOrder.shippingAddress.address1}</p>
-                          {activeOrder.shippingAddress.address2 ? <p>{activeOrder.shippingAddress.address2}</p> : null}
-                          <p>{activeOrder.shippingAddress.city}, {activeOrder.shippingAddress.province} {activeOrder.shippingAddress.postalCode}</p>
-                        </div>
-                        {activeOrder.shippingService ? (
-                          <div className="mt-3 rounded-lg bg-white/10 px-3 py-2 text-xs">
-                            <p className="font-semibold">{activeOrder.shippingService.name}</p>
-                            <p className="text-[#F4F1EA]/80">{formatPrice(activeOrder.shippingService.price.amount, activeOrder.shippingService.price.currencyCode)}</p>
                           </div>
                         ) : null}
+
+                        <div className="rounded-2xl border border-border/70 bg-[#0B2E2F] p-3.5 text-[#F4F1EA]">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#F4F1EA]/60">Shipping to</p>
+                          <div className="mt-3 space-y-1.5 text-sm leading-6">
+                            <p className="font-semibold">{activeOrder.shippingAddress.firstName} {activeOrder.shippingAddress.lastName}</p>
+                            <p>{activeOrder.shippingAddress.address1}</p>
+                            {activeOrder.shippingAddress.address2 ? <p>{activeOrder.shippingAddress.address2}</p> : null}
+                            <p>{activeOrder.shippingAddress.city}, {activeOrder.shippingAddress.province} {activeOrder.shippingAddress.postalCode}</p>
+                          </div>
+                          {activeOrder.shippingService ? (
+                            <div className="mt-3 rounded-lg bg-white/10 px-3 py-2 text-xs">
+                              <p className="font-semibold">{activeOrder.shippingService.name}</p>
+                              <p className="text-[#F4F1EA]/80">{formatPrice(activeOrder.shippingService.price.amount, activeOrder.shippingService.price.currencyCode)}</p>
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
           </section>

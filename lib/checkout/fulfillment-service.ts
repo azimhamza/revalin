@@ -79,9 +79,10 @@ export async function listFulfillmentOrders(args: {
   if (args.status && args.status !== 'all') {
     conditions.push(eq(checkoutOrders.fulfillmentStatus, args.status));
   } else if (!args.status || args.status === 'all') {
-    // Only show orders that have entered the fulfillment pipeline
+    // Show all orders that have entered the fulfillment pipeline
     conditions.push(
       inArray(checkoutOrders.fulfillmentStatus, [
+        'pending',
         'label_ready',
         'packed',
         'handed_to_carrier',
