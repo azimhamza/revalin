@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Globe, Loader2, Plus, Trash2 } from "lucide-react";
 import {
   SiInstagram,
@@ -75,6 +76,7 @@ export function PromoterSignupForm({
   initialName = "",
   initialEmail = "",
 }: PromoterSignupFormProps) {
+  const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submission, setSubmission] = useState<SubmissionState>({
     status: "idle",
@@ -84,6 +86,22 @@ export function PromoterSignupForm({
   const [socialProfiles, setSocialProfiles] = useState<SocialProfileRow[]>([
     createEmptySocialProfile(0),
   ]);
+
+  useEffect(() => {
+    if (submission.status !== "success") return;
+
+    const timeout = window.setTimeout(() => {
+      router.replace("/account");
+      router.refresh();
+    }, 1200);
+
+    return () => window.clearTimeout(timeout);
+  }, [router, submission.status]);
+
+  function goToAccount() {
+    router.replace("/account");
+    router.refresh();
+  }
 
   function updateSocialProfile(
     index: number,
@@ -159,7 +177,7 @@ export function PromoterSignupForm({
       setSubmission({
         status: "success",
         message:
-          "Application received. The admin team will review your promoter access and email you when it is approved.",
+          "Application received. Taking you back to your account.",
       });
     } catch {
       setSubmission({
@@ -171,17 +189,32 @@ export function PromoterSignupForm({
     }
   }
 
+  if (submission.status === "success") {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          <p>{submission.message}</p>
+          <p className="mt-1 text-xs text-emerald-800/80">
+            You can check your promoter status from your account page.
+          </p>
+        </div>
+        <Button
+          type="button"
+          onClick={goToAccount}
+          className="h-11 w-full rounded-xl bg-[#0B2E2F] text-sm font-semibold text-[#F4F1EA] hover:bg-[#173d3e]"
+        >
+          <Loader2 className="size-4 animate-spin" />
+          Go to account
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {submission.status === "error" ? (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {submission.message}
-        </div>
-      ) : null}
-
-      {submission.status === "success" ? (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          <p>{submission.message}</p>
         </div>
       ) : null}
 
@@ -314,7 +347,7 @@ export function PromoterSignupForm({
 
       <Button
         type="submit"
-        disabled={isSubmitting || submission.status === "success"}
+        disabled={isSubmitting}
         className="h-11 w-full rounded-xl bg-[#0B2E2F] text-sm font-semibold text-[#F4F1EA] hover:bg-[#173d3e]"
       >
         {isSubmitting ? <Loader2 className="size-4 animate-spin" /> : null}

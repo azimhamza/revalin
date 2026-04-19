@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Globe, Loader2, Plus, Trash2 } from "lucide-react";
 import {
   SiInstagram,
@@ -78,6 +78,7 @@ export function AffiliateSignupForm({
   initialEmail = "",
   promoterFirstName = null,
 }: AffiliateSignupFormProps) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const promoterReferralCode = searchParams.get("promoter")?.trim() || "";
   const nextSocialProfileId = useRef(1);
@@ -89,6 +90,22 @@ export function AffiliateSignupForm({
     status: "idle",
     message: null,
   });
+
+  useEffect(() => {
+    if (submission.status !== "success") return;
+
+    const timeout = window.setTimeout(() => {
+      router.replace("/account");
+      router.refresh();
+    }, 1200);
+
+    return () => window.clearTimeout(timeout);
+  }, [router, submission.status]);
+
+  function goToAccount() {
+    router.replace("/account");
+    router.refresh();
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -126,7 +143,7 @@ export function AffiliateSignupForm({
       setSubmission({
         status: "success",
         message:
-          "Application received. The admin team will assign your partner code and email you when the referral setup is approved.",
+          "Application received. Taking you back to your account.",
       });
     } catch {
       setSubmission({
@@ -171,17 +188,34 @@ export function AffiliateSignupForm({
     );
   }
 
+  if (submission.status === "success") {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          <p>{submission.message}</p>
+          <p className="mt-1 text-xs text-emerald-800/80">
+            You can check your application status from your account page.
+          </p>
+        </div>
+        <Button
+          type="button"
+          className="w-full"
+          size="lg"
+          onClick={goToAccount}
+          style={{ backgroundColor: "#0B2E2F", color: "#F4F1EA" }}
+        >
+          <Loader2 className="size-5 animate-spin" />
+          Go to account
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {submission.status === "error" ? (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {submission.message}
-        </div>
-      ) : null}
-
-      {submission.status === "success" ? (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          <p>{submission.message}</p>
         </div>
       ) : null}
 
