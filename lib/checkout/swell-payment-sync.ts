@@ -114,7 +114,8 @@ export async function syncShieldClimbOrderToSwell(order: CheckoutOrderRecord) {
       method: manualMethod,
       intent: {
         provider: 'shieldclimb',
-        wallet_id: order.payment.walletId,
+        session_id: order.payment.walletId,
+        ipn_token: order.payment.ipnToken,
         status: order.payment.status,
       },
     },
@@ -132,11 +133,17 @@ export async function syncShieldClimbOrderToSwell(order: CheckoutOrderRecord) {
         paymentMethod: 'card',
       }),
       shieldclimb: {
-        wallet_id: order.payment.walletId,
+        session_id: order.payment.walletId,
+        ipn_token: order.payment.ipnToken,
+        polygon_address_in: order.payment.polygonAddressIn,
+        expected_value_coin: order.payment.expectedValueCoin,
+        payment_currency: order.payment.paymentCurrency,
         status: order.payment.status,
         value_coin_received: order.payment.valueCoinReceived,
+        coin_received: order.payment.coinReceived,
         txid_in: order.payment.txidIn,
         txid_out: order.payment.txidOut,
+        callback_verified_at: order.payment.callbackVerifiedAt,
       },
     },
   });

@@ -1183,9 +1183,13 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   }, [accessKey, orderId]);
 
   const pollingId = checkoutSession?.order.payment ? getPollingId(checkoutSession.order.payment) : undefined;
+  const autoPollingId =
+    checkoutSession?.order.payment && isNowPaymentsOrder(checkoutSession.order.payment)
+      ? getPollingId(checkoutSession.order.payment)
+      : undefined;
 
   useEffect(() => {
-    if (!pollingId || isTerminalPaymentStatus(checkoutSession?.order.payment.status)) {
+    if (!autoPollingId || isTerminalPaymentStatus(checkoutSession?.order.payment.status)) {
       return;
     }
 
@@ -1194,7 +1198,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
     const interval = window.setInterval(async () => {
       const response = await fetch(
-        `/api/checkout/v2/payments/${encodeURIComponent(pollingId)}/status?orderId=${encodeURIComponent(
+        `/api/checkout/v2/payments/${encodeURIComponent(autoPollingId)}/status?orderId=${encodeURIComponent(
           currentOrderId
         )}&key=${encodeURIComponent(currentAccessKey)}`,
         { cache: 'no-store' }
@@ -1214,7 +1218,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     checkoutSession?.accessKey,
     checkoutSession?.order.orderId,
     checkoutSession?.order.payment.status,
-    pollingId,
+    autoPollingId,
   ]);
 
   useEffect(() => {

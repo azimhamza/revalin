@@ -3,6 +3,7 @@ import {
   SHIELDCLIMB_PAYMENT_BASE_URL,
 } from '@/lib/checkout/constants';
 import { providerFetch } from '@/lib/api/provider-client';
+import { normalizeShieldClimbAddressIn } from '@/lib/checkout/shieldclimb-url';
 
 export type ShieldClimbWalletResponse = {
   address_in: string;
@@ -42,6 +43,78 @@ function getShieldClimbBranding() {
   };
 }
 
+function hasStringField(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isFiniteNumericString(value: unknown): value is string {
+  return hasStringField(value) && Number.isFinite(Number(value));
+}
+
+function parseShieldClimbWalletResponse(value: unknown): ShieldClimbWalletResponse {
+  if (!value || typeof value !== 'object') {
+    throw new Error('ShieldClimb wallet creation returned an invalid response.');
+  }
+
+  const response = value as Partial<ShieldClimbWalletResponse>;
+  if (
+    !hasStringField(response.address_in) ||
+    !hasStringField(response.polygon_address_in) ||
+    !hasStringField(response.callback_url) ||
+    !hasStringField(response.ipn_token)
+  ) {
+    throw new Error('ShieldClimb wallet creation response is missing required fields.');
+  }
+
+  return {
+    address_in: response.address_in,
+    polygon_address_in: response.polygon_address_in,
+    callback_url: response.callback_url,
+    ipn_token: response.ipn_token,
+  };
+}
+
+function parseShieldClimbPaymentStatusResponse(
+  value: unknown
+): ShieldClimbPaymentStatusResponse {
+  if (!value || typeof value !== 'object') {
+    throw new Error('ShieldClimb payment status returned an invalid response.');
+  }
+
+  const response = value as Partial<ShieldClimbPaymentStatusResponse>;
+  if (response.status !== 'paid' && response.status !== 'unpaid') {
+    throw new Error('ShieldClimb payment status response has an invalid status.');
+  }
+
+  return {
+    status: response.status,
+    value_coin: isFiniteNumericString(response.value_coin) ? response.value_coin : undefined,
+    txid_out: hasStringField(response.txid_out) ? response.txid_out : undefined,
+    coin: hasStringField(response.coin) ? response.coin : undefined,
+  };
+}
+
+function parseShieldClimbConvertResponse(value: unknown): ShieldClimbConvertResponse {
+  if (!value || typeof value !== 'object') {
+    throw new Error('ShieldClimb currency conversion returned an invalid response.');
+  }
+
+  const response = value as Partial<ShieldClimbConvertResponse>;
+  if (
+    response.status !== 'success' ||
+    !isFiniteNumericString(response.value_coin) ||
+    !isFiniteNumericString(response.exchange_rate)
+  ) {
+    throw new Error('ShieldClimb currency conversion response is invalid.');
+  }
+
+  return {
+    status: response.status,
+    value_coin: response.value_coin,
+    exchange_rate: response.exchange_rate,
+  };
+}
+
 /**
  * Create Wallet — GET /control/wallet.php
  * Docs: https://shieldclimb.apidog.io/create-wallet-25584818e0.md
@@ -67,7 +140,7 @@ export async function createShieldClimbWallet(args: {
     throw new Error(`ShieldClimb wallet creation failed: ${response.status} ${body}`);
   }
 
-  return (await response.json()) as ShieldClimbWalletResponse;
+  return parseShieldClimbWalletResponse(await response.json());
 }
 
 /**
@@ -86,7 +159,7 @@ export function buildShieldClimbPaymentUrl(args: {
   const branding = getShieldClimbBranding();
   const url = new URL('/pay.php', SHIELDCLIMB_PAYMENT_BASE_URL);
 
-  url.searchParams.set('address', args.addressIn);
+  url.searchParams.set('address', normalizeShieldClimbAddressIn(args.addressIn));
   url.searchParams.set('amount', args.amount.toFixed(2));
   url.searchParams.set('email', args.email);
   url.searchParams.set('currency', args.currency.toUpperCase());
@@ -126,7 +199,7 @@ export async function checkShieldClimbPaymentStatus(
     throw new Error(`ShieldClimb payment status check failed: ${response.status} ${body}`);
   }
 
-  return (await response.json()) as ShieldClimbPaymentStatusResponse;
+  return parseShieldClimbPaymentStatusResponse(await response.json());
 }
 
 /**
@@ -155,7 +228,7 @@ export async function convertToUsd(args: {
     throw new Error(`ShieldClimb currency conversion failed: ${response.status} ${body}`);
   }
 
-  return (await response.json()) as ShieldClimbConvertResponse;
+  return parseShieldClimbConvertResponse(await response.json());
 }
 
 export async function createWalletForOrder(args: {

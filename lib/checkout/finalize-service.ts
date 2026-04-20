@@ -71,10 +71,6 @@ import type {
   ShieldClimbPaymentData,
 } from '@/lib/checkout/types';
 import { toPublicCheckoutOrder } from '@/lib/checkout/types';
-import {
-  createAndStoreWallet,
-  updateWalletShieldClimbData,
-} from '@/lib/checkout/wallet-service';
 
 type FinalizeCheckoutInput = {
   sessionId: string;
@@ -129,8 +125,6 @@ export type FinalizeCheckoutDependencies = {
   updateSwellOrder: typeof updateSwellOrder;
   cancelSwellOrder: typeof cancelSwellOrder;
   deleteSwellCheckoutCart: typeof deleteSwellCheckoutCart;
-  createAndStoreWallet: typeof createAndStoreWallet;
-  updateWalletShieldClimbData: typeof updateWalletShieldClimbData;
   createWalletForOrder: typeof createWalletForOrder;
   convertToUsd: typeof convertToUsd;
   buildShieldClimbPaymentUrl: typeof buildShieldClimbPaymentUrl;
@@ -154,6 +148,10 @@ function createAccessKey() {
 
 function createShieldClimbCallbackToken() {
   return crypto.randomUUID() + crypto.randomBytes(8).toString('hex');
+}
+
+function createShieldClimbSessionId(ipnToken: string) {
+  return `shieldclimb:${ipnToken}`;
 }
 
 function buildOrderDescription(lines: CheckoutOrderLine[]) {
@@ -434,8 +432,11 @@ function buildShieldClimbOrderRecord(args: {
   addressIn: string;
   polygonAddressIn: string;
   ipnToken: string;
+  callbackUrl?: string;
   callbackToken?: string;
   redirectUrl: string;
+  expectedValueCoin?: string;
+  paymentCurrency?: string;
   paymentStatus?: string;
   nowIso?: string;
 }): CheckoutOrderRecord {
@@ -448,9 +449,12 @@ function buildShieldClimbOrderRecord(args: {
     addressIn: args.addressIn,
     polygonAddressIn: args.polygonAddressIn,
     ipnToken: args.ipnToken,
+    callbackUrl: args.callbackUrl,
     callbackToken: args.callbackToken,
     status: args.paymentStatus || 'unpaid',
     redirectUrl: args.redirectUrl,
+    expectedValueCoin: args.expectedValueCoin,
+    paymentCurrency: args.paymentCurrency,
     createdAt: now,
     updatedAt: now,
   };
@@ -813,24 +817,12 @@ export function createFinalizeCheckoutSession(
         });
         checkoutOrderId = initializingOrder.orderId;
 
-        const wallet = await dependencies.createAndStoreWallet(orderId);
-
         const callbackUrl = new URL(
           '/api/providers/shieldclimb/callback',
           publicCallbackOrigin,
         );
         callbackUrl.searchParams.set('orderId', orderId);
         callbackUrl.searchParams.set('callbackToken', shieldClimbCallbackToken);
-
-        const scWallet = await dependencies.createWalletForOrder({
-          callbackUrl: callbackUrl.toString(),
-        });
-
-        await dependencies.updateWalletShieldClimbData(wallet.id, {
-          addressIn: scWallet.address_in,
-          polygonAddressIn: scWallet.polygon_address_in,
-          ipnToken: scWallet.ipn_token,
-        });
 
         let paymentAmount = orderTotal;
         if (fiatCurrency !== 'usd') {
@@ -840,6 +832,21 @@ export function createFinalizeCheckoutSession(
           });
           paymentAmount = Number(converted.value_coin);
         }
+
+        if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+          throw apiError.providerUnavailable(
+            'ShieldClimb returned an invalid payment amount.',
+            { provider: 'shieldclimb', operation: 'convert-to-usd' },
+            false,
+          );
+        }
+
+        const expectedValueCoin = paymentAmount.toFixed(2);
+
+        const scWallet = await dependencies.createWalletForOrder({
+          callbackUrl: callbackUrl.toString(),
+        });
+        const shieldClimbSessionId = createShieldClimbSessionId(scWallet.ipn_token);
 
         const redirectUrl = dependencies.buildShieldClimbPaymentUrl({
           addressIn: scWallet.address_in,
@@ -854,7 +861,8 @@ export function createFinalizeCheckoutSession(
             method: manualMethod,
             intent: {
               provider: 'shieldclimb',
-              wallet_id: wallet.id,
+              session_id: shieldClimbSessionId,
+              ipn_token: scWallet.ipn_token,
               status: 'unpaid',
             },
           },
@@ -864,7 +872,11 @@ export function createFinalizeCheckoutSession(
             coupon_code: appliedDiscountCode || null,
             pricing: pricingMetadata,
             shieldclimb: {
-              wallet_id: wallet.id,
+              session_id: shieldClimbSessionId,
+              ipn_token: scWallet.ipn_token,
+              polygon_address_in: scWallet.polygon_address_in,
+              expected_value_coin: expectedValueCoin,
+              payment_currency: 'USD',
               status: 'unpaid',
             },
             affiliate: resolvedAffiliate
@@ -908,12 +920,15 @@ export function createFinalizeCheckoutSession(
             orderTaxTotal,
             orderGrandTotal: orderTotal,
             orderShipmentTotal,
-            walletId: wallet.id,
+            walletId: shieldClimbSessionId,
             addressIn: scWallet.address_in,
             polygonAddressIn: scWallet.polygon_address_in,
             ipnToken: scWallet.ipn_token,
+            callbackUrl: scWallet.callback_url,
             callbackToken: shieldClimbCallbackToken,
             redirectUrl,
+            expectedValueCoin,
+            paymentCurrency: 'USD',
             paymentStatus: 'unpaid',
             nowIso: dependencies.nowIso(),
           }),
@@ -1175,8 +1190,6 @@ export const finalizeCheckoutSession = createFinalizeCheckoutSession({
   updateSwellOrder,
   cancelSwellOrder,
   deleteSwellCheckoutCart,
-  createAndStoreWallet,
-  updateWalletShieldClimbData,
   createWalletForOrder,
   convertToUsd,
   buildShieldClimbPaymentUrl,

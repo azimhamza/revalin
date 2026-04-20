@@ -91,9 +91,14 @@ export type ShieldClimbPaymentData = {
   addressIn: string;
   polygonAddressIn: string;
   ipnToken: string;
+  callbackUrl?: string;
   callbackToken?: string;
   status: string;
   redirectUrl: string;
+  expectedValueCoin?: string;
+  paymentCurrency?: string;
+  coinReceived?: string | null;
+  callbackVerifiedAt?: string;
   swellPaymentId?: string;
   valueCoinReceived?: string | null;
   txidIn?: string | null;
