@@ -26,6 +26,8 @@ export async function syncCheckoutOrderToSwell(
   const manualMethod = getSwellManualPaymentMethod();
 
   await updateSwellOrder(order.swell.orderId, {
+    // Suppress Swell's built-in emails — all emails sent via Loops.
+    $notify: false,
     billing: {
       method: manualMethod,
       intent: {
@@ -106,6 +108,8 @@ export async function syncShieldClimbOrderToSwell(order: CheckoutOrderRecord) {
   const manualMethod = getSwellManualPaymentMethod();
 
   await updateSwellOrder(order.swell.orderId, {
+    // Suppress Swell's built-in emails — all emails sent via Loops.
+    $notify: false,
     billing: {
       method: manualMethod,
       intent: {

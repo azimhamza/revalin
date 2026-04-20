@@ -25,7 +25,7 @@ const TABS: { key: TabKey; label: string; devOnly?: boolean }[] = [
   { key: 'handed_to_carrier', label: 'Shipped' },
   { key: 'error', label: 'Errors' },
   { key: 'all', label: 'All' },
-  { key: 'pending', label: 'Pending Payment', devOnly: true },
+  { key: 'pending', label: 'Pending Payment' },
 ];
 
 function formatAge(createdAt: string) {

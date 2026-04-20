@@ -90,7 +90,9 @@ export function buildShieldClimbPaymentUrl(args: {
   url.searchParams.set('amount', args.amount.toFixed(2));
   url.searchParams.set('email', args.email);
   url.searchParams.set('currency', args.currency.toUpperCase());
-  url.searchParams.set('domain', branding.domain);
+  // NOTE: Do NOT set the `domain` parameter here — the Cloudflare Worker
+  // proxy already appends `domain=payment.revalin.ca` to every request.
+  // Adding it here would create a duplicate parameter.
 
   if (branding.logo) url.searchParams.set('logo', branding.logo);
   if (branding.background) url.searchParams.set('background', branding.background);

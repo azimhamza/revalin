@@ -26,7 +26,7 @@ export default async function FulfillmentPage({
     'handed_to_carrier',
     'error',
     'all',
-    ...(isDev ? ['pending'] as const : []),
+    'pending',
   ];
   const status =
     validStatuses.find((s) => s === statusParam) || 'label_ready';

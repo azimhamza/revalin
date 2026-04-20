@@ -484,7 +484,10 @@ export function createPaymentLifecycle(
     return (
       step === 'swellPayment' ||
       step === 'paymentCompletedEvent' ||
-      step === 'purchaseTelemetry'
+      step === 'purchaseTelemetry' ||
+      // Email failures must never block fulfillment (label purchase, operations notification).
+      step === 'confirmationEmail' ||
+      step === 'welcomeDiscount'
     );
   }
 

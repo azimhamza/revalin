@@ -815,6 +815,8 @@ export async function convertSwellCartToOrder(cartId: string) {
   return swellBackendRequest<SwellBackendOrder>("POST", "/orders", {
     body: {
       cart_id: cartId,
+      // Suppress Swell's built-in emails — all emails sent via Loops.
+      $notify: false,
     },
     timeoutMs: CHECKOUT_SWELL_TIMEOUT_MS,
   });
@@ -836,6 +838,8 @@ export async function cancelSwellOrder(orderId: string, reason?: string) {
       body: {
         canceled: true,
         status: "canceled",
+        // Suppress Swell's built-in emails — all emails sent via Loops.
+        $notify: false,
         metadata: {
           cancel_reason: reason || "Payment provider setup failed.",
         },
@@ -857,7 +861,12 @@ export async function createSwellOrderPayment(body: {
   captured?: boolean;
 }) {
   return swellBackendRequest<SwellBackendPayment>("POST", "/payments", {
-    body,
+    body: {
+      ...body,
+      // Suppress Swell's built-in order emails — all transactional emails
+      // (confirmation, shipped, etc.) are sent via Loops instead.
+      $notify: false,
+    },
     timeoutMs: CHECKOUT_SWELL_TIMEOUT_MS,
   });
 }
@@ -1025,6 +1034,10 @@ export async function createSwellShipment(body: {
   }>;
 }) {
   return swellBackendRequest<SwellBackendShipment>("POST", "/shipments", {
-    body,
+    body: {
+      ...body,
+      // Suppress Swell's built-in emails — all emails sent via Loops.
+      $notify: false,
+    },
   });
 }
