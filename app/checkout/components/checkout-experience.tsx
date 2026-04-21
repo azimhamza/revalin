@@ -49,6 +49,7 @@ type CheckoutApiSession = {
   sessionId: string;
   sessionKey: string;
   version: number;
+  expiresAt?: string | null;
 };
 
 type CheckoutApiSessionState = CheckoutApiSession & {
@@ -228,6 +229,10 @@ function parseCheckoutDraft(rawDraft: string | null): CheckoutDraft | null {
               sessionId: parsed.apiSession.sessionId,
               sessionKey: parsed.apiSession.sessionKey,
               version: parsed.apiSession.version,
+              expiresAt:
+                typeof parsed.apiSession.expiresAt === 'string'
+                  ? parsed.apiSession.expiresAt
+                  : null,
             }
           : null,
     };
@@ -256,11 +261,26 @@ function toCheckoutApiSession(value: unknown): CheckoutApiSession | null {
     return null;
   }
 
+  const state =
+    'state' in value && value.state && typeof value.state === 'object'
+      ? (value.state as { expiresAt?: unknown })
+      : null;
+
   return {
     sessionId,
     sessionKey,
     version,
+    expiresAt: typeof state?.expiresAt === 'string' ? state.expiresAt : null,
   };
+}
+
+function isCheckoutApiSessionExpired(session: CheckoutApiSession | null | undefined) {
+  if (!session?.expiresAt) {
+    return false;
+  }
+
+  const expiresAt = new Date(session.expiresAt).getTime();
+  return Number.isFinite(expiresAt) && expiresAt <= Date.now();
 }
 
 function isDraftOutOfDateResponse(payload: unknown) {
@@ -279,6 +299,20 @@ function isDraftOutOfDateResponse(payload: unknown) {
       details &&
       typeof details === 'object' &&
       (details as { code?: unknown }).code === 'draft_out_of_date',
+  );
+}
+
+function isExpiredCheckoutSessionResponse(payload: unknown) {
+  if (!payload || typeof payload !== 'object' || !('error' in payload)) {
+    return false;
+  }
+
+  const error = (payload as { error?: unknown }).error;
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      (error as { code?: unknown }).code === 'conflict' &&
+      (error as { message?: unknown }).message === 'Checkout session expired.',
   );
 }
 
@@ -997,11 +1031,15 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       const checkoutDraft = parseCheckoutDraft(window.localStorage.getItem(CHECKOUT_DRAFT_KEY));
 
       if (checkoutDraft) {
+        const hydratedApiSession = isCheckoutApiSessionExpired(checkoutDraft.apiSession)
+          ? null
+          : checkoutDraft.apiSession;
+
         setShippingAddress(checkoutDraft.shippingAddress);
         setPaymentMethod(checkoutDraft.paymentMethod);
         setPaymentCurrency(checkoutDraft.paymentCurrency);
         setSourceWalletAddress(checkoutDraft.sourceWalletAddress);
-        setCheckoutApiSession(checkoutDraft.apiSession);
+        setCheckoutApiSession(hydratedApiSession);
         const hydratedDiscountCode = initialDiscountCode || checkoutDraft.discountCode;
         const hydratedAppliedDiscount =
           checkoutDraft.appliedDiscount?.code === hydratedDiscountCode ? checkoutDraft.appliedDiscount : null;
@@ -1331,25 +1369,23 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     ],
   );
 
-  const ensureCheckoutApiSession = useCallback(async () => {
-    if (checkoutApiSession) {
-      return checkoutApiSession;
-    }
-
+  const createCheckoutApiSession = useCallback(async (
+    requestBody: ReturnType<typeof buildCheckoutSessionPayload>,
+  ) => {
     const response = await fetch('/api/checkout/v2/sessions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(buildCheckoutSessionPayload()),
+      body: JSON.stringify(requestBody),
     });
-    const payload = await readJsonSafely(response);
+    const responsePayload = await readJsonSafely(response);
 
     if (!response.ok) {
-      throw new Error(getApiErrorMessage(payload, 'Unable to create checkout session.'));
+      throw new Error(getApiErrorMessage(responsePayload, 'Unable to create checkout session.'));
     }
 
-    const data = getApiData<CheckoutApiSessionState>(payload);
+    const data = getApiData<CheckoutApiSessionState>(responsePayload);
     const nextSession = toCheckoutApiSession(data);
 
     if (!nextSession) {
@@ -1358,7 +1394,21 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
     setCheckoutApiSession(nextSession);
     return nextSession;
-  }, [buildCheckoutSessionPayload, checkoutApiSession]);
+  }, []);
+
+  const ensureCheckoutApiSession = useCallback(async (
+    payload: ReturnType<typeof buildCheckoutSessionPayload> = buildCheckoutSessionPayload(),
+  ) => {
+    if (checkoutApiSession && !isCheckoutApiSessionExpired(checkoutApiSession)) {
+      return checkoutApiSession;
+    }
+
+    if (checkoutApiSession) {
+      setCheckoutApiSession(null);
+    }
+
+    return createCheckoutApiSession(payload);
+  }, [buildCheckoutSessionPayload, checkoutApiSession, createCheckoutApiSession]);
 
   const refreshCheckoutApiSession = useCallback(
     async (session: CheckoutApiSession, signal?: AbortSignal) => {
@@ -1416,6 +1466,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
       let next = await postReprice(args.session);
 
+      if (!next.response.ok && isExpiredCheckoutSessionResponse(next.payload) && !args.signal?.aborted) {
+        const freshSession = await createCheckoutApiSession(args.payload);
+        next = await postReprice(freshSession);
+      }
+
       if (!next.response.ok && isDraftOutOfDateResponse(next.payload) && !args.signal?.aborted) {
         const currentSession = await refreshCheckoutApiSession(args.session, args.signal);
         next = await postReprice(currentSession);
@@ -1458,7 +1513,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         quote: data.quote,
       };
     },
-    [refreshCheckoutApiSession],
+    [createCheckoutApiSession, refreshCheckoutApiSession],
   );
 
   const applyDiscountCode = useCallback(async (rawCode: string) => {
