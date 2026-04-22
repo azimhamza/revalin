@@ -77,7 +77,7 @@ export function BulkPricing({ product }: { product: Product }) {
           return (
             <div
               key={row.id}
-              className={`flex items-center justify-between gap-3 rounded-md px-3 py-2.5 transition-colors ${
+              className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md px-3 py-2.5 transition-colors ${
                 isActive
                   ? 'bg-[#0B2E2F]/[0.08] ring-1 ring-[#0B2E2F]/[0.2]'
                   : isHighlighted
@@ -102,7 +102,7 @@ export function BulkPricing({ product }: { product: Product }) {
                 )}
               </div>
 
-              <div className="flex items-baseline gap-2 shrink-0">
+              <div className="flex items-baseline gap-2 shrink-0 ml-auto">
                 {row.discount && (
                   <span className="text-xs font-medium text-[#0B2E2F]/50">
                     {row.discount}% off
