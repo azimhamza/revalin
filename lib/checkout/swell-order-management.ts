@@ -826,8 +826,16 @@ export async function updateSwellOrder(
   orderId: string,
   body: Record<string, unknown>,
 ) {
+  const payload = Object.prototype.hasOwnProperty.call(body, '$notify')
+    ? body
+    : {
+        ...body,
+        // Suppress Swell's built-in emails unless a caller explicitly opts in.
+        $notify: false,
+      };
+
   return swellBackendRequest<SwellBackendOrder>("PUT", `/orders/${orderId}`, {
-    body,
+    body: payload,
     timeoutMs: CHECKOUT_SWELL_TIMEOUT_MS,
   });
 }

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
-import { ArrowRight, CheckCircle2, Copy, CreditCard, Landmark, Loader2, RefreshCw, ShieldCheck, Tag, Truck, Wallet, X } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Copy, CreditCard, Landmark, Lock, Loader2, RefreshCw, ShieldCheck, Tag, Truck, UserCheck, Wallet, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { ReactNode } from 'react';
 import { toast } from 'sonner';
@@ -12,6 +12,12 @@ import { useCart } from '@/components/cart/cart-context';
 import { AddToCartButton } from '@/components/cart/add-to-cart';
 import { VariantOptionSelectorComponent, useProductImages } from '@/components/products/variant-selector';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -770,6 +776,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const [isLoadingOrder, setIsLoadingOrder] = useState(false);
   const [isLoadingQuote, setIsLoadingQuote] = useState(false);
   const [isCreatingPayment, setIsCreatingPayment] = useState(false);
+  const [isCardCheckoutOpen, setIsCardCheckoutOpen] = useState(false);
   const [isRefreshingStatus, setIsRefreshingStatus] = useState(false);
   const [isReleasingOrder, setIsReleasingOrder] = useState(false);
   const [isDraftHydrated, setIsDraftHydrated] = useState(false);
@@ -1719,9 +1726,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     return () => window.clearTimeout(timeout);
   }, [activeOrder, isLoadingQuote, quoteRequestSignature, requestQuote, shippingAddress]);
 
-  const handleCreatePayment = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
+  const submitCheckoutPayment = useCallback(async () => {
     if (!selectedShippingServiceId) {
       setError('Select a shipping method before creating the payment.');
       return;
@@ -1795,10 +1800,47 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       updateCheckoutUrl(data.order.orderId, data.accessKey);
     } catch (submitError: unknown) {
       setError(submitError instanceof Error ? submitError.message : 'Unable to create payment.');
+      setIsCardCheckoutOpen(false);
     } finally {
       setIsCreatingPayment(false);
     }
+  }, [
+    buildCheckoutSessionPayload,
+    ensureCheckoutApiSession,
+    selectedShippingServiceId,
+    syncCheckoutUrlImmediately,
+    updateCheckoutUrl,
+  ]);
+
+  const handleCreatePayment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (paymentMethod === 'card') {
+      // Show info dialog first — useEffect below triggers the actual payment
+      setIsCardCheckoutOpen(true);
+      return;
+    }
+
+    await submitCheckoutPayment();
   };
+
+  const cardCheckoutFired = useRef(false);
+
+  useEffect(() => {
+    if (!isCardCheckoutOpen) {
+      cardCheckoutFired.current = false;
+      return;
+    }
+    if (cardCheckoutFired.current) return;
+    cardCheckoutFired.current = true;
+
+    // Give the user at least 5 seconds to read the info before redirecting
+    const timer = window.setTimeout(() => {
+      void submitCheckoutPayment();
+    }, 5000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCardCheckoutOpen]);
 
   const refreshStatus = async () => {
     if (!pollingId) return;
@@ -2046,7 +2088,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                   ))}
                 </div>
               </div>
-            ) : activeOrder ? (
+            ) : activeOrder && paymentStatus !== 'finished' && paymentStatus !== 'paid' ? (
               <div className="rounded-[26px] border border-border/70 bg-card p-4 text-sm text-foreground/65">
                 Need to make changes? Use{' '}
                 <span className="font-semibold text-foreground">Edit order</span>{' '}
@@ -2339,12 +2381,6 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                       </div>
                     ) : (
                       <div className="mt-3 space-y-2">
-                        <div className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-background/60 px-3 py-2.5">
-                          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[#0B2E2F]" />
-                          <p className="text-xs text-foreground/60">
-                            Enter your card details on the next page. We use a secure crypto-settlement layer behind the scenes to keep processing fees low &mdash; you just pay normally with your card, no wallets or crypto experience required.
-                          </p>
-                        </div>
                         <p className="px-1 text-xs text-foreground/45">
                           Want to save 5%? Choose <button type="button" onClick={() => setPaymentMethod('crypto')} className="font-semibold text-[#0B2E2F] underline underline-offset-2">Direct Crypto</button> above and pay from your wallet.
                         </p>
@@ -2411,6 +2447,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                           <Loader2 className="size-5 animate-spin" />
                           Placing order...
                         </>
+                      ) : paymentMethod === 'card' ? (
+                        <>
+                          <ShieldCheck className="size-5" />
+                          Secure checkout
+                        </>
                       ) : (
                         <>
                           Place order
@@ -2418,11 +2459,15 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                         </>
                       )}
                     </Button>
-                    <p className="mt-3 text-center text-xs text-foreground/50">
-                      {paymentMethod === 'card'
-                        ? 'You\u2019ll complete your card payment on a secure checkout page in the next step.'
-                        : `You\u2019ll receive a ${formatTicker(paymentCurrency)} deposit address in the next step.${summaryCryptoDiscountAmount ? ` Direct crypto savings of ${formatPrice(summaryCryptoDiscountAmount, summaryCurrencyCode)} applied automatically.` : ' 5% discount applied automatically.'}`}
-                    </p>
+                    {paymentMethod === 'card' ? (
+                      <p className="mt-3 text-center text-xs text-foreground/50">
+                        Pay with your card as normal on a secure hosted page. Transaction settles via blockchain for speed.
+                      </p>
+                    ) : (
+                      <p className="mt-3 text-center text-xs text-foreground/50">
+                        You&apos;ll receive a {formatTicker(paymentCurrency)} deposit address in the next step.{summaryCryptoDiscountAmount ? ` Direct crypto savings of ${formatPrice(summaryCryptoDiscountAmount, summaryCurrencyCode)} applied automatically.` : ' 5% discount applied automatically.'}
+                      </p>
+                    )}
                   </div>
                 </div>
               </form>
@@ -2597,19 +2642,28 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                         {/* ── ShieldClimb (card) payment view ── */}
                         {shieldClimbPayment ? (
                           <>
-                            <div className="rounded-2xl border border-[#0B2E2F]/15 bg-white px-4 py-4">
-                              <p className="text-sm text-foreground/65 mb-3">
-                                Complete your payment on the secure checkout page, or switch payment methods without creating a second order.
-                              </p>
+                            <div className="rounded-2xl border border-[#0B2E2F]/15 bg-white px-5 py-5">
+                              <div className="flex items-center gap-3 mb-4">
+                                <div className="flex size-9 items-center justify-center rounded-full bg-[#0B2E2F]">
+                                  <CreditCard className="size-4 text-[#F4F1EA]" />
+                                </div>
+                                <div>
+                                  <p className="text-sm font-semibold">Complete your card payment</p>
+                                  <p className="text-xs text-foreground/50">Secure hosted checkout</p>
+                                </div>
+                              </div>
                               <a
                                 href={shieldClimbPayment.redirectUrl}
-                                className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors"
+                                className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl px-5 py-3 text-sm font-semibold transition-colors"
                                 style={{ backgroundColor: '#0B2E2F', color: '#F4F1EA' }}
                               >
-                                <CreditCard className="size-4" />
-                                Complete payment
+                                <ShieldCheck className="size-4" />
+                                Pay now
                                 <ArrowRight className="size-4" />
                               </a>
+                              <p className="mt-3 text-center text-xs leading-4 text-foreground/45">
+                                Your card is charged normally. The transaction settles through blockchain for speed and security.
+                              </p>
                             </div>
 
                             <div className="grid gap-3 md:grid-cols-2">
@@ -2736,6 +2790,57 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
           </section>
         </div>
       </div>
+
+      {/* ── Card checkout info overlay ── */}
+      <Dialog open={isCardCheckoutOpen} onOpenChange={() => {}}>
+        <DialogContent className="max-w-[380px] gap-0 rounded-[26px] border border-border/70 bg-card p-0 shadow-[0_20px_48px_rgba(11,46,47,0.08)] [&>button]:hidden">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Secure checkout</DialogTitle>
+          </DialogHeader>
+
+          {/* Header */}
+          <div className="p-6 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 items-center justify-center rounded-full bg-[#0B2E2F]">
+                <Lock className="size-[18px] text-[#F4F1EA]" />
+              </div>
+              <div>
+                <p className="text-[15px] font-semibold tracking-tight text-[#0B2E2F]">Connecting to payment</p>
+                <p className="text-xs text-foreground/50">Secure hosted checkout</p>
+              </div>
+            </div>
+            <div className="mt-4 rounded-xl border border-border/60 bg-background px-4 py-3.5">
+              <p className="text-[13px] leading-5 text-foreground/70">You&apos;ll pay with your card as normal. The transaction is settled through blockchain, which keeps processing <span className="font-medium text-foreground">fast and fees low</span>. Nothing extra is needed from you.</p>
+            </div>
+          </div>
+
+          {/* Info items */}
+          <div className="px-6 pb-5">
+            <div className="divide-y divide-border/50 rounded-xl border border-border/60 bg-background">
+              <div className="flex items-start gap-3 px-4 py-3.5">
+                <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F]">
+                  <CreditCard className="size-3 text-[#F4F1EA]" />
+                </div>
+                <p className="text-[13px] leading-5 text-foreground/70">Your card details stay with the payment provider and are <span className="font-medium text-foreground">never stored by Revalin</span>.</p>
+              </div>
+              <div className="flex items-start gap-3 px-4 py-3.5">
+                <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F]">
+                  <UserCheck className="size-3 text-[#F4F1EA]" />
+                </div>
+                <p className="text-[13px] leading-5 text-foreground/70">The provider may ask to <span className="font-medium text-foreground">verify your identity</span> — this is a standard security step.</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Loading footer */}
+          <div className="border-t border-border/50 px-6 py-4">
+            <div className="flex items-center justify-center gap-2.5">
+              <Loader2 className="size-4 animate-spin text-[#0B2E2F]" />
+              <span className="text-sm font-medium text-[#0B2E2F]">Setting up your payment&hellip;</span>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

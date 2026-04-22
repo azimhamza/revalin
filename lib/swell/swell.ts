@@ -985,7 +985,7 @@ function mapSwellProduct(product: SwellApiProduct, fallbackCurrencyCode = DEFAUL
                 node: {
                   id: buildVariantId(productId),
                   title: 'Default',
-                  sku: undefined,
+                  sku: product.sku || undefined,
                   price: {
                     amount: toAmountString(basePrice),
                     currencyCode,

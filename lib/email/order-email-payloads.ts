@@ -32,7 +32,11 @@ function buildOrderProductName(line: CheckoutOrderRecord["lines"][number]) {
 function buildOrderItems(order: CheckoutOrderRecord) {
   return order.lines.map((line) => ({
     product_name: buildOrderProductName(line),
-    sku_number: line.skuNumber || "",
+    sku_number:
+      line.skuNumber?.trim() ||
+      line.productHandle?.trim() ||
+      line.merchandiseId?.trim() ||
+      buildOrderProductName(line),
     quantity: line.quantity,
     unit_price: formatCurrency(line.unitPrice.amount, order.currencyCode),
     subtotal: formatCurrency(line.lineTotal.amount, order.currencyCode),

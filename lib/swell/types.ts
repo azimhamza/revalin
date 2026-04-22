@@ -162,6 +162,7 @@ export interface SwellApiProduct {
   id?: string;
   name?: string;
   slug?: string;
+  sku?: string;
   description?: string;
   content?: string;
   price?: number | string;
