@@ -101,6 +101,7 @@ type CheckoutDraft = {
   discountCode: string;
   appliedDiscount: AppliedDiscount | null;
   apiSession: CheckoutApiSession | null;
+  cartSignature: string | null;
 };
 
 const CHECKOUT_DRAFT_KEY = 'revalin_checkout_draft';
@@ -241,6 +242,8 @@ function parseCheckoutDraft(rawDraft: string | null): CheckoutDraft | null {
                   : null,
             }
           : null,
+      cartSignature:
+        typeof parsed.cartSignature === 'string' ? parsed.cartSignature : null,
     };
   } catch {
     return null;
@@ -320,6 +323,35 @@ function isExpiredCheckoutSessionResponse(payload: unknown) {
       (error as { code?: unknown }).code === 'conflict' &&
       (error as { message?: unknown }).message === 'Checkout session expired.',
   );
+}
+
+function buildComparableCheckoutLinesSignature(
+  args:
+    | {
+        currencyCode: string;
+        lines: Array<{
+          merchandiseId: string;
+          quantity: number;
+          lineTotal?: { amount: string } | null;
+        }>;
+      }
+    | null
+    | undefined,
+) {
+  if (!args) {
+    return 'empty';
+  }
+
+  return JSON.stringify({
+    currencyCode: args.currencyCode,
+    lines: args.lines
+      .map((line) => ({
+        merchandiseId: line.merchandiseId,
+        quantity: line.quantity,
+        lineTotal: line.lineTotal?.amount || '',
+      }))
+      .sort((left, right) => left.merchandiseId.localeCompare(right.merchandiseId)),
+  });
 }
 
 function PaymentBrandIcons({ className }: { className?: string }) {
@@ -813,7 +845,21 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         <StaticOrderLineCard key={line.id} line={line} currencyCode={activeOrder.currencyCode} />
       ))
     : cart?.lines.map(item => <CartItemCard key={item.id} item={item} onCloseCart={() => {}} />);
-  const cartSignature = `${cart?.totalQuantity ?? 0}:${cart?.cost.subtotalAmount.amount ?? '0'}`;
+  const cartSignature = useMemo(() => {
+    if (cart === undefined) return 'loading';
+    if (!cart || cart.lines.length === 0) return 'empty';
+
+    return JSON.stringify({
+      currencyCode: cart.cost.totalAmount.currencyCode,
+      lines: cart.lines
+        .map(item => ({
+          merchandiseId: item.merchandise.id,
+          quantity: item.quantity,
+          lineTotal: item.cost.totalAmount.amount,
+        }))
+        .sort((left, right) => left.merchandiseId.localeCompare(right.merchandiseId)),
+    });
+  }, [cart]);
   const summaryItemCount = activeOrder
     ? activeOrder.lines.reduce((total, line) => total + line.quantity, 0)
     : cart?.totalQuantity || 0;
@@ -1046,9 +1092,15 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       const checkoutDraft = parseCheckoutDraft(window.localStorage.getItem(CHECKOUT_DRAFT_KEY));
 
       if (checkoutDraft) {
+        const canReuseDraftPricing =
+          cart !== undefined &&
+          Boolean(checkoutDraft.cartSignature) &&
+          checkoutDraft.cartSignature === cartSignature;
         const hydratedApiSession = isCheckoutApiSessionExpired(checkoutDraft.apiSession)
           ? null
-          : checkoutDraft.apiSession;
+          : canReuseDraftPricing
+            ? checkoutDraft.apiSession
+            : null;
 
         setShippingAddress(checkoutDraft.shippingAddress);
         setPaymentMethod(checkoutDraft.paymentMethod);
@@ -1057,7 +1109,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         setCheckoutApiSession(hydratedApiSession);
         const hydratedDiscountCode = initialDiscountCode || checkoutDraft.discountCode;
         const hydratedAppliedDiscount =
-          checkoutDraft.appliedDiscount?.code === hydratedDiscountCode ? checkoutDraft.appliedDiscount : null;
+          canReuseDraftPricing && checkoutDraft.appliedDiscount?.code === hydratedDiscountCode
+            ? checkoutDraft.appliedDiscount
+            : null;
 
         setDiscountCode(hydratedDiscountCode);
         setAppliedDiscount(hydratedAppliedDiscount);
@@ -1076,6 +1130,32 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       setIsDraftHydrated(true);
     }
   }, [initialDiscountCode]);
+
+  useEffect(() => {
+    if (!isDraftHydrated || activeOrder || cart === undefined) return;
+    if (!checkoutApiSession && !appliedDiscount) return;
+
+    try {
+      const checkoutDraft = parseCheckoutDraft(window.localStorage.getItem(CHECKOUT_DRAFT_KEY));
+      if (!checkoutDraft) return;
+      if (checkoutDraft.cartSignature && checkoutDraft.cartSignature === cartSignature) return;
+
+      setCheckoutApiSession(null);
+      setAppliedDiscount(null);
+      setDiscountError(null);
+      setShouldAutoApplyDiscount(Boolean(discountCode.trim()));
+    } catch {
+      // Best effort only.
+    }
+  }, [
+    activeOrder,
+    appliedDiscount,
+    cart,
+    cartSignature,
+    checkoutApiSession,
+    discountCode,
+    isDraftHydrated,
+  ]);
 
   // Auto-fill from saved user address (if authenticated and form is at defaults)
   useEffect(() => {
@@ -1141,6 +1221,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         discountCode,
         appliedDiscount,
         apiSession: checkoutApiSession,
+        cartSignature: cartSignature === 'loading' ? null : cartSignature,
       };
 
       window.localStorage.setItem(CHECKOUT_DRAFT_KEY, JSON.stringify(nextDraft));
@@ -1157,6 +1238,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     paymentMethod,
     shippingAddress,
     sourceWalletAddress,
+    cartSignature,
   ]);
 
   useEffect(() => {
@@ -1176,12 +1258,20 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       setQuote(null);
       setSelectedShippingServiceId('');
       lastQuoteRequestSignature.current = null;
+      setCheckoutApiSession(null);
+      setAppliedDiscount(null);
+      setDiscountError(null);
+      setShouldAutoApplyDiscount(Boolean(discountCode.trim()));
     }
-  }, [activeOrder, cartSignature]);
+  }, [activeOrder, cartSignature, discountCode]);
 
   useEffect(() => {
     if (!orderId || !accessKey) {
       setCheckoutSession(null);
+      return;
+    }
+
+    if (cart === undefined) {
       return;
     }
 
@@ -1205,6 +1295,47 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
         const normalizedPaymentStatus = data.order.payment.status.toLowerCase();
         if (INACTIVE_CHECKOUT_RESTORE_STATUSES.has(normalizedPaymentStatus)) {
+          setCheckoutSession(null);
+          setQuote(null);
+          setSelectedShippingServiceId('');
+          setError(null);
+          syncCheckoutUrlImmediately();
+          updateCheckoutUrl();
+          return;
+        }
+
+        const liveCartSignature = buildComparableCheckoutLinesSignature(
+          cart && cart.lines.length > 0
+            ? {
+                currencyCode: cart.cost.totalAmount.currencyCode,
+                lines: cart.lines.map((line) => ({
+                  merchandiseId: line.merchandise.id,
+                  quantity: line.quantity,
+                  lineTotal: {
+                    amount: line.cost.totalAmount.amount,
+                  },
+                })),
+              }
+            : null,
+        );
+        const restoredOrderSignature = buildComparableCheckoutLinesSignature({
+          currencyCode: data.order.currencyCode,
+          lines: data.order.lines.map((line) => ({
+            merchandiseId: line.merchandiseId,
+            quantity: line.quantity,
+            lineTotal: {
+              amount: line.lineTotal.amount,
+            },
+          })),
+        });
+
+        if (
+          cart &&
+          cart.lines.length > 0 &&
+          liveCartSignature !== restoredOrderSignature &&
+          normalizedPaymentStatus !== 'finished' &&
+          normalizedPaymentStatus !== 'paid'
+        ) {
           setCheckoutSession(null);
           setQuote(null);
           setSelectedShippingServiceId('');
@@ -1244,7 +1375,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     return () => {
       cancelled = true;
     };
-  }, [accessKey, orderId]);
+  }, [accessKey, cart, orderId]);
 
   const pollingId = checkoutSession?.order.payment ? getPollingId(checkoutSession.order.payment) : undefined;
   const autoPollingId =
