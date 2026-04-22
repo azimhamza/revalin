@@ -458,6 +458,14 @@ const NOWPAYMENTS_FAILURE_STATUSES = new Set([
   'replaced',
 ]);
 
+const INACTIVE_CHECKOUT_RESTORE_STATUSES = new Set([
+  'failed',
+  'expired',
+  'refunded',
+  'cancelled',
+  'replaced',
+]);
+
 function describeNowPaymentsFailure(status: string) {
   const normalized = status.toLowerCase();
 
@@ -1194,6 +1202,17 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         }
 
         if (cancelled) return;
+
+        const normalizedPaymentStatus = data.order.payment.status.toLowerCase();
+        if (INACTIVE_CHECKOUT_RESTORE_STATUSES.has(normalizedPaymentStatus)) {
+          setCheckoutSession(null);
+          setQuote(null);
+          setSelectedShippingServiceId('');
+          setError(null);
+          syncCheckoutUrlImmediately();
+          updateCheckoutUrl();
+          return;
+        }
 
         setCheckoutSession({ accessKey, order: data.order });
         setShippingAddress(data.order.shippingAddress);

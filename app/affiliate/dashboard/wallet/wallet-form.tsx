@@ -238,13 +238,13 @@ function WalletFormContent({
           className={`${affiliateInsetClass} px-3 py-3 text-[11px] leading-4 text-[#0B2E2F]/62`}
         >
           {formState.payoutMethod === CRYPTO_PAYOUT_METHOD
-            ? "Crypto payouts do not carry the 5% payout fee. Use a Polygon wallet you control that can receive USDC."
-            : "ACH bank transfers carry a 5% payout fee because Revalin has to move funds out of the crypto payout account and absorb bank transfer and withdrawal fees."}
+            ? "Use a Polygon wallet you control that can receive USDC on Polygon."
+            : "Enter the bank account you want us to use for ACH payouts."}
         </div>
       </div>
 
       {formState.payoutMethod === CRYPTO_PAYOUT_METHOD ? (
-        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-start">
+        <div className="mt-3 space-y-2">
           <div className="space-y-2">
             <Label
               htmlFor="wallet"
@@ -266,13 +266,6 @@ function WalletFormContent({
               pattern="^0x[a-fA-F0-9]{40}$"
               className={`${affiliateFieldClass} font-mono text-xs`}
             />
-          </div>
-
-          <div
-            className={`${affiliateInsetClass} px-3 py-3 text-[11px] leading-4 text-[#0B2E2F]/62`}
-          >
-            Use a Polygon wallet that can receive USDC. Crypto payouts do not
-            incur the ACH fee.
           </div>
         </div>
       ) : (
@@ -404,11 +397,7 @@ function WalletFormContent({
           >
             <Landmark className="mt-0.5 size-4 shrink-0 text-[#0B2E2F]" />
             <div className="space-y-1">
-              <p>
-                ACH payouts incur a 5% payout fee because we have to withdraw
-                funds from our crypto payout account and cover bank transfer and
-                withdrawal fees. Crypto payouts do not have this fee.
-              </p>
+              <p>Routing and account numbers are encrypted when stored.</p>
               <p>{achDetailsHint}</p>
             </div>
           </div>

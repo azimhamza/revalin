@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Clock, ExternalLink, Package, Truck } from 'lucide-react';
 import type { CheckoutOrderPublic } from '@/lib/checkout/types';
@@ -53,6 +54,40 @@ const STEPS: { key: OrderStatus; label: string; icon: typeof Package }[] = [
   { key: 'delivered', label: 'Delivered', icon: CheckCircle2 },
 ];
 
+const INACTIVE_PAYMENT_STATUSES = new Set([
+  'failed',
+  'expired',
+  'refunded',
+  'cancelled',
+  'replaced',
+]);
+
+function isInactivePaymentStatus(status: string) {
+  return INACTIVE_PAYMENT_STATUSES.has(status.toLowerCase());
+}
+
+function describeInactivePaymentStatus(status: string) {
+  const normalized = status.toLowerCase();
+
+  if (normalized === 'replaced') {
+    return 'This payment request was replaced by a newer checkout. Start a new checkout to generate a fresh payment link.';
+  }
+
+  if (normalized === 'cancelled') {
+    return 'This payment request was cancelled before payment completed. Start a new checkout to continue.';
+  }
+
+  if (normalized === 'expired') {
+    return 'This payment request expired before payment completed. Start a new checkout to generate a fresh payment link.';
+  }
+
+  if (normalized === 'refunded') {
+    return 'This payment request was refunded and is no longer active. Start a new checkout if you still want to place the order.';
+  }
+
+  return 'This payment request is no longer active. Start a new checkout to create a fresh payment link.';
+}
+
 function StatusTimeline({ currentStatus }: { currentStatus: OrderStatus }) {
   const currentIdx = STEPS.findIndex(s => s.key === currentStatus);
 
@@ -103,7 +138,9 @@ function StatusTimeline({ currentStatus }: { currentStatus: OrderStatus }) {
 export function OrderStatusView({ initialOrder, accessKey }: Props) {
   const [order, setOrder] = useState<CheckoutOrderPublic>(initialOrder);
   const status = deriveStatus(order);
+  const normalizedPaymentStatus = order.payment.status.toLowerCase();
   const isPaid = order.payment.status === 'finished' || order.payment.status === 'paid';
+  const isInactive = isInactivePaymentStatus(order.payment.status);
   const orderDiscounts = getCheckoutDiscounts({
     currencyCode: order.currencyCode,
     discounts: order.totals.discounts,
@@ -144,7 +181,11 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
           {order.swell.orderNumber || order.orderId}
         </h1>
         <p className="mt-1 text-sm text-[#0B2E2F]/60">
-          {isPaid ? 'Thank you for your order.' : 'Awaiting payment confirmation.'}
+          {isPaid
+            ? 'Thank you for your order.'
+            : isInactive
+              ? 'This payment request is no longer active.'
+              : 'Awaiting payment confirmation.'}
         </p>
       </div>
 
@@ -154,7 +195,29 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
           <StatusTimeline currentStatus={status} />
         </div>
 
-        {!isPaid ? (
+        {isInactive ? (
+          <div className="mt-4 rounded-xl border border-[#B42318]/15 bg-[#FEF3F2] px-4 py-3.5 text-sm text-[#912018]">
+            <div className="flex items-start gap-2.5">
+              <Clock className="mt-0.5 size-4 shrink-0" />
+              <div>
+                <p className="font-semibold">
+                  {normalizedPaymentStatus === 'replaced'
+                    ? 'This payment request was replaced.'
+                    : 'This payment request is inactive.'}
+                </p>
+                <p className="mt-1 leading-6">
+                  {describeInactivePaymentStatus(order.payment.status)}
+                </p>
+                <Link
+                  href={`/checkout?retry=${encodeURIComponent(order.orderId)}&key=${encodeURIComponent(accessKey)}`}
+                  className="mt-3 inline-flex items-center rounded-xl bg-[#0B2E2F] px-4 py-2.5 text-sm font-semibold text-[#F4F1EA] transition-colors hover:bg-[#0B2E2F]/90"
+                >
+                  Start new checkout
+                </Link>
+              </div>
+            </div>
+          </div>
+        ) : !isPaid ? (
           <div className="mt-4 flex items-center gap-2 rounded-xl bg-amber-50 px-3.5 py-2.5 text-sm text-amber-900">
             <Clock className="size-4 shrink-0" />
             <p>Payment is still being processed. This page will update automatically.</p>

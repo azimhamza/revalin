@@ -1,7 +1,8 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, ne, notInArray, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { checkoutOrders } from '@/lib/db/schema';
 import type { CheckoutOrderPayment, CheckoutOrderProcessing, CheckoutOrderRecord, FulfillmentStatus } from '@/lib/checkout/types';
+import { SHIELDCLIMB_TERMINAL_STATUSES, TERMINAL_PAYMENT_STATUSES } from '@/lib/checkout/constants';
 import { isReusableCheckoutOrder } from '@/lib/checkout/order-recovery';
 
 type StoredCheckoutOrderPayment = CheckoutOrderPayment & {
@@ -258,4 +259,43 @@ export async function findCheckoutOrderByPaymentId(paymentId: string): Promise<C
     .limit(1);
 
   return rows[0] ? rowToRecord(rows[0]) : null;
+}
+
+export async function findOpenCheckoutOrdersByEmail(args: {
+  email: string;
+  excludeOrderId?: string;
+  provider?: CheckoutOrderPayment['provider'];
+}): Promise<CheckoutOrderRecord[]> {
+  const normalizedEmail = args.email.trim().toLowerCase();
+  if (!normalizedEmail) {
+    return [];
+  }
+
+  const terminalStatuses = [
+    ...TERMINAL_PAYMENT_STATUSES,
+    ...SHIELDCLIMB_TERMINAL_STATUSES,
+  ];
+
+  const conditions = [
+    eq(checkoutOrders.email, normalizedEmail),
+    notInArray(checkoutOrders.paymentStatus, terminalStatuses),
+  ];
+
+  if (args.excludeOrderId) {
+    conditions.push(ne(checkoutOrders.orderId, args.excludeOrderId));
+  }
+
+  if (args.provider) {
+    conditions.push(
+      sql`${checkoutOrders.payment}->>'provider' = ${args.provider}`,
+    );
+  }
+
+  const rows = await db
+    .select()
+    .from(checkoutOrders)
+    .where(and(...conditions))
+    .orderBy(desc(checkoutOrders.updatedAt));
+
+  return rows.map(rowToRecord);
 }

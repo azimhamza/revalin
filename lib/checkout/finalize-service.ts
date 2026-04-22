@@ -23,6 +23,7 @@ import {
 import {
   saveCheckoutOrder,
   findCheckoutOrderByCartId,
+  findOpenCheckoutOrdersByEmail,
   updateCheckoutOrder,
 } from '@/lib/checkout/order-store';
 import { markCheckoutOrderSetupFailed } from '@/lib/checkout/order-recovery';
@@ -114,6 +115,7 @@ export type FinalizeCheckoutDependencies = {
   getCommissionMonthKey: typeof getCommissionMonthKey;
   getSuccessfulPromoterForAffiliate: typeof getSuccessfulPromoterForAffiliate;
   findCheckoutOrderByCartId: typeof findCheckoutOrderByCartId;
+  findOpenCheckoutOrdersByEmail: typeof findOpenCheckoutOrdersByEmail;
   saveCheckoutOrder: typeof saveCheckoutOrder;
   updateCheckoutOrder: typeof updateCheckoutOrder;
   upsertSwellGuestAccount: typeof upsertSwellGuestAccount;
@@ -152,6 +154,186 @@ function createShieldClimbCallbackToken() {
 
 function createShieldClimbSessionId(ipnToken: string) {
   return `shieldclimb:${ipnToken}`;
+}
+
+function normalizeComparableValue(value?: string | null) {
+  return (value || '').trim();
+}
+
+function normalizeComparableEmail(value?: string | null) {
+  return normalizeComparableValue(value).toLowerCase();
+}
+
+function normalizeComparableCountry(value?: string | null) {
+  return normalizeComparableValue(value).toUpperCase();
+}
+
+function normalizeComparableDiscountCode(value?: string | null) {
+  return normalizeComparableValue(value).toUpperCase();
+}
+
+function buildComparableCartLinesSignature(
+  lines: Array<{
+    merchandiseId: string;
+    quantity: number;
+  }>,
+) {
+  return JSON.stringify(
+    [...lines]
+      .map((line) => ({
+        merchandiseId: normalizeComparableValue(line.merchandiseId),
+        quantity: line.quantity,
+      }))
+      .sort((left, right) => {
+        const byMerchandise = left.merchandiseId.localeCompare(
+          right.merchandiseId,
+        );
+        if (byMerchandise !== 0) {
+          return byMerchandise;
+        }
+
+        return left.quantity - right.quantity;
+      }),
+  );
+}
+
+function buildComparableShippingAddressSignature(address: CheckoutShippingAddress) {
+  return JSON.stringify({
+    firstName: normalizeComparableValue(address.firstName),
+    lastName: normalizeComparableValue(address.lastName),
+    email: normalizeComparableEmail(address.email),
+    phone: normalizeComparableValue(address.phone),
+    address1: normalizeComparableValue(address.address1),
+    address2: normalizeComparableValue(address.address2),
+    city: normalizeComparableValue(address.city),
+    province: normalizeComparableValue(address.province),
+    postalCode: normalizeComparableValue(address.postalCode),
+    country: normalizeComparableCountry(address.country),
+  });
+}
+
+function doesExistingOrderMatchCheckoutAttempt(args: {
+  existingOrder: CheckoutOrderRecord;
+  input: FinalizeCheckoutInput;
+}) {
+  const orderPaymentMethod =
+    args.existingOrder.payment.provider === 'shieldclimb' ? 'card' : 'crypto';
+
+  if (orderPaymentMethod !== args.input.paymentMethod) {
+    return false;
+  }
+
+  if (
+    buildComparableCartLinesSignature(
+      args.existingOrder.lines.map((line) => ({
+        merchandiseId: line.merchandiseId,
+        quantity: line.quantity,
+      })),
+    ) !==
+    buildComparableCartLinesSignature(
+      args.input.cartSnapshot.lines.map((line) => ({
+        merchandiseId: line.merchandiseId,
+        quantity: line.quantity,
+      })),
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    buildComparableShippingAddressSignature(args.existingOrder.shippingAddress) !==
+    buildComparableShippingAddressSignature(args.input.shippingAddress)
+  ) {
+    return false;
+  }
+
+  if (
+    normalizeComparableValue(args.existingOrder.shippingService?.id) !==
+    normalizeComparableValue(args.input.selectedShippingServiceId)
+  ) {
+    return false;
+  }
+
+  if (
+    normalizeComparableDiscountCode(args.existingOrder.totals.discountCode) !==
+    normalizeComparableDiscountCode(args.input.discountCode)
+  ) {
+    return false;
+  }
+
+  if (args.input.paymentMethod === 'crypto') {
+    if (args.existingOrder.payment.provider !== 'nowpayments') {
+      return false;
+    }
+
+    if (
+      normalizeComparableValue(args.existingOrder.payment.paymentCurrency).toLowerCase() !==
+      normalizeComparableValue(args.input.paymentCurrency).toLowerCase()
+    ) {
+      return false;
+    }
+
+    if (
+      normalizeComparableValue(args.existingOrder.payment.sourceWalletAddress) !==
+      normalizeComparableValue(args.input.sourceWalletAddress)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+async function replaceSupersededOpenOrders(args: {
+  checkoutOrder: CheckoutOrderRecord;
+  customerEmail: string;
+  dependencies: Pick<
+    FinalizeCheckoutDependencies,
+    'findOpenCheckoutOrdersByEmail' | 'cancelSwellOrder' | 'updateCheckoutOrder'
+  >;
+}) {
+  const openOrders = await args.dependencies.findOpenCheckoutOrdersByEmail({
+    email: args.customerEmail,
+    excludeOrderId: args.checkoutOrder.orderId,
+    provider: args.checkoutOrder.payment.provider,
+  });
+
+  if (openOrders.length === 0) {
+    return;
+  }
+
+  const replacedAt = new Date().toISOString();
+  const reason = `Superseded by newer checkout order ${args.checkoutOrder.orderId}.`;
+
+  await Promise.all(
+    openOrders.map(async (openOrder) => {
+      await args.dependencies
+        .cancelSwellOrder(openOrder.swell.orderId, reason)
+        .catch((error) => {
+          console.error('Unable to cancel superseded Swell order:', error);
+        });
+
+      await args.dependencies
+        .updateCheckoutOrder(openOrder.orderId, (current) => {
+          if (isTerminalPaymentStatus(current.payment.status)) {
+            return current;
+          }
+
+          return {
+            ...current,
+            payment: {
+              ...current.payment,
+              status: 'replaced',
+              updatedAt: replacedAt,
+            },
+            latestError: reason,
+          };
+        })
+        .catch((error) => {
+          console.error('Unable to mark superseded checkout order replaced:', error);
+        });
+    }),
+  );
 }
 
 function buildOrderDescription(lines: CheckoutOrderLine[]) {
@@ -586,7 +768,13 @@ export function createFinalizeCheckoutSession(
 
       const existingOrder =
         await dependencies.findCheckoutOrderByCartId(fallbackCartId);
-      if (existingOrder) {
+      if (
+        existingOrder &&
+        doesExistingOrderMatchCheckoutAttempt({
+          existingOrder,
+          input: args,
+        })
+      ) {
         return {
           accessKey: existingOrder.accessKey,
           order: toPublicCheckoutOrder(existingOrder),
@@ -937,6 +1125,12 @@ export function createFinalizeCheckoutSession(
         });
         checkoutOrderId = checkoutOrder.orderId;
 
+        await replaceSupersededOpenOrders({
+          checkoutOrder,
+          customerEmail: args.shippingAddress.email,
+          dependencies,
+        });
+
         const initiationTelemetry = {
           orderId,
           userId,
@@ -1094,6 +1288,12 @@ export function createFinalizeCheckoutSession(
       });
       checkoutOrderId = checkoutOrder.orderId;
 
+      await replaceSupersededOpenOrders({
+        checkoutOrder,
+        customerEmail: args.shippingAddress.email,
+        dependencies,
+      });
+
       const initiationTelemetry = {
         orderId,
         userId,
@@ -1179,6 +1379,7 @@ export const finalizeCheckoutSession = createFinalizeCheckoutSession({
   getCommissionMonthKey,
   getSuccessfulPromoterForAffiliate,
   findCheckoutOrderByCartId,
+  findOpenCheckoutOrdersByEmail,
   saveCheckoutOrder,
   updateCheckoutOrder,
   upsertSwellGuestAccount,

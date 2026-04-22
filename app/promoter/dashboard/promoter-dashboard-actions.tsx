@@ -269,8 +269,7 @@ export function PromoterWalletForm({
               Crypto payouts
             </div>
             <p className="mt-2">
-              Crypto payouts do not incur the ACH fee. Use a Polygon wallet you
-              control that can receive USDC.
+              Use a Polygon wallet you control that can receive USDC on Polygon.
             </p>
           </div>
         </>
@@ -348,16 +347,12 @@ export function PromoterWalletForm({
           <div className="border border-[#0B2E2F]/10 bg-[#FCFAF6] px-3 py-3 text-[11px] leading-4 text-[#0B2E2F]/62">
             <div className="flex items-center gap-2 text-xs font-semibold text-[#0B2E2F]">
               <Building2 className="size-4" />
-              ACH bank transfer (5% fee)
+              ACH bank transfer
             </div>
             <div className="mt-2 flex gap-2">
               <Landmark className="mt-0.5 size-4 shrink-0 text-[#0B2E2F]" />
               <div className="space-y-1">
-                <p>
-                  ACH payouts incur a 5% payout fee because we have to withdraw
-                  funds from our crypto payout account and cover bank transfer
-                  and withdrawal fees. Crypto payouts do not have this fee.
-                </p>
+                <p>Routing and account numbers are encrypted when stored.</p>
                 <p>
                   {achRoutingNumberLast4
                     ? `Leave routing number blank to keep the current one ending in ${achRoutingNumberLast4}. `
