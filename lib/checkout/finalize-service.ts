@@ -32,6 +32,10 @@ import {
   calculateCheckoutPricing,
 } from '@/lib/checkout/pricing';
 import {
+  getCardCheckoutMinimumMessage,
+  isCardCheckoutMinimumMet,
+} from '@/lib/checkout/payment-method-rules';
+import {
   createWalletForOrder,
   buildShieldClimbPaymentUrl,
   convertToUsd,
@@ -1027,6 +1031,13 @@ export function createFinalizeCheckoutSession(
             { provider: 'shieldclimb', operation: 'convert-to-usd' },
             false,
           );
+        }
+
+        if (!isCardCheckoutMinimumMet(paymentAmount)) {
+          throw apiError.badRequest(getCardCheckoutMinimumMessage(), {
+            code: 'card_minimum_not_met',
+            totalUsd: paymentAmount.toFixed(2),
+          });
         }
 
         const expectedValueCoin = paymentAmount.toFixed(2);

@@ -6,6 +6,21 @@ import { isShieldClimbPayment } from '@/lib/checkout/types';
 
 const SHIELDCLIMB_SETTLEMENT_COIN = 'polygon_usdc';
 const VALUE_COIN_TOLERANCE = 0.01;
+const DEFAULT_SHIELDCLIMB_ABSORBED_FEE_PERCENT = 0.1;
+
+function getShieldClimbAbsorbedFeePercent() {
+  const rawValue = process.env.SHIELDCLIMB_ABSORBED_FEE_PERCENT?.trim();
+  if (!rawValue) {
+    return DEFAULT_SHIELDCLIMB_ABSORBED_FEE_PERCENT;
+  }
+
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_SHIELDCLIMB_ABSORBED_FEE_PERCENT;
+  }
+
+  return Math.min(Math.max(parsed, 0), 0.5);
+}
 
 export type ShieldClimbCallbackData = {
   addressIn: string;
@@ -74,9 +89,12 @@ function assertExpectedAmountReceived(args: {
     );
   }
 
-  if (received + VALUE_COIN_TOLERANCE < expected) {
+  const minimumAcceptedSettlement =
+    expected * (1 - getShieldClimbAbsorbedFeePercent());
+
+  if (received + VALUE_COIN_TOLERANCE < minimumAcceptedSettlement) {
     throw new ShieldClimbPaymentValidationError(
-      'ShieldClimb payment callback amount is below the expected order amount.',
+      'ShieldClimb payment callback amount is below the absorbable settlement threshold.',
       'underpaid',
     );
   }

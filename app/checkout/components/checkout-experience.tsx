@@ -26,6 +26,11 @@ import {
   SHIPPING_COUNTRIES,
   isTerminalPaymentStatus,
 } from '@/lib/checkout/constants';
+import {
+  CARD_CHECKOUT_MINIMUM_USD,
+  getCardCheckoutMinimumMessage,
+  isCardCheckoutMinimumMet,
+} from '@/lib/checkout/payment-method-rules';
 import type {
   CheckoutAppliedDiscount,
   CheckoutOrderPublic,
@@ -826,6 +831,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const lastQuoteRequestSignature = useRef<string | null>(null);
   const quoteAbortController = useRef<AbortController | null>(null);
   const previousPaymentSnapshot = useRef<{ orderId: string; status: string } | null>(null);
+  const shieldClimbPaymentWindow = useRef<Window | null>(null);
 
   const orderId = searchParams.get('order');
   const accessKey = searchParams.get('key');
@@ -941,6 +947,37 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     summaryTax,
   ]);
   const summaryDiscountLines = summaryPricing.discounts;
+  const summaryCouponDiscountAmount = useMemo(
+    () =>
+      summaryDiscountLines
+        .filter((discount) => discount.kind !== 'crypto')
+        .reduce((total, discount) => total + Number(discount.amount.amount || 0), 0)
+        .toFixed(2),
+    [summaryDiscountLines],
+  );
+  const cardPreviewPricing = useMemo(
+    () =>
+      calculateCheckoutPricing({
+        currencyCode: summaryCurrencyCode,
+        subtotalAmount: summarySubtotal,
+        couponDiscountAmount: summaryCouponDiscountAmount,
+        couponCode:
+          appliedDiscount?.code || quote?.discountCode || activeOrder?.totals.discountCode,
+        shippingAmount: summaryShipping,
+        taxAmount: summaryTax,
+        paymentMethod: 'card',
+      }),
+    [
+      activeOrder?.totals.discountCode,
+      appliedDiscount?.code,
+      quote?.discountCode,
+      summaryCouponDiscountAmount,
+      summaryCurrencyCode,
+      summaryShipping,
+      summarySubtotal,
+      summaryTax,
+    ],
+  );
   const hasResolvedShippingPrice = Boolean(activeOrder?.shippingService || selectedQuoteService);
   const summaryShippingValue = hasResolvedShippingPrice
     ? renderShippingPrice(summaryShipping, summaryCurrencyCode, summaryShippingOriginal)
@@ -958,6 +995,18 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const summaryCryptoDiscountAmount = summaryPricing.cryptoDiscountAmount?.amount;
   const summaryTotal = summaryPricing.totalAmount.amount;
   const isCartHydrating = !activeOrder && cart === undefined;
+  const canEvaluateCardMinimum =
+    summaryCurrencyCode.trim().toUpperCase() === 'USD' &&
+    Boolean(activeOrder || selectedQuoteService);
+  const isCardCheckoutDisabled =
+    canEvaluateCardMinimum &&
+    !isCardCheckoutMinimumMet(cardPreviewPricing.totalAmount.amount);
+  const cardCheckoutMinimumMessage = isCardCheckoutDisabled
+    ? `${getCardCheckoutMinimumMessage()} Current card total: ${formatPrice(
+        cardPreviewPricing.totalAmount.amount,
+        'USD',
+      )}.`
+    : getCardCheckoutMinimumMessage();
 
   const quickAddCatalog = useMemo(() => {
     if (!cart || cart.lines.length === 0) return quickAddProducts;
@@ -1377,9 +1426,17 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     };
   }, [accessKey, cart, orderId]);
 
+  useEffect(() => {
+    if (activeOrder) return;
+    if (paymentMethod !== 'card' || !isCardCheckoutDisabled) return;
+
+    setPaymentMethod('crypto');
+    setIsCardCheckoutOpen(false);
+  }, [activeOrder, isCardCheckoutDisabled, paymentMethod]);
+
   const pollingId = checkoutSession?.order.payment ? getPollingId(checkoutSession.order.payment) : undefined;
   const autoPollingId =
-    checkoutSession?.order.payment && isNowPaymentsOrder(checkoutSession.order.payment)
+    checkoutSession?.order.payment
       ? getPollingId(checkoutSession.order.payment)
       : undefined;
 
@@ -1882,6 +1939,12 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       return;
     }
 
+    if (paymentMethod === 'card' && isCardCheckoutDisabled) {
+      setError(cardCheckoutMinimumMessage);
+      setIsCardCheckoutOpen(false);
+      return;
+    }
+
     setIsCreatingPayment(true);
     setError(null);
 
@@ -1942,13 +2005,44 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
       syncCheckoutUrlImmediately(data.order.orderId, data.accessKey);
 
-      // ShieldClimb card payments redirect to hosted checkout
+      updateCheckoutUrl(data.order.orderId, data.accessKey);
+
+      // ShieldClimb card payments open in a separate tab so the
+      // Revalin checkout page can stay visible and auto-update.
       if (data.redirectUrl) {
-        window.location.href = data.redirectUrl;
+        setIsCardCheckoutOpen(false);
+
+        const paymentWindow = shieldClimbPaymentWindow.current;
+        shieldClimbPaymentWindow.current = null;
+
+        if (paymentWindow && !paymentWindow.closed) {
+          paymentWindow.location.href = data.redirectUrl;
+          paymentWindow.focus();
+        } else {
+          const openedWindow = window.open(
+            data.redirectUrl,
+            '_blank',
+            'noopener,noreferrer',
+          );
+
+          if (!openedWindow) {
+            toast('Secure payment ready', {
+              description:
+                'Use the Pay now button below to open the hosted payment page.',
+            });
+          }
+        }
+
         return;
       }
-      updateCheckoutUrl(data.order.orderId, data.accessKey);
     } catch (submitError: unknown) {
+      if (
+        shieldClimbPaymentWindow.current &&
+        !shieldClimbPaymentWindow.current.closed
+      ) {
+        shieldClimbPaymentWindow.current.close();
+      }
+      shieldClimbPaymentWindow.current = null;
       setError(submitError instanceof Error ? submitError.message : 'Unable to create payment.');
       setIsCardCheckoutOpen(false);
     } finally {
@@ -1956,7 +2050,10 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     }
   }, [
     buildCheckoutSessionPayload,
+    cardCheckoutMinimumMessage,
     ensureCheckoutApiSession,
+    isCardCheckoutDisabled,
+    paymentMethod,
     selectedShippingServiceId,
     syncCheckoutUrlImmediately,
     updateCheckoutUrl,
@@ -1965,7 +2062,21 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const handleCreatePayment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    if (paymentMethod === 'card' && isCardCheckoutDisabled) {
+      setError(cardCheckoutMinimumMessage);
+      setIsCardCheckoutOpen(false);
+      return;
+    }
+
     if (paymentMethod === 'card') {
+      if (
+        shieldClimbPaymentWindow.current &&
+        !shieldClimbPaymentWindow.current.closed
+      ) {
+        shieldClimbPaymentWindow.current.close();
+      }
+
+      shieldClimbPaymentWindow.current = window.open('', '_blank');
       // Show info dialog first — useEffect below triggers the actual payment
       setIsCardCheckoutOpen(true);
       return;
@@ -2146,8 +2257,15 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const nowPayment = activeOrder?.payment && isNowPaymentsOrder(activeOrder.payment) ? activeOrder.payment : null;
   const shieldClimbPayment = activeOrder?.payment && isShieldClimbOrder(activeOrder.payment) ? activeOrder.payment : null;
   const paymentExpiresAt = nowPayment ? formatDateTime(nowPayment.validUntil || nowPayment.expirationEstimateDate) : null;
+  const canSwitchToAlternatePayment =
+    shieldClimbPayment ? true : !isCardCheckoutDisabled;
 
-  const canPlaceOrder = cart && cart.lines.length > 0 && selectedShippingServiceId && !isCreatingPayment;
+  const canPlaceOrder =
+    cart &&
+    cart.lines.length > 0 &&
+    selectedShippingServiceId &&
+    !isCreatingPayment &&
+    !(paymentMethod === 'card' && isCardCheckoutDisabled);
 
   return (
     <div className="px-sides pb-16 pt-[5.75rem] md:pt-top-spacing">
@@ -2423,10 +2541,16 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                     <div className="mt-3 grid gap-2.5 md:grid-cols-2">
                       <button
                         type="button"
-                        onClick={() => setPaymentMethod('card')}
+                        onClick={() => {
+                          if (isCardCheckoutDisabled) return;
+                          setPaymentMethod('card');
+                        }}
+                        disabled={isCardCheckoutDisabled}
                         className={cn(
                           'flex items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition-all',
-                          paymentMethod === 'card'
+                          isCardCheckoutDisabled
+                            ? 'cursor-not-allowed border-border/70 bg-background/60 opacity-55'
+                            : paymentMethod === 'card'
                             ? 'border-[#0B2E2F] bg-[#0B2E2F]/5 ring-1 ring-[#0B2E2F]'
                             : 'border-border bg-background hover:border-[#0B2E2F]/30'
                         )}
@@ -2435,8 +2559,21 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                           <CreditCard className="size-4" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold">Debit / Credit Card</p>
-                          <PaymentBrandIcons className="mt-1" />
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-semibold">Debit / Credit Card</p>
+                            {isCardCheckoutDisabled ? (
+                              <span className="rounded-full border border-foreground/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-foreground/45">
+                                Min ${CARD_CHECKOUT_MINIMUM_USD} USD
+                              </span>
+                            ) : null}
+                          </div>
+                          {isCardCheckoutDisabled ? (
+                            <p className="mt-1 text-xs text-foreground/45">
+                              {cardCheckoutMinimumMessage}
+                            </p>
+                          ) : (
+                            <PaymentBrandIcons className="mt-1" />
+                          )}
                         </div>
                         <div className={cn('flex size-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors', paymentMethod === 'card' ? 'border-[#0B2E2F]' : 'border-foreground/20')}>
                           {paymentMethod === 'card' && <div className="size-2.5 rounded-full bg-[#0B2E2F]" />}
@@ -2768,7 +2905,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                             variant="ghost"
                             size="sm"
                             onClick={() => releaseActiveOrder(shieldClimbPayment ? 'crypto' : 'card')}
-                            disabled={isReleasingOrder}
+                            disabled={isReleasingOrder || !canSwitchToAlternatePayment}
                           >
                             {isReleasingOrder ? (
                               <>
@@ -2776,7 +2913,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                                 Switching...
                               </>
                             ) : (
-                              'Choose different payment'
+                              canSwitchToAlternatePayment
+                                ? 'Choose different payment'
+                                : 'Card unavailable below $15'
                             )}
                           </Button>
                         ) : (
@@ -2804,6 +2943,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                               </div>
                               <a
                                 href={shieldClimbPayment.redirectUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
                                 className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl px-5 py-3 text-sm font-semibold transition-colors"
                                 style={{ backgroundColor: '#0B2E2F', color: '#F4F1EA' }}
                               >
@@ -2812,7 +2953,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                                 <ArrowRight className="size-4" />
                               </a>
                               <p className="mt-3 text-center text-xs leading-4 text-foreground/45">
-                                Your card is charged normally. The transaction settles through blockchain for speed and security.
+                                Opens in a new tab so this page can keep tracking your payment automatically.
                               </p>
                             </div>
 
