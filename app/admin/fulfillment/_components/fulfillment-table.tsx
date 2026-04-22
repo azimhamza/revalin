@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState, useTransition } from 'react';
+import { useCallback, useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Check,
@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import type { FulfillmentOrderListItem } from '@/lib/checkout/fulfillment-service';
 import { FulfillmentActions } from './fulfillment-actions';
 
-type TabKey =
+export type FulfillmentTabKey =
   | 'label_ready'
   | 'packed'
   | 'handed_to_carrier'
@@ -19,13 +19,13 @@ type TabKey =
   | 'all'
   | 'pending';
 
-const TABS: { key: TabKey; label: string; devOnly?: boolean }[] = [
+const TABS: { key: FulfillmentTabKey; label: string; devOnly?: boolean }[] = [
   { key: 'label_ready', label: 'Label Ready' },
   { key: 'packed', label: 'Packed' },
   { key: 'handed_to_carrier', label: 'Shipped' },
   { key: 'error', label: 'Errors' },
   { key: 'all', label: 'All' },
-  { key: 'pending', label: 'Pending Payment' },
+  { key: 'pending', label: 'Pending' },
 ];
 
 function formatAge(createdAt: string) {
@@ -77,7 +77,7 @@ function StatusBadge({ status }: { status: string | null }) {
 type Props = {
   initialOrders: FulfillmentOrderListItem[];
   initialTotal: number;
-  initialStatus: TabKey;
+  initialStatus: FulfillmentTabKey;
   isDev?: boolean;
 };
 
@@ -88,16 +88,22 @@ export function FulfillmentTable({
   isDev,
 }: Props) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<TabKey>(initialStatus);
+  const [activeTab, setActiveTab] = useState<FulfillmentTabKey>(initialStatus);
   const [orders, setOrders] = useState(initialOrders);
   const [total, setTotal] = useState(initialTotal);
   const [isPending, startTransition] = useTransition();
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  useEffect(() => {
+    setActiveTab(initialStatus);
+    setOrders(initialOrders);
+    setTotal(initialTotal);
+  }, [initialOrders, initialStatus, initialTotal]);
+
   const visibleTabs = TABS.filter((tab) => !tab.devOnly || isDev);
 
   const switchTab = useCallback(
-    (tab: TabKey) => {
+    (tab: FulfillmentTabKey) => {
       setActiveTab(tab);
       startTransition(() => {
         router.push(`/admin/fulfillment?status=${tab}`);

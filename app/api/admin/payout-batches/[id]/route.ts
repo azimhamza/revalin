@@ -17,6 +17,7 @@ const patchSchema = z.object({
   partnerType: z.enum(["affiliate", "promoter"]).default("affiliate"),
   action: z.enum(["mark_paid", "reject"]),
   txHash: z.string().trim().min(1).optional(),
+  paymentReference: z.string().trim().min(1).optional(),
   notes: z.string().trim().optional(),
 });
 
@@ -33,7 +34,7 @@ function normalizeBatchError(error: unknown) {
     return apiError.notFound(error.message);
   }
 
-  if (/already been marked paid|cannot be marked paid|cannot be rejected|wallet is missing/i.test(error.message)) {
+  if (/already been marked paid|cannot be marked paid|cannot be rejected|wallet is missing|payout destination is missing/i.test(error.message)) {
     return apiError.conflict(error.message);
   }
 
@@ -73,14 +74,17 @@ export const PATCH = createApiRoute({
   handler: async ({ params, body }) => {
     try {
       if (body.action === "mark_paid") {
-        if (!body.txHash) {
-          throw apiError.badRequest("txHash is required for mark_paid.");
+        const paymentReference = body.paymentReference ?? body.txHash;
+        if (!paymentReference) {
+          throw apiError.badRequest(
+            "paymentReference is required for mark_paid.",
+          );
         }
 
         if (body.partnerType === "promoter") {
-          await markPromoterWeeklyPayoutBatchPaid(params.id, body.txHash);
+          await markPromoterWeeklyPayoutBatchPaid(params.id, paymentReference);
         } else {
-          await markWeeklyPayoutBatchPaid(params.id, body.txHash);
+          await markWeeklyPayoutBatchPaid(params.id, paymentReference);
         }
       } else {
         if (body.partnerType === "promoter") {

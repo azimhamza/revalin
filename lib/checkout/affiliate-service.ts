@@ -6,6 +6,15 @@ import { RESERVED_SLUGS } from "@/lib/checkout/affiliate-constants";
 import { shouldPromoteToAffiliateRole } from "@/lib/checkout/affiliate-role";
 import { getBaselineCommissionRate } from "@/lib/checkout/commission-tier-service";
 import {
+  CRYPTO_PAYOUT_METHOD,
+  normalizeCryptoWallet,
+  resolveEncryptedSecretUpdate,
+  sanitizeAccountNumber,
+  sanitizeRoutingNumber,
+  type AchAccountType,
+  type PayoutMethod,
+} from "@/lib/checkout/payout-methods";
+import {
   normalizeAffiliateSocialProfiles,
   type AffiliateSocialProfile,
 } from "@/lib/checkout/affiliate-social-profiles";
@@ -16,6 +25,12 @@ export type AffiliateRecord = {
   name: string;
   email: string;
   walletAddress: string;
+  payoutMethod: PayoutMethod;
+  achAccountHolderName: string | null;
+  achBankName: string | null;
+  achAccountType: AchAccountType | null;
+  achRoutingNumberLast4: string | null;
+  achAccountNumberLast4: string | null;
   socialProfiles: AffiliateSocialProfile[];
   swellCouponId: string | null;
   discountCode: string | null;
@@ -62,6 +77,16 @@ export type AffiliateSetupPreview =
       affiliateCode: string;
     };
 
+export type AffiliatePayoutSettingsUpdateInput = {
+  payoutMethod: PayoutMethod;
+  walletAddress?: string | null;
+  achAccountHolderName?: string | null;
+  achBankName?: string | null;
+  achAccountType?: AchAccountType | null;
+  routingNumber?: string | null;
+  accountNumber?: string | null;
+};
+
 function decryptRow(row: typeof affiliates.$inferSelect): AffiliateRecord {
   const walletAddress = decrypt({
     ciphertext: row.encryptedWalletAddress,
@@ -75,6 +100,12 @@ function decryptRow(row: typeof affiliates.$inferSelect): AffiliateRecord {
     name: row.name,
     email: row.email,
     walletAddress,
+    payoutMethod: row.payoutMethod,
+    achAccountHolderName: row.achAccountHolderName,
+    achBankName: row.achBankName,
+    achAccountType: row.achAccountType,
+    achRoutingNumberLast4: row.achRoutingNumberLast4,
+    achAccountNumberLast4: row.achAccountNumberLast4,
     socialProfiles: normalizeAffiliateSocialProfiles(row.socialProfiles || []),
     swellCouponId: row.swellCouponId,
     discountCode: row.discountCode,
@@ -579,6 +610,99 @@ export async function createAffiliate(args: {
     .returning();
 
   return decryptRow(row!);
+}
+
+export async function updateAffiliatePayoutSettings(
+  args: { affiliateId: string } & AffiliatePayoutSettingsUpdateInput,
+) {
+  const [current] = await db
+    .select()
+    .from(affiliates)
+    .where(eq(affiliates.id, args.affiliateId))
+    .limit(1);
+
+  if (!current) {
+    throw new Error("Affiliate not found.");
+  }
+
+  const updates: Record<string, unknown> = {
+    payoutMethod: args.payoutMethod,
+    updatedAt: new Date(),
+  };
+
+  if (args.payoutMethod === CRYPTO_PAYOUT_METHOD) {
+    const walletAddress = normalizeCryptoWallet(args.walletAddress);
+    if (!walletAddress) {
+      throw new Error("A valid Polygon wallet address is required for crypto payouts.");
+    }
+
+    const encrypted = encrypt(walletAddress);
+    updates.encryptedWalletAddress = encrypted.ciphertext;
+    updates.walletIv = encrypted.iv;
+    updates.walletTag = encrypted.tag;
+  } else {
+    const achAccountHolderName = args.achAccountHolderName?.trim() || "";
+    const achBankName = args.achBankName?.trim() || "";
+
+    if (!achAccountHolderName) {
+      throw new Error("Account holder name is required for ACH payouts.");
+    }
+
+    if (!achBankName) {
+      throw new Error("Bank name is required for ACH payouts.");
+    }
+
+    if (!args.achAccountType) {
+      throw new Error("Account type is required for ACH payouts.");
+    }
+
+    const routingNumber = resolveEncryptedSecretUpdate({
+      submittedValue: args.routingNumber,
+      current: {
+        ciphertext: current.encryptedAchRoutingNumber,
+        iv: current.achRoutingNumberIv,
+        tag: current.achRoutingNumberTag,
+        last4: current.achRoutingNumberLast4,
+      },
+      sanitize: sanitizeRoutingNumber,
+      label: "Routing number",
+      minLength: 9,
+      maxLength: 9,
+    });
+    const accountNumber = resolveEncryptedSecretUpdate({
+      submittedValue: args.accountNumber,
+      current: {
+        ciphertext: current.encryptedAchAccountNumber,
+        iv: current.achAccountNumberIv,
+        tag: current.achAccountNumberTag,
+        last4: current.achAccountNumberLast4,
+      },
+      sanitize: sanitizeAccountNumber,
+      label: "Account number",
+      minLength: 4,
+      maxLength: 17,
+    });
+
+    updates.achAccountHolderName = achAccountHolderName;
+    updates.achBankName = achBankName;
+    updates.achAccountType = args.achAccountType;
+    updates.encryptedAchRoutingNumber = routingNumber.ciphertext;
+    updates.achRoutingNumberIv = routingNumber.iv;
+    updates.achRoutingNumberTag = routingNumber.tag;
+    updates.achRoutingNumberLast4 = routingNumber.last4;
+    updates.encryptedAchAccountNumber = accountNumber.ciphertext;
+    updates.achAccountNumberIv = accountNumber.iv;
+    updates.achAccountNumberTag = accountNumber.tag;
+    updates.achAccountNumberLast4 = accountNumber.last4;
+  }
+
+  const [updated] = await db
+    .update(affiliates)
+    .set(updates)
+    .where(eq(affiliates.id, args.affiliateId))
+    .returning();
+
+  return decryptRow(updated ?? current);
 }
 
 export async function getApprovedAffiliateByDiscountCode(

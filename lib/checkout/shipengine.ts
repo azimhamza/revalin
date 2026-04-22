@@ -7,6 +7,9 @@ const SHIPENGINE_CARRIER_IDS = (process.env.SHIPENGINE_CARRIER_IDS || '')
   .split(',')
   .map(id => id.trim())
   .filter(Boolean);
+const SHIPENGINE_LABEL_PURCHASE_TIMEOUT_MS = Number(
+  process.env.SHIPENGINE_LABEL_PURCHASE_TIMEOUT_MS || 15_000
+);
 
 const SHIPENGINE_ORIGIN = {
   name: (process.env.SHIPENGINE_ORIGIN_NAME || 'Revalin Fulfillment').trim(),
@@ -106,6 +109,11 @@ function normalizeRateToken(value: string) {
     .replace(/^-+|-+$/g, '');
 }
 
+function normalizeShipEngineValue(value?: string | null) {
+  const normalized = value?.trim();
+  return normalized || undefined;
+}
+
 function parsePositiveNumber(value: number) {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
@@ -142,10 +150,14 @@ export function selectShipEngineRateForService(args: {
     );
   }
 
-  if (
-    !args.selectedShippingService.carrierCode ||
-    !args.selectedShippingService.serviceCode
-  ) {
+  const selectedCarrierCode = normalizeShipEngineValue(
+    args.selectedShippingService.carrierCode
+  );
+  const selectedServiceCode = normalizeShipEngineValue(
+    args.selectedShippingService.serviceCode
+  );
+
+  if (!selectedCarrierCode || !selectedServiceCode) {
     throw new Error(
       'Manual review required: the selected ShipEngine checkout service is missing carrier/service identity.'
     );
@@ -154,8 +166,8 @@ export function selectShipEngineRateForService(args: {
   const matchingRates = args.rates.filter(
     rate =>
       rate.rate_id &&
-      rate.carrier_code === args.selectedShippingService.carrierCode &&
-      rate.service_code === args.selectedShippingService.serviceCode
+      normalizeShipEngineValue(rate.carrier_code) === selectedCarrierCode &&
+      normalizeShipEngineValue(rate.service_code) === selectedServiceCode
   );
 
   if (matchingRates.length === 0) {
@@ -222,7 +234,12 @@ async function shipEngineRequest<T>(path: string, init: RequestInit): Promise<T>
   const response = await providerFetch(`${SHIPENGINE_API_BASE}${path}`, {
     provider: 'shipengine',
     operation: path,
-    timeoutMs: path === '/v1/rates' ? null : undefined,
+    timeoutMs:
+      path === '/v1/rates'
+        ? null
+        : path.startsWith('/v2/labels/rates/')
+          ? SHIPENGINE_LABEL_PURCHASE_TIMEOUT_MS
+          : undefined,
     ...init,
     headers: {
       'API-Key': SHIPENGINE_API_KEY,
@@ -377,15 +394,21 @@ export async function quoteShipEngineRates(args: {
       if (!Number.isFinite(price) || price <= 0) return null;
       if (!rate.rate_id) return null;
 
-      const carrier = rate.carrier_friendly_name?.trim() || rate.carrier_code || 'ShipEngine';
-      const service = rate.service_type?.trim() || rate.service_code || rate.rate_id;
+      const carrier =
+        rate.carrier_friendly_name?.trim() ||
+        normalizeShipEngineValue(rate.carrier_code) ||
+        'ShipEngine';
+      const service =
+        rate.service_type?.trim() ||
+        normalizeShipEngineValue(rate.service_code) ||
+        rate.rate_id;
 
       return {
         id: `shipengine:${normalizeRateToken(carrier)}:${normalizeRateToken(service)}`,
         name: service,
         carrier,
-        carrierCode: rate.carrier_code || undefined,
-        serviceCode: rate.service_code || undefined,
+        carrierCode: normalizeShipEngineValue(rate.carrier_code),
+        serviceCode: normalizeShipEngineValue(rate.service_code),
         estimatedDays: rate.delivery_days ?? null,
         price,
         currencyCode: (rate.shipping_amount?.currency || args.currencyCode).toUpperCase(),
@@ -400,14 +423,97 @@ export async function quoteShipEngineRates(args: {
   };
 }
 
+function buildShipEngineLabelPurchasePayload() {
+  return JSON.stringify({
+    validate_address: 'validate_and_clean',
+    label_layout: '4x6',
+    label_format: 'pdf',
+    label_download_type: 'url',
+    display_scheme: 'label',
+  });
+}
+
+async function purchaseShipEngineLabelByRateId(rateId: string) {
+  return shipEngineRequest<ShipEngineLabelResponse>(
+    `/v2/labels/rates/${rateId}`,
+    {
+      method: 'POST',
+      body: buildShipEngineLabelPurchasePayload(),
+    }
+  );
+}
+
+function isShipEngineTimeoutError(error: unknown) {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'provider_timeout'
+  );
+}
+
 export async function purchaseShipEngineLabel(args: {
   shippingAddress: CheckoutShippingAddress;
   itemCount: number;
   selectedShippingService: CheckoutShippingService;
 }) {
+  if (args.selectedShippingService.source !== 'shipengine') {
+    throw new Error(
+      'Manual review required: the selected checkout shipping service was not sourced from ShipEngine.'
+    );
+  }
+
   const carrierIds = await getShipEngineCarrierIds();
   if (!isShipEngineConfigured() || carrierIds.length === 0) {
     throw new Error('ShipEngine is not fully configured for label purchase.');
+  }
+
+  const savedRateId = normalizeShipEngineValue(
+    args.selectedShippingService.shipengineRateId
+  );
+
+  if (savedRateId) {
+    try {
+      const label = await purchaseShipEngineLabelByRateId(savedRateId);
+      const trackingUrl = await getShipEngineTrackingUrl({
+        trackingNumber: label.tracking_number,
+        carrierCode:
+          normalizeShipEngineValue(label.carrier_code) ||
+          normalizeShipEngineValue(args.selectedShippingService.carrierCode),
+      });
+
+      return {
+        trackingCode: label.tracking_number || null,
+        labelUrl: label.label_download?.pdf || label.label_download?.href || null,
+        carrier:
+          args.selectedShippingService.carrier ||
+          normalizeShipEngineValue(label.carrier_code) ||
+          null,
+        service:
+          args.selectedShippingService.name ||
+          normalizeShipEngineValue(label.service_code) ||
+          null,
+        publicTrackingUrl: trackingUrl,
+      };
+    } catch (error) {
+      if (isShipEngineTimeoutError(error)) {
+        throw error;
+      }
+
+      console.warn(
+        'Unable to purchase ShipEngine label from the saved rate id. Falling back to a fresh rate quote.',
+        {
+          rateId: savedRateId,
+          carrierCode:
+            normalizeShipEngineValue(args.selectedShippingService.carrierCode) ||
+            null,
+          serviceCode:
+            normalizeShipEngineValue(args.selectedShippingService.serviceCode) ||
+            null,
+          error: error instanceof Error ? error.message : 'Unknown label purchase error',
+        }
+      );
+    }
   }
 
   const rateResult = await shipEngineRequest<ShipEngineRateApiResponse>('/v1/rates', {
@@ -438,28 +544,27 @@ export async function purchaseShipEngineLabel(args: {
     throw new Error('ShipEngine returned a rate without a rate_id.');
   }
 
-  const label = await shipEngineRequest<ShipEngineLabelResponse>(`/v2/labels/rates/${selectedRate.rate_id}`, {
-    method: 'POST',
-    body: JSON.stringify({
-      validate_address: 'validate_and_clean',
-      label_layout: '4x6',
-      label_format: 'pdf',
-      label_download_type: 'url',
-      display_scheme: 'label',
-    }),
-  });
+  const label = await purchaseShipEngineLabelByRateId(selectedRate.rate_id);
 
   const trackingUrl = await getShipEngineTrackingUrl({
     trackingNumber: label.tracking_number,
-    carrierCode: label.carrier_code || selectedRate.carrier_code,
+    carrierCode:
+      normalizeShipEngineValue(label.carrier_code) ||
+      normalizeShipEngineValue(selectedRate.carrier_code),
     carrierId: selectedRate.carrier_id,
   });
 
   return {
     trackingCode: label.tracking_number || null,
     labelUrl: label.label_download?.pdf || label.label_download?.href || null,
-    carrier: selectedRate.carrier_friendly_name || selectedRate.carrier_code || null,
-    service: selectedRate.service_type || selectedRate.service_code || null,
+    carrier:
+      selectedRate.carrier_friendly_name?.trim() ||
+      normalizeShipEngineValue(selectedRate.carrier_code) ||
+      null,
+    service:
+      selectedRate.service_type?.trim() ||
+      normalizeShipEngineValue(selectedRate.service_code) ||
+      null,
     publicTrackingUrl: trackingUrl,
   };
 }

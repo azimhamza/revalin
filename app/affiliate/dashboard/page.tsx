@@ -6,6 +6,11 @@ import { ArrowRight, Wallet, WalletCards } from "lucide-react";
 import { getServerSession } from "@/lib/auth-server";
 import { getAffiliateByUserIdentity } from "@/lib/checkout/affiliate-service";
 import { getAffiliateCommissionOverview } from "@/lib/checkout/commission-service";
+import {
+  buildPayoutDestinationPreview,
+  getPayoutMethodLabel,
+  hasCompletePayoutDestination,
+} from "@/lib/checkout/payout-methods";
 import { getAffiliateVisitSummary } from "@/lib/checkout/affiliate-visit-service";
 import { getPayoutsForAffiliate } from "@/lib/checkout/payout-service";
 import { getWeeklyPayoutBatchesForAffiliate } from "@/lib/checkout/weekly-payout-service";
@@ -26,7 +31,6 @@ import {
 } from "./_components/affiliate-shell";
 import { AffiliateHeaderSummary } from "./_components/affiliate-header-summary";
 import { AffiliateRecoveryState } from "./_components/affiliate-recovery-state";
-import { formatWalletPreview, getConfiguredWallet } from "./wallet-utils";
 import { EmbeddedWalletForm } from "./wallet/wallet-form";
 
 export const metadata = {
@@ -101,10 +105,7 @@ export default async function AffiliateDashboardPage() {
   );
   const commissionPaid = weeklyBatches
     .filter((batch) => batch.status === "paid")
-    .reduce(
-      (sum, batch) => sum + Number(batch.totalNormalizedCommissionAmount),
-      0,
-    );
+    .reduce((sum, batch) => sum + Number(batch.netPayoutAmount), 0);
   const commissionPendingReview = earnings
     .filter((earning) => earning.status === "pending")
     .reduce(
@@ -115,10 +116,7 @@ export default async function AffiliateDashboardPage() {
     );
   const commissionApproved = weeklyBatches
     .filter((batch) => batch.status === "approved")
-    .reduce(
-      (sum, batch) => sum + Number(batch.totalNormalizedCommissionAmount),
-      0,
-    );
+    .reduce((sum, batch) => sum + Number(batch.netPayoutAmount), 0);
   const commissionRejected = earnings
     .filter((earning) => earning.status === "rejected")
     .reduce(
@@ -129,9 +127,25 @@ export default async function AffiliateDashboardPage() {
     );
   const commissionDue = commissionPendingReview + commissionApproved;
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://revalin.ca";
-  const configuredWallet = getConfiguredWallet(affiliate.walletAddress);
-  const walletPreview = formatWalletPreview(affiliate.walletAddress);
-  const hasWallet = Boolean(configuredWallet);
+  const payoutReady = hasCompletePayoutDestination({
+    payoutMethod: affiliate.payoutMethod,
+    walletAddress: affiliate.walletAddress,
+    achAccountHolderName: affiliate.achAccountHolderName,
+    achBankName: affiliate.achBankName,
+    achAccountType: affiliate.achAccountType,
+    achRoutingNumberLast4: affiliate.achRoutingNumberLast4,
+    achAccountNumberLast4: affiliate.achAccountNumberLast4,
+  });
+  const payoutDestinationPreview = buildPayoutDestinationPreview({
+    payoutMethod: affiliate.payoutMethod,
+    walletAddress: affiliate.walletAddress,
+    achAccountHolderName: affiliate.achAccountHolderName,
+    achBankName: affiliate.achBankName,
+    achAccountType: affiliate.achAccountType,
+    achRoutingNumberLast4: affiliate.achRoutingNumberLast4,
+    achAccountNumberLast4: affiliate.achAccountNumberLast4,
+  });
+  const payoutMethodLabel = getPayoutMethodLabel(affiliate.payoutMethod);
 
   return (
     <div className="space-y-3">
@@ -184,10 +198,10 @@ export default async function AffiliateDashboardPage() {
               </div>
               <div className="bg-white/6 px-3.5 py-3">
                 <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#F4F1EA]/48">
-                  Wallet
+                  Payout method
                 </p>
                 <p className="mt-1.5 text-sm font-semibold text-[#F4F1EA]">
-                  {hasWallet ? "Connected" : "Not connected"}
+                  {payoutMethodLabel}
                 </p>
               </div>
               <div className="bg-white/6 px-3.5 py-3">
@@ -245,15 +259,15 @@ export default async function AffiliateDashboardPage() {
       </section>
 
       <AffiliatePanel id="payout-settings" className="scroll-mt-24">
-        <details className="group" open={!hasWallet}>
+        <details className="group" open={!payoutReady}>
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
             <AffiliateSectionHeader
-              eyebrow="Wallet"
+              eyebrow="Payout"
               title="Payout settings"
-              description="Add or update the Polygon wallet that should receive approved USDC payouts. We use wallet payouts because they are faster than handling manual payout details later."
+              description="Choose whether approved payouts should go to your Polygon USDC wallet or by ACH bank transfer."
             />
             <span className={`${affiliateChipClass} shrink-0`}>
-              {hasWallet ? "Wallet on file" : "Wallet needed"}
+              {payoutReady ? `${payoutMethodLabel} on file` : "Payout details needed"}
             </span>
           </summary>
 
@@ -261,10 +275,13 @@ export default async function AffiliateDashboardPage() {
             <div className={`${affiliateInsetClass} px-3 py-3`}>
               <div className="flex items-center gap-2 text-xs font-semibold text-[#0B2E2F]">
                 <Wallet className="size-4" />
-                Current wallet
+                Current destination
               </div>
-              <p className="mt-2 font-mono text-xs font-semibold text-[#0B2E2F]">
-                {walletPreview}
+              <p className="mt-2 text-xs font-semibold text-[#0B2E2F]">
+                {payoutDestinationPreview.title}
+              </p>
+              <p className="mt-1 text-[11px] text-[#0B2E2F]/58">
+                {payoutDestinationPreview.subtitle || payoutMethodLabel}
               </p>
             </div>
 
@@ -274,9 +291,11 @@ export default async function AffiliateDashboardPage() {
                 Payout readiness
               </div>
               <p className="mt-2 text-[11px] leading-4 text-[#0B2E2F]/62">
-                {hasWallet
-                  ? "Approved payouts will use this wallet so the team can send USDC faster."
-                  : "Add a Polygon wallet here so the team can send approved USDC payouts faster."}
+                {payoutReady
+                  ? affiliate.payoutMethod === "ach_bank_transfer"
+                    ? "Approved ACH payouts will use your saved bank details and automatically deduct the 5% payout fee."
+                    : "Approved payouts will use your Polygon wallet and will not incur the ACH fee."
+                  : "Add payout details here so the team can send approved payouts."}
               </p>
             </div>
 
@@ -300,7 +319,15 @@ export default async function AffiliateDashboardPage() {
           </div>
 
           <div className="mt-3">
-            <EmbeddedWalletForm currentWallet={configuredWallet} />
+            <EmbeddedWalletForm
+              currentMethod={affiliate.payoutMethod}
+              currentWallet={affiliate.walletAddress}
+              achAccountHolderName={affiliate.achAccountHolderName}
+              achBankName={affiliate.achBankName}
+              achAccountType={affiliate.achAccountType}
+              achRoutingNumberLast4={affiliate.achRoutingNumberLast4}
+              achAccountNumberLast4={affiliate.achAccountNumberLast4}
+            />
           </div>
         </details>
       </AffiliatePanel>
@@ -335,7 +362,7 @@ export default async function AffiliateDashboardPage() {
           <AffiliateStatCard
             label="Paid out"
             value={`$${commissionPaid.toFixed(2)}`}
-            detail="Completed USDC payouts."
+            detail="Completed net payouts after any ACH fee."
             size="compact"
           />
           <AffiliateStatCard

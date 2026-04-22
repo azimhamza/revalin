@@ -5,6 +5,7 @@ import { ArrowLeft, Wallet } from "lucide-react";
 import { PageLayout } from "@/components/layout/page-layout";
 import { getServerSession } from "@/lib/auth-server";
 import { getPromoterByUserIdentity } from "@/lib/checkout/promoter-service";
+import { hasCompletePayoutDestination } from "@/lib/checkout/payout-methods";
 
 import { PromoterNav } from "./_components/promoter-nav";
 import {
@@ -12,13 +13,6 @@ import {
   promoterPrimaryButtonClass,
   promoterSecondaryButtonClass,
 } from "./_components/promoter-shell";
-
-function walletPreview(value: string) {
-  const normalized = value.trim();
-  if (!normalized) return "No wallet on file";
-  if (normalized.length <= 14) return normalized;
-  return `${normalized.slice(0, 8)}...${normalized.slice(-6)}`;
-}
 
 export default async function PromoterDashboardLayout({
   children,
@@ -122,7 +116,15 @@ export default async function PromoterDashboardLayout({
     );
   }
 
-  const hasWallet = Boolean(promoter.walletAddress?.trim());
+  const hasPayoutDestination = hasCompletePayoutDestination({
+    payoutMethod: promoter.payoutMethod,
+    walletAddress: promoter.walletAddress,
+    achAccountHolderName: promoter.achAccountHolderName,
+    achBankName: promoter.achBankName,
+    achAccountType: promoter.achAccountType,
+    achRoutingNumberLast4: promoter.achRoutingNumberLast4,
+    achAccountNumberLast4: promoter.achAccountNumberLast4,
+  });
 
   return (
     <PageLayout>
@@ -141,7 +143,7 @@ export default async function PromoterDashboardLayout({
                   Promoter dashboard
                 </h1>
                 <p className="max-w-3xl text-[12px] leading-5 text-[#F4F1EA]/70">
-                  Share your referral link, track recruited partners, and manage the wallet used for promoter payouts.
+                  Share your referral link, track recruited partners, and manage the payout destination used for promoter payouts.
                 </p>
               </div>
 
@@ -154,11 +156,11 @@ export default async function PromoterDashboardLayout({
                   Back to account
                 </Link>
                 <Link
-                  href="/promoter/dashboard#payout-wallet"
+                  href="/promoter/dashboard#payout-settings"
                   className={`inline-flex items-center justify-center gap-2 ${promoterPrimaryButtonClass}`}
                 >
                   <Wallet className="size-4" />
-                  {hasWallet ? "Payout settings" : "Set payout wallet"}
+                  {hasPayoutDestination ? "Payout settings" : "Set payout details"}
                 </Link>
               </div>
             </div>

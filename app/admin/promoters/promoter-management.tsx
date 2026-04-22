@@ -23,6 +23,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
+import {
+  buildPayoutDestinationPreview,
+  getPayoutMethodShortLabel,
+  hasCompletePayoutDestination,
+} from "@/lib/checkout/payout-methods";
 import type {
   PromoterAffiliateCandidate,
   PromoterRecord,
@@ -155,7 +160,17 @@ export function PromoterManagement({
       promoters: promoters.length,
       invites: invites.length,
       successful: invites.filter((entry) => entry.invite.status === "successful").length,
-      walletReady: promoters.filter((entry) => entry.walletAddress.trim()).length,
+      payoutReady: promoters.filter((entry) =>
+        hasCompletePayoutDestination({
+          payoutMethod: entry.payoutMethod,
+          walletAddress: entry.walletAddress,
+          achAccountHolderName: entry.achAccountHolderName,
+          achBankName: entry.achBankName,
+          achAccountType: entry.achAccountType,
+          achRoutingNumberLast4: entry.achRoutingNumberLast4,
+          achAccountNumberLast4: entry.achAccountNumberLast4,
+        }),
+      ).length,
     }),
     [invites, promoters],
   );
@@ -171,7 +186,10 @@ export function PromoterManagement({
         (p) =>
           p.name.toLowerCase().includes(q) ||
           p.email.toLowerCase().includes(q) ||
-          p.code.toLowerCase().includes(q),
+          p.code.toLowerCase().includes(q) ||
+          getPayoutMethodShortLabel(p.payoutMethod).toLowerCase().includes(q) ||
+          (p.achBankName || "").toLowerCase().includes(q) ||
+          (p.achAccountNumberLast4 || "").toLowerCase().includes(q),
       );
     }
     return result;
@@ -554,7 +572,7 @@ export function PromoterManagement({
         <AdminStatCard label="Promoters" value={counts.promoters} size="compact" />
         <AdminStatCard label="Invites" value={counts.invites} size="compact" />
         <AdminStatCard label="Active commissions" value={counts.successful} size="compact" />
-        <AdminStatCard label="Wallets ready" value={counts.walletReady} size="compact" />
+        <AdminStatCard label="Payouts ready" value={counts.payoutReady} size="compact" />
       </div>
 
       {error ? (
@@ -577,7 +595,7 @@ export function PromoterManagement({
               value={promoterSearch}
               onChange={(e) => setPromoterSearch(e.target.value)}
               className={`${adminFieldClass} pl-8`}
-              placeholder="Search promoters by name, email, or code"
+              placeholder="Search promoters by name, email, code, or payout destination"
             />
           </div>
           <select
@@ -610,12 +628,32 @@ export function PromoterManagement({
               <TableHead>Status</TableHead>
               <TableHead>Code</TableHead>
               <TableHead>Default rate</TableHead>
-              <TableHead>Wallet</TableHead>
+              <TableHead>Payout</TableHead>
               <TableHead className="w-[120px]" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredPromoters.map((promoter) => (
+            {filteredPromoters.map((promoter) => {
+              const payoutPreview = buildPayoutDestinationPreview({
+                payoutMethod: promoter.payoutMethod,
+                walletAddress: promoter.walletAddress,
+                achAccountHolderName: promoter.achAccountHolderName,
+                achBankName: promoter.achBankName,
+                achAccountType: promoter.achAccountType,
+                achRoutingNumberLast4: promoter.achRoutingNumberLast4,
+                achAccountNumberLast4: promoter.achAccountNumberLast4,
+              });
+              const payoutReady = hasCompletePayoutDestination({
+                payoutMethod: promoter.payoutMethod,
+                walletAddress: promoter.walletAddress,
+                achAccountHolderName: promoter.achAccountHolderName,
+                achBankName: promoter.achBankName,
+                achAccountType: promoter.achAccountType,
+                achRoutingNumberLast4: promoter.achRoutingNumberLast4,
+                achAccountNumberLast4: promoter.achAccountNumberLast4,
+              });
+
+              return (
               <TableRow key={promoter.id}>
                 <TableCell>
                   <p className="text-xs font-semibold text-foreground">{promoter.name}</p>
@@ -633,7 +671,13 @@ export function PromoterManagement({
                   {formatRate(promoter.defaultCommissionRate)}
                 </TableCell>
                 <TableCell className="text-[11px] text-muted-foreground">
-                  {promoter.walletAddress.trim() ? "Wallet on file" : "No wallet on file"}
+                  <p className="font-semibold text-foreground">
+                    {getPayoutMethodShortLabel(promoter.payoutMethod)}
+                  </p>
+                  <p className="mt-1">{payoutPreview.title}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {payoutPreview.subtitle || (payoutReady ? "Ready" : "Missing details")}
+                  </p>
                 </TableCell>
                 <TableCell>
                   <Button
@@ -646,7 +690,7 @@ export function PromoterManagement({
                   </Button>
                 </TableCell>
               </TableRow>
-            ))}
+            )})}
             {filteredPromoters.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="py-8 text-center text-xs text-muted-foreground">

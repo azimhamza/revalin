@@ -33,6 +33,12 @@ type AffiliateRow = {
   name: string;
   email: string;
   walletAddress: string;
+  payoutMethod: "crypto_usdc_polygon" | "ach_bank_transfer";
+  achAccountHolderName: string | null;
+  achBankName: string | null;
+  achAccountType: "checking" | "savings" | null;
+  achRoutingNumberLast4: string | null;
+  achAccountNumberLast4: string | null;
   socialProfiles: Array<{
     platform: string;
     url: string;
@@ -137,6 +143,12 @@ export default async function AffiliatesPage({
       iv: row.walletIv,
       tag: row.walletTag,
     }),
+    payoutMethod: row.payoutMethod,
+    achAccountHolderName: row.achAccountHolderName,
+    achBankName: row.achBankName,
+    achAccountType: row.achAccountType,
+    achRoutingNumberLast4: row.achRoutingNumberLast4,
+    achAccountNumberLast4: row.achAccountNumberLast4,
     socialProfiles: row.socialProfiles || [],
     userId: row.userId,
     swellCouponId: row.swellCouponId,

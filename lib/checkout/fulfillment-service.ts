@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { checkoutOrders } from '@/lib/db/schema';
 import { getCheckoutOrder, updateCheckoutOrder } from './order-store';
@@ -10,6 +10,24 @@ import {
 import type { CheckoutOrderRecord, FulfillmentStatus } from './types';
 
 type FulfillmentOrderRow = typeof checkoutOrders.$inferSelect;
+
+function isSuccessfulFulfillmentPaymentStatus(status?: string | null) {
+  const normalized = status?.trim().toLowerCase();
+  return normalized === 'finished' || normalized === 'paid';
+}
+
+function resolveFulfillmentStatus(
+  row: Pick<FulfillmentOrderRow, 'fulfillmentStatus' | 'paymentStatus'>
+): FulfillmentStatus | null {
+  const explicitStatus = (row.fulfillmentStatus as FulfillmentStatus) ?? null;
+  if (explicitStatus) {
+    return explicitStatus;
+  }
+
+  return isSuccessfulFulfillmentPaymentStatus(row.paymentStatus)
+    ? 'pending'
+    : null;
+}
 
 export type FulfillmentOrderListItem = {
   orderId: string;
@@ -37,6 +55,7 @@ export type FulfillmentOrderListItem = {
 function rowToListItem(row: FulfillmentOrderRow): FulfillmentOrderListItem {
   const shipengine = row.shipengine as CheckoutOrderRecord['shipengine'];
   const shippingAddress = row.shippingAddress as CheckoutOrderRecord['shippingAddress'];
+  const shippingService = row.shippingService as CheckoutOrderRecord['shippingService'];
   const totals = row.totals as CheckoutOrderRecord['totals'];
   const swell = row.swell as CheckoutOrderRecord['swell'];
   const lines = row.lines as CheckoutOrderRecord['lines'];
@@ -46,13 +65,13 @@ function rowToListItem(row: FulfillmentOrderRow): FulfillmentOrderListItem {
     orderNumber: swell?.orderNumber || row.orderId,
     email: row.email,
     customerName: `${shippingAddress?.firstName || ''} ${shippingAddress?.lastName || ''}`.trim(),
-    fulfillmentStatus: (row.fulfillmentStatus as FulfillmentStatus) ?? null,
+    fulfillmentStatus: resolveFulfillmentStatus(row),
     paymentStatus: row.paymentStatus,
     currencyCode: row.currencyCode,
     totalAmount: totals?.totalAmount?.amount || '0',
     itemCount: lines?.reduce((sum: number, l: { quantity: number }) => sum + l.quantity, 0) || 0,
-    carrier: shipengine?.carrier || null,
-    service: shipengine?.service || null,
+    carrier: shipengine?.carrier || shippingService?.carrier || null,
+    service: shipengine?.service || shippingService?.name || null,
     trackingCode: shipengine?.trackingCode || null,
     labelUrl: shipengine?.labelUrl || null,
     publicTrackingUrl: shipengine?.publicTrackingUrl || null,
@@ -75,19 +94,33 @@ export async function listFulfillmentOrders(args: {
   const offset = (page - 1) * pageSize;
 
   const conditions = [];
+  const successfulUnqueuedOrderCondition = and(
+    isNull(checkoutOrders.fulfillmentStatus),
+    sql`lower(${checkoutOrders.paymentStatus}) in ('finished', 'paid')`
+  );
 
-  if (args.status && args.status !== 'all') {
+  if (args.status === 'pending') {
+    conditions.push(
+      or(
+        eq(checkoutOrders.fulfillmentStatus, 'pending'),
+        successfulUnqueuedOrderCondition
+      )
+    );
+  } else if (args.status && args.status !== 'all') {
     conditions.push(eq(checkoutOrders.fulfillmentStatus, args.status));
   } else if (!args.status || args.status === 'all') {
     // Show all orders that have entered the fulfillment pipeline
     conditions.push(
-      inArray(checkoutOrders.fulfillmentStatus, [
-        'pending',
-        'label_ready',
-        'packed',
-        'handed_to_carrier',
-        'error',
-      ]),
+      or(
+        inArray(checkoutOrders.fulfillmentStatus, [
+          'pending',
+          'label_ready',
+          'packed',
+          'handed_to_carrier',
+          'error',
+        ]),
+        successfulUnqueuedOrderCondition
+      )
     );
   }
 

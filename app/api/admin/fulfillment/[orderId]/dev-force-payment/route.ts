@@ -24,14 +24,20 @@ export const POST = createApiRoute({
       throw apiError.notFound('Order not found.');
     }
 
-    // Force payment status to "finished"
+    const targetStatus =
+      order.payment.provider === 'shieldclimb' ? 'paid' : 'finished';
+
+    // Force payment status to a successful provider-specific state and make
+    // sure the order enters the fulfillment queue immediately.
     await updateCheckoutOrder(params.orderId, (current) => ({
       ...current,
       payment: {
         ...current.payment,
-        status: 'finished',
+        status: targetStatus,
       },
       processing: ensureCheckoutOrderProcessing(current.processing),
+      fulfillmentStatus: current.fulfillmentStatus ?? 'pending',
+      latestError: null,
     }));
 
     // Run the full successful-order processing pipeline

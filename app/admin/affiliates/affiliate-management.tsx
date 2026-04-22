@@ -41,6 +41,11 @@ import {
   getApiErrorMessage,
   readJsonSafely,
 } from "@/lib/api/client";
+import {
+  buildPayoutDestinationPreview,
+  getPayoutMethodShortLabel,
+  hasCompletePayoutDestination,
+} from "@/lib/checkout/payout-methods";
 import type { AffiliateSetupPreview } from "@/lib/checkout/affiliate-service";
 
 import {
@@ -57,6 +62,12 @@ type AffiliateRow = {
   name: string;
   email: string;
   walletAddress: string;
+  payoutMethod: "crypto_usdc_polygon" | "ach_bank_transfer";
+  achAccountHolderName: string | null;
+  achBankName: string | null;
+  achAccountType: "checking" | "savings" | null;
+  achRoutingNumberLast4: string | null;
+  achAccountNumberLast4: string | null;
   socialProfiles: Array<{
     platform: string;
     url: string;
@@ -344,6 +355,11 @@ export function AffiliateManagement({
         entry.code.toLowerCase().includes(normalizedQuery) ||
         entry.name.toLowerCase().includes(normalizedQuery) ||
         entry.email.toLowerCase().includes(normalizedQuery) ||
+        getPayoutMethodShortLabel(entry.payoutMethod)
+          .toLowerCase()
+          .includes(normalizedQuery) ||
+        (entry.achBankName || "").toLowerCase().includes(normalizedQuery) ||
+        (entry.achAccountNumberLast4 || "").toLowerCase().includes(normalizedQuery) ||
         entry.socialProfiles.some(
           (profile) =>
             profile.platform.toLowerCase().includes(normalizedQuery) ||
@@ -2120,7 +2136,7 @@ export function AffiliateManagement({
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search code, name, email, or wallet"
+              placeholder="Search code, name, email, payout method, or destination"
               className={adminFieldClass}
             />
 
@@ -2405,7 +2421,7 @@ export function AffiliateManagement({
                   Effective commission
                 </TableHead>
                 <TableHead className="px-3 py-2.5 text-[9px] uppercase tracking-[0.14em] text-[#0B2E2F]/46">
-                  Wallet
+                  Payout
                 </TableHead>
                 <TableHead className="px-3 py-2.5 text-[9px] uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Linked
@@ -2418,7 +2434,27 @@ export function AffiliateManagement({
             </TableHeader>
 
             <TableBody>
-              {filteredAffiliates.map((entry) => (
+              {filteredAffiliates.map((entry) => {
+                const payoutPreview = buildPayoutDestinationPreview({
+                  payoutMethod: entry.payoutMethod,
+                  walletAddress: entry.walletAddress,
+                  achAccountHolderName: entry.achAccountHolderName,
+                  achBankName: entry.achBankName,
+                  achAccountType: entry.achAccountType,
+                  achRoutingNumberLast4: entry.achRoutingNumberLast4,
+                  achAccountNumberLast4: entry.achAccountNumberLast4,
+                });
+                const payoutReady = hasCompletePayoutDestination({
+                  payoutMethod: entry.payoutMethod,
+                  walletAddress: entry.walletAddress,
+                  achAccountHolderName: entry.achAccountHolderName,
+                  achBankName: entry.achBankName,
+                  achAccountType: entry.achAccountType,
+                  achRoutingNumberLast4: entry.achRoutingNumberLast4,
+                  achAccountNumberLast4: entry.achAccountNumberLast4,
+                });
+
+                return (
                 <TableRow
                   key={entry.id}
                   className="border-b border-[#0B2E2F]/8 bg-[#FCFAF6] hover:bg-[#F5EFE4]"
@@ -2505,10 +2541,16 @@ export function AffiliateManagement({
                       </Badge>
                     ) : null}
                   </TableCell>
-                  <TableCell className="max-w-[180px] px-3 py-2.5 align-top font-mono text-[11px] text-[#0B2E2F]/48">
-                    <span className="block truncate">
-                      {entry.walletAddress || "Not connected"}
-                    </span>
+                  <TableCell className="max-w-[220px] px-3 py-2.5 align-top text-[11px] text-[#0B2E2F]/48">
+                    <p className="text-xs font-semibold text-[#0B2E2F]">
+                      {getPayoutMethodShortLabel(entry.payoutMethod)}
+                    </p>
+                    <p className="mt-1 truncate text-[11px] text-[#0B2E2F]/58">
+                      {payoutPreview.title}
+                    </p>
+                    <p className="mt-1 truncate text-[11px] text-[#0B2E2F]/46">
+                      {payoutPreview.subtitle || (payoutReady ? "Ready" : "Missing details")}
+                    </p>
                   </TableCell>
                   <TableCell className="px-3 py-2.5 align-top text-xs text-[#0B2E2F]/56">
                     {entry.userId ? "Connected" : "Not linked"}
@@ -2576,7 +2618,7 @@ export function AffiliateManagement({
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
-              ))}
+              )})}
 
               {filteredAffiliates.length === 0 ? (
                 <TableRow className="border-b-0 bg-[#FCFAF6] hover:bg-[#FCFAF6]">

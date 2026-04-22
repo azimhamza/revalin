@@ -24,6 +24,17 @@ import {
   parseAmount,
 } from "@/lib/checkout/affiliate-math";
 import {
+  CRYPTO_PAYOUT_METHOD,
+  buildAdminPayoutDestinationDetail,
+  buildPayoutDestinationPreview,
+  calculatePayoutSettlementAmounts,
+  createBatchPayoutSnapshot,
+  decryptOptionalValue,
+  hasCompletePayoutDestination,
+  type AdminPayoutDestinationDetail,
+  type PayoutDestinationPreview,
+} from "@/lib/checkout/payout-methods";
+import {
   formatPayoutPeriodLabel,
   buildWeeklyPayoutPeriod,
   getDefaultPayoutTimezone,
@@ -40,11 +51,14 @@ export type WeeklyPayoutBatchRecord = typeof affiliateWeeklyPayouts.$inferSelect
 
 export type WeeklyPayoutBatchWithWallet = WeeklyPayoutBatchRecord & {
   walletAddress: string;
+  destinationPreview: PayoutDestinationPreview;
+  paymentReference: string | null;
 };
 
 export type WeeklyPayoutBatchDetail = WeeklyPayoutBatchWithWallet & {
   affiliateEmail: string;
   affiliateName: string;
+  destinationDetail: AdminPayoutDestinationDetail;
   earnings: AffiliateEarningRecord[];
 };
 
@@ -85,6 +99,72 @@ function decryptWalletSnapshot(
     iv: batch.walletIv,
     tag: batch.walletTag,
   });
+}
+
+function buildAffiliateBatchSnapshot(affiliate: typeof affiliates.$inferSelect) {
+  try {
+    return createBatchPayoutSnapshot({
+      payoutMethod: affiliate.payoutMethod,
+      walletAddress: decryptWalletSnapshot(affiliate),
+      achAccountHolderName: affiliate.achAccountHolderName,
+      achBankName: affiliate.achBankName,
+      achAccountType: affiliate.achAccountType,
+      achRoutingNumber: decryptOptionalValue({
+        ciphertext: affiliate.encryptedAchRoutingNumber,
+        iv: affiliate.achRoutingNumberIv,
+        tag: affiliate.achRoutingNumberTag,
+      }),
+      achAccountNumber: decryptOptionalValue({
+        ciphertext: affiliate.encryptedAchAccountNumber,
+        iv: affiliate.achAccountNumberIv,
+        tag: affiliate.achAccountNumberTag,
+      }),
+    });
+  } catch {
+    return {
+      payoutMethod: affiliate.payoutMethod,
+      encryptedWalletAddress: affiliate.encryptedWalletAddress,
+      walletIv: affiliate.walletIv,
+      walletTag: affiliate.walletTag,
+      achAccountHolderName: affiliate.achAccountHolderName,
+      achBankName: affiliate.achBankName,
+      achAccountType: affiliate.achAccountType,
+      encryptedAchRoutingNumber: affiliate.encryptedAchRoutingNumber,
+      achRoutingNumberIv: affiliate.achRoutingNumberIv,
+      achRoutingNumberTag: affiliate.achRoutingNumberTag,
+      achRoutingNumberLast4: affiliate.achRoutingNumberLast4,
+      encryptedAchAccountNumber: affiliate.encryptedAchAccountNumber,
+      achAccountNumberIv: affiliate.achAccountNumberIv,
+      achAccountNumberTag: affiliate.achAccountNumberTag,
+      achAccountNumberLast4: affiliate.achAccountNumberLast4,
+    };
+  }
+}
+
+function serializeWeeklyBatch(row: WeeklyPayoutBatchRecord) {
+  const walletAddress =
+    row.payoutMethod === CRYPTO_PAYOUT_METHOD ? decryptWalletSnapshot(row) : "";
+
+  return {
+    ...row,
+    walletAddress,
+    paymentReference: row.paymentReference ?? row.txHash ?? null,
+    destinationPreview: buildPayoutDestinationPreview({
+      payoutMethod: row.payoutMethod,
+      walletAddress,
+      achAccountHolderName: row.achAccountHolderName,
+      achBankName: row.achBankName,
+      achAccountType: row.achAccountType,
+      achRoutingNumberLast4: row.achRoutingNumberLast4,
+      achAccountNumberLast4: row.achAccountNumberLast4,
+      encryptedAchRoutingNumber: row.encryptedAchRoutingNumber,
+      achRoutingNumberIv: row.achRoutingNumberIv,
+      achRoutingNumberTag: row.achRoutingNumberTag,
+      encryptedAchAccountNumber: row.encryptedAchAccountNumber,
+      achAccountNumberIv: row.achAccountNumberIv,
+      achAccountNumberTag: row.achAccountNumberTag,
+    }),
+  } satisfies WeeklyPayoutBatchWithWallet;
 }
 
 function getPeriodFromDate(periodDate?: string | Date) {
@@ -308,6 +388,11 @@ export async function generateWeeklyPayoutBatches(args?: {
         0,
       ),
     );
+    const payoutSnapshot = buildAffiliateBatchSnapshot(firstRow.affiliate);
+    const settlementAmounts = calculatePayoutSettlementAmounts({
+      grossAmount: totalNormalizedCommissionAmount,
+      payoutMethod: payoutSnapshot.payoutMethod,
+    });
     const approvedAt = existingBatch?.approvedAt ?? new Date();
 
     const [batch] = await db
@@ -323,15 +408,17 @@ export async function generateWeeklyPayoutBatches(args?: {
         earningCount: rows.length,
         totalNormalizedCommissionAmount,
         payoutCurrencyCode: "USD",
+        ...payoutSnapshot,
         currentTierKey: summary.tierKey,
         currentTierLabel: summary.tierLabel,
         nextTierKey: summary.nextTierKey,
         nextTierLabel: summary.nextTierLabel,
         amountToNextTier: summary.amountToNextTier,
         effectiveRate: summary.effectiveRate,
-        encryptedWalletAddress: firstRow.affiliate.encryptedWalletAddress,
-        walletIv: firstRow.affiliate.walletIv,
-        walletTag: firstRow.affiliate.walletTag,
+        payoutFeeRate: settlementAmounts.payoutFeeRate,
+        payoutFeeAmount: settlementAmounts.payoutFeeAmount,
+        netPayoutAmount: settlementAmounts.netPayoutAmount,
+        paymentReference: existingBatch?.paymentReference ?? existingBatch?.txHash ?? null,
         adminNotes: existingBatch?.adminNotes ?? null,
         status: "approved",
         approvedAt,
@@ -356,9 +443,10 @@ export async function generateWeeklyPayoutBatches(args?: {
           nextTierLabel: summary.nextTierLabel,
           amountToNextTier: summary.amountToNextTier,
           effectiveRate: summary.effectiveRate,
-          encryptedWalletAddress: firstRow.affiliate.encryptedWalletAddress,
-          walletIv: firstRow.affiliate.walletIv,
-          walletTag: firstRow.affiliate.walletTag,
+          ...payoutSnapshot,
+          payoutFeeRate: settlementAmounts.payoutFeeRate,
+          payoutFeeAmount: settlementAmounts.payoutFeeAmount,
+          netPayoutAmount: settlementAmounts.netPayoutAmount,
           status: "approved",
           approvedAt,
           rejectedAt: null,
@@ -449,6 +537,11 @@ export async function generatePayNowPayoutBatches() {
         0,
       ),
     );
+    const payoutSnapshot = buildAffiliateBatchSnapshot(firstRow.affiliate);
+    const settlementAmounts = calculatePayoutSettlementAmounts({
+      grossAmount: totalNormalizedCommissionAmount,
+      payoutMethod: payoutSnapshot.payoutMethod,
+    });
     const approvedAt = existingBatch?.approvedAt ?? now;
     const batchValues = {
       affiliateCode: firstRow.earning.affiliateCode,
@@ -458,15 +551,17 @@ export async function generatePayNowPayoutBatches() {
       earningCount: rows.length,
       totalNormalizedCommissionAmount,
       payoutCurrencyCode: "USD",
+      ...payoutSnapshot,
       currentTierKey: summary.tierKey,
       currentTierLabel: summary.tierLabel,
       nextTierKey: summary.nextTierKey,
       nextTierLabel: summary.nextTierLabel,
       amountToNextTier: summary.amountToNextTier,
       effectiveRate: summary.effectiveRate,
-      encryptedWalletAddress: firstRow.affiliate.encryptedWalletAddress,
-      walletIv: firstRow.affiliate.walletIv,
-      walletTag: firstRow.affiliate.walletTag,
+      payoutFeeRate: settlementAmounts.payoutFeeRate,
+      payoutFeeAmount: settlementAmounts.payoutFeeAmount,
+      netPayoutAmount: settlementAmounts.netPayoutAmount,
+      paymentReference: existingBatch?.paymentReference ?? existingBatch?.txHash ?? null,
       status: "approved" as const,
       approvedAt,
       rejectedAt: null,
@@ -564,10 +659,7 @@ export async function listWeeklyPayoutBatches(args?: {
       .orderBy(desc(affiliateWeeklyPayouts.periodStart), desc(affiliateWeeklyPayouts.createdAt))
       .limit(args?.limit ?? 500);
 
-    return rows.map((row) => ({
-      ...row,
-      walletAddress: decryptWalletSnapshot(row),
-    }));
+    return rows.map(serializeWeeklyBatch);
   } catch (error) {
     logWeeklyPayoutError("list", error, args?.affiliateId);
     return [];
@@ -610,15 +702,35 @@ export async function getWeeklyPayoutBatchById(batchId: string) {
     .orderBy(desc(affiliatePayouts.earnedAt), desc(affiliatePayouts.createdAt));
 
   return {
-    ...row.batch,
-    walletAddress: decryptWalletSnapshot(row.batch),
+    ...serializeWeeklyBatch(row.batch),
     affiliateEmail: row.affiliateEmail,
     affiliateName: row.affiliateName,
+    destinationDetail: buildAdminPayoutDestinationDetail({
+      payoutMethod: row.batch.payoutMethod,
+      walletAddress:
+        row.batch.payoutMethod === CRYPTO_PAYOUT_METHOD
+          ? decryptWalletSnapshot(row.batch)
+          : "",
+      achAccountHolderName: row.batch.achAccountHolderName,
+      achBankName: row.batch.achBankName,
+      achAccountType: row.batch.achAccountType,
+      achRoutingNumberLast4: row.batch.achRoutingNumberLast4,
+      achAccountNumberLast4: row.batch.achAccountNumberLast4,
+      encryptedAchRoutingNumber: row.batch.encryptedAchRoutingNumber,
+      achRoutingNumberIv: row.batch.achRoutingNumberIv,
+      achRoutingNumberTag: row.batch.achRoutingNumberTag,
+      encryptedAchAccountNumber: row.batch.encryptedAchAccountNumber,
+      achAccountNumberIv: row.batch.achAccountNumberIv,
+      achAccountNumberTag: row.batch.achAccountNumberTag,
+    }),
     earnings,
   } satisfies WeeklyPayoutBatchDetail;
 }
 
-export async function markWeeklyPayoutBatchPaid(batchId: string, txHash: string) {
+export async function markWeeklyPayoutBatchPaid(
+  batchId: string,
+  paymentReference: string,
+) {
   const batch = await getWeeklyPayoutBatchById(batchId);
   if (!batch) {
     throw new Error("Weekly payout batch not found.");
@@ -632,13 +744,37 @@ export async function markWeeklyPayoutBatchPaid(batchId: string, txHash: string)
     throw new Error("Rejected weekly payout batches cannot be marked paid.");
   }
 
+  if (
+    !hasCompletePayoutDestination({
+      payoutMethod: batch.payoutMethod,
+      walletAddress: batch.walletAddress,
+      achAccountHolderName: batch.achAccountHolderName,
+      achBankName: batch.achBankName,
+      achAccountType: batch.achAccountType,
+      achRoutingNumberLast4: batch.achRoutingNumberLast4,
+      achAccountNumberLast4: batch.achAccountNumberLast4,
+      encryptedAchRoutingNumber: batch.encryptedAchRoutingNumber,
+      achRoutingNumberIv: batch.achRoutingNumberIv,
+      achRoutingNumberTag: batch.achRoutingNumberTag,
+      encryptedAchAccountNumber: batch.encryptedAchAccountNumber,
+      achAccountNumberIv: batch.achAccountNumberIv,
+      achAccountNumberTag: batch.achAccountNumberTag,
+    })
+  ) {
+    throw new Error("Payout destination is missing.");
+  }
+
   const paidAt = new Date();
+  const normalizedReference = paymentReference.trim();
+  const txHash =
+    batch.payoutMethod === CRYPTO_PAYOUT_METHOD ? normalizedReference : null;
 
   await db
     .update(affiliateWeeklyPayouts)
     .set({
       status: "paid",
       txHash,
+      paymentReference: normalizedReference,
       paidAt,
       updatedAt: new Date(),
     })
@@ -657,7 +793,7 @@ export async function markWeeklyPayoutBatchPaid(batchId: string, txHash: string)
   await sendAffiliateWeeklyPayoutSentEmail({
     affiliateEmail: batch.affiliateEmail,
     affiliateName: batch.affiliateName,
-    payoutAmount: batch.totalNormalizedCommissionAmount,
+    payoutAmount: batch.netPayoutAmount,
     payoutPeriod: formatPayoutPeriodLabel({
       start: batch.periodStart,
       end: batch.periodEnd,

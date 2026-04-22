@@ -227,10 +227,11 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
             href={order.labelUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-[#0B2E2F]/60 hover:bg-[#0B2E2F]/5 hover:text-[#0B2E2F] transition-colors"
+            className="flex items-center gap-1 rounded-lg bg-[#0B2E2F]/5 px-2.5 py-1.5 text-xs font-medium text-[#0B2E2F] hover:bg-[#0B2E2F]/10 transition-colors"
             title="Open label PDF"
           >
             <FileText className="size-3.5" />
+            Label
           </a>
         ) : null}
 

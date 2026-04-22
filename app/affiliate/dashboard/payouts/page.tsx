@@ -13,6 +13,11 @@ import {
 import { getServerSession } from "@/lib/auth-server";
 import { getAffiliateByUserIdentity } from "@/lib/checkout/affiliate-service";
 import { getAffiliateCommissionOverview } from "@/lib/checkout/commission-service";
+import {
+  buildPayoutDestinationPreview,
+  getPayoutMethodShortLabel,
+  hasCompletePayoutDestination,
+} from "@/lib/checkout/payout-methods";
 import { getPayoutsForAffiliate } from "@/lib/checkout/payout-service";
 import { formatPayoutPeriodLabel } from "@/lib/checkout/payout-periods";
 import { getWeeklyPayoutBatchesForAffiliate } from "@/lib/checkout/weekly-payout-service";
@@ -27,7 +32,6 @@ import {
   getPayoutStatusClasses,
 } from "../_components/affiliate-shell";
 import { AffiliateRecoveryState } from "../_components/affiliate-recovery-state";
-import { formatWalletPreview, getConfiguredWallet } from "../wallet-utils";
 
 export const metadata = {
   title: "Payouts | Growth Partner Dashboard | Revalin",
@@ -86,16 +90,10 @@ export default async function AffiliatePayoutsPage() {
     );
   const totalApproved = weeklyBatches
     .filter((batch) => batch.status === "approved")
-    .reduce(
-      (sum, batch) => sum + Number(batch.totalNormalizedCommissionAmount),
-      0,
-    );
+    .reduce((sum, batch) => sum + Number(batch.netPayoutAmount), 0);
   const totalPaid = weeklyBatches
     .filter((batch) => batch.status === "paid")
-    .reduce(
-      (sum, batch) => sum + Number(batch.totalNormalizedCommissionAmount),
-      0,
-    );
+    .reduce((sum, batch) => sum + Number(batch.netPayoutAmount), 0);
   const totalRejected = earnings
     .filter((earning) => earning.status === "rejected")
     .reduce(
@@ -107,9 +105,24 @@ export default async function AffiliatePayoutsPage() {
   const nextToSettle = weeklyBatches.find(
     (batch) => batch.status === "approved" || batch.status === "pending",
   );
-  const configuredWallet = getConfiguredWallet(affiliate.walletAddress);
-  const walletPreview = formatWalletPreview(affiliate.walletAddress);
-  const hasWallet = Boolean(configuredWallet);
+  const payoutReady = hasCompletePayoutDestination({
+    payoutMethod: affiliate.payoutMethod,
+    walletAddress: affiliate.walletAddress,
+    achAccountHolderName: affiliate.achAccountHolderName,
+    achBankName: affiliate.achBankName,
+    achAccountType: affiliate.achAccountType,
+    achRoutingNumberLast4: affiliate.achRoutingNumberLast4,
+    achAccountNumberLast4: affiliate.achAccountNumberLast4,
+  });
+  const payoutDestinationPreview = buildPayoutDestinationPreview({
+    payoutMethod: affiliate.payoutMethod,
+    walletAddress: affiliate.walletAddress,
+    achAccountHolderName: affiliate.achAccountHolderName,
+    achBankName: affiliate.achBankName,
+    achAccountType: affiliate.achAccountType,
+    achRoutingNumberLast4: affiliate.achRoutingNumberLast4,
+    achAccountNumberLast4: affiliate.achAccountNumberLast4,
+  });
   const providerSummary = Array.from(
     earnings.reduce((summary, earning) => {
       const key = earning.paymentProvider || "manual";
@@ -145,16 +158,16 @@ export default async function AffiliatePayoutsPage() {
           label="Ready to send"
           value={formatUsd(totalApproved)}
           detail={
-            hasWallet
-              ? `Wallet ${walletPreview}.`
-              : "Set a payout wallet before approved weekly payouts are sent."
+            payoutReady
+              ? `${payoutDestinationPreview.title}.`
+              : "Set payout details before approved weekly payouts are sent."
           }
           size="compact"
         />
         <AffiliateStatCard
           label="Paid out"
           value={formatUsd(totalPaid)}
-          detail="Completed weekly USDC payouts."
+          detail="Completed net payouts after any ACH fee."
           size="compact"
         />
         <AffiliateStatCard
@@ -184,16 +197,19 @@ export default async function AffiliatePayoutsPage() {
           <div className="border border-[#0B2E2F]/10 bg-[#FCFAF6] px-3 py-3">
             <div className="flex items-center gap-2 text-xs font-semibold text-[#0B2E2F]">
               <Wallet className="size-4" />
-              Current wallet
+              Current destination
             </div>
-            <p className="mt-2 font-mono text-xs font-semibold text-[#0B2E2F]">
-              {walletPreview}
+            <p className="mt-2 text-xs font-semibold text-[#0B2E2F]">
+              {payoutDestinationPreview.title}
+            </p>
+            <p className="mt-1 text-[11px] text-[#0B2E2F]/58">
+              {payoutDestinationPreview.subtitle || "-"}
             </p>
             <Link
               href="/affiliate/dashboard#payout-settings"
               className="mt-3 inline-flex items-center gap-2 text-[11px] font-semibold text-[#0B2E2F] underline underline-offset-4"
             >
-              {hasWallet ? "Update payout wallet" : "Set payout wallet"}
+              {payoutReady ? "Update payout settings" : "Set payout details"}
               <ArrowRight className="size-4" />
             </Link>
           </div>
@@ -278,13 +294,16 @@ export default async function AffiliatePayoutsPage() {
                   Earnings
                 </TableHead>
                 <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
-                  Payout
+                  Method
+                </TableHead>
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
+                  Gross / fee / net
                 </TableHead>
                 <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Status
                 </TableHead>
                 <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
-                  Transaction
+                  Reference
                 </TableHead>
               </TableRow>
             </TableHeader>
@@ -304,8 +323,24 @@ export default async function AffiliatePayoutsPage() {
                   <TableCell className="py-2 text-xs text-[#0B2E2F]/72">
                     {batch.earningCount}
                   </TableCell>
-                  <TableCell className="py-2 text-xs font-semibold text-[#0B2E2F]">
-                    {formatUsd(batch.totalNormalizedCommissionAmount)}
+                  <TableCell className="py-2 text-xs text-[#0B2E2F]/72">
+                    <p className="font-semibold text-[#0B2E2F]">
+                      {getPayoutMethodShortLabel(batch.payoutMethod)}
+                    </p>
+                    <p className="mt-1 text-[11px] text-[#0B2E2F]/52">
+                      {batch.destinationPreview.subtitle || batch.destinationPreview.title}
+                    </p>
+                  </TableCell>
+                  <TableCell className="py-2 text-xs text-[#0B2E2F]/72">
+                    <p className="font-semibold text-[#0B2E2F]">
+                      Gross {formatUsd(batch.totalNormalizedCommissionAmount)}
+                    </p>
+                    <p className="mt-1 text-[11px] text-[#0B2E2F]/52">
+                      ACH fee {formatUsd(batch.payoutFeeAmount)}
+                    </p>
+                    <p className="mt-1 font-semibold text-[#0B2E2F]">
+                      Net received {formatUsd(batch.netPayoutAmount)}
+                    </p>
                   </TableCell>
                   <TableCell className="py-2">
                     <span
@@ -325,6 +360,8 @@ export default async function AffiliatePayoutsPage() {
                         {batch.txHash.slice(0, 10)}...
                         <ArrowRight className="size-3" />
                       </a>
+                    ) : batch.paymentReference ? (
+                      batch.paymentReference
                     ) : (
                       "-"
                     )}
@@ -335,7 +372,7 @@ export default async function AffiliatePayoutsPage() {
               {weeklyBatches.length === 0 ? (
                 <TableRow className="border-[#0B2E2F]/10">
                   <TableCell
-                    colSpan={6}
+                    colSpan={7}
                     className="py-8 text-center text-[11px] text-[#0B2E2F]/58"
                   >
                     No weekly payout batches yet. New earnings accumulate through the

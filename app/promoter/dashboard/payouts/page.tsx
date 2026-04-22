@@ -15,6 +15,11 @@ import {
   listPromoterInvites,
 } from "@/lib/checkout/promoter-service";
 import { getPromoterEarningsForPromoter } from "@/lib/checkout/promoter-earnings-service";
+import {
+  buildPayoutDestinationPreview,
+  getPayoutMethodShortLabel,
+  hasCompletePayoutDestination,
+} from "@/lib/checkout/payout-methods";
 import { getPromoterWeeklyPayoutBatchesForPromoter } from "@/lib/checkout/promoter-weekly-payout-service";
 import { formatPayoutPeriodLabel } from "@/lib/checkout/payout-periods";
 
@@ -37,13 +42,6 @@ function formatUsd(value: string | number) {
     currency: "USD",
     maximumFractionDigits: 2,
   }).format(Number(value || 0));
-}
-
-function walletPreview(value: string) {
-  const normalized = value.trim();
-  if (!normalized) return "Not connected";
-  if (normalized.length <= 10) return normalized;
-  return `${normalized.slice(0, 6)}...${normalized.slice(-4)}`;
 }
 
 export default async function PromoterPayoutsPage() {
@@ -79,16 +77,10 @@ export default async function PromoterPayoutsPage() {
     );
   const totalApproved = weeklyBatches
     .filter((batch) => batch.status === "approved")
-    .reduce(
-      (sum, batch) => sum + Number(batch.totalNormalizedCommissionAmount),
-      0,
-    );
+    .reduce((sum, batch) => sum + Number(batch.netPayoutAmount), 0);
   const totalPaid = weeklyBatches
     .filter((batch) => batch.status === "paid")
-    .reduce(
-      (sum, batch) => sum + Number(batch.totalNormalizedCommissionAmount),
-      0,
-    );
+    .reduce((sum, batch) => sum + Number(batch.netPayoutAmount), 0);
   const totalRejected = earnings
     .filter((earning) => earning.status === "rejected")
     .reduce(
@@ -98,7 +90,24 @@ export default async function PromoterPayoutsPage() {
       0,
     );
 
-  const hasWallet = Boolean(promoter.walletAddress?.trim());
+  const payoutReady = hasCompletePayoutDestination({
+    payoutMethod: promoter.payoutMethod,
+    walletAddress: promoter.walletAddress,
+    achAccountHolderName: promoter.achAccountHolderName,
+    achBankName: promoter.achBankName,
+    achAccountType: promoter.achAccountType,
+    achRoutingNumberLast4: promoter.achRoutingNumberLast4,
+    achAccountNumberLast4: promoter.achAccountNumberLast4,
+  });
+  const payoutDestinationPreview = buildPayoutDestinationPreview({
+    payoutMethod: promoter.payoutMethod,
+    walletAddress: promoter.walletAddress,
+    achAccountHolderName: promoter.achAccountHolderName,
+    achBankName: promoter.achBankName,
+    achAccountType: promoter.achAccountType,
+    achRoutingNumberLast4: promoter.achRoutingNumberLast4,
+    achAccountNumberLast4: promoter.achAccountNumberLast4,
+  });
   const nextToSettle = weeklyBatches.find(
     (batch) => batch.status === "approved" || batch.status === "pending",
   );
@@ -146,16 +155,16 @@ export default async function PromoterPayoutsPage() {
           label="Ready to send"
           value={formatUsd(totalApproved)}
           detail={
-            hasWallet
-              ? `Wallet ${walletPreview(promoter.walletAddress)}.`
-              : "Set a payout wallet before approved weekly payouts are sent."
+            payoutReady
+              ? `${payoutDestinationPreview.title}.`
+              : "Set payout details before approved weekly payouts are sent."
           }
           size="compact"
         />
         <PromoterStatCard
           label="Paid out"
           value={formatUsd(totalPaid)}
-          detail="Completed weekly USDC payouts."
+          detail="Completed net payouts after any ACH fee."
           size="compact"
         />
         <PromoterStatCard
@@ -172,7 +181,7 @@ export default async function PromoterPayoutsPage() {
           title="Settlement history"
           action={
             <Link
-              href="/promoter/dashboard#payout-wallet"
+              href="/promoter/dashboard#payout-settings"
               className={`inline-flex h-8 items-center justify-center gap-2 rounded-none border border-[#0B2E2F]/12 bg-[#FCFAF6] px-3 text-[11px] uppercase tracking-[0.14em] text-[#0B2E2F] hover:bg-white`}
             >
               <Wallet className="size-4" />
@@ -185,16 +194,19 @@ export default async function PromoterPayoutsPage() {
           <div className="border border-[#0B2E2F]/10 bg-[#FCFAF6] px-3 py-3">
             <div className="flex items-center gap-2 text-xs font-semibold text-[#0B2E2F]">
               <Wallet className="size-4" />
-              Current wallet
+              Current destination
             </div>
-            <p className="mt-2 font-mono text-xs font-semibold text-[#0B2E2F]">
-              {walletPreview(promoter.walletAddress)}
+            <p className="mt-2 text-xs font-semibold text-[#0B2E2F]">
+              {payoutDestinationPreview.title}
+            </p>
+            <p className="mt-1 text-[11px] text-[#0B2E2F]/58">
+              {payoutDestinationPreview.subtitle || "-"}
             </p>
             <Link
-              href="/promoter/dashboard#payout-wallet"
+              href="/promoter/dashboard#payout-settings"
               className="mt-3 inline-flex items-center gap-2 text-[11px] font-semibold text-[#0B2E2F] underline underline-offset-4"
             >
-              {hasWallet ? "Update payout wallet" : "Set payout wallet"}
+              {payoutReady ? "Update payout settings" : "Set payout details"}
               <ArrowRight className="size-4" />
             </Link>
           </div>
@@ -274,13 +286,16 @@ export default async function PromoterPayoutsPage() {
                   Earnings
                 </TableHead>
                 <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
-                  Payout
+                  Method
+                </TableHead>
+                <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
+                  Gross / fee / net
                 </TableHead>
                 <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
                   Status
                 </TableHead>
                 <TableHead className="h-9 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/46">
-                  Transaction
+                  Reference
                 </TableHead>
               </TableRow>
             </TableHeader>
@@ -300,8 +315,24 @@ export default async function PromoterPayoutsPage() {
                   <TableCell className="py-2 text-xs text-[#0B2E2F]/72">
                     {batch.earningCount}
                   </TableCell>
-                  <TableCell className="py-2 text-xs font-semibold text-[#0B2E2F]">
-                    {formatUsd(batch.totalNormalizedCommissionAmount)}
+                  <TableCell className="py-2 text-xs text-[#0B2E2F]/72">
+                    <p className="font-semibold text-[#0B2E2F]">
+                      {getPayoutMethodShortLabel(batch.payoutMethod)}
+                    </p>
+                    <p className="mt-1 text-[11px] text-[#0B2E2F]/52">
+                      {batch.destinationPreview.subtitle || batch.destinationPreview.title}
+                    </p>
+                  </TableCell>
+                  <TableCell className="py-2 text-xs text-[#0B2E2F]/72">
+                    <p className="font-semibold text-[#0B2E2F]">
+                      Gross {formatUsd(batch.totalNormalizedCommissionAmount)}
+                    </p>
+                    <p className="mt-1 text-[11px] text-[#0B2E2F]/52">
+                      ACH fee {formatUsd(batch.payoutFeeAmount)}
+                    </p>
+                    <p className="mt-1 font-semibold text-[#0B2E2F]">
+                      Net received {formatUsd(batch.netPayoutAmount)}
+                    </p>
                   </TableCell>
                   <TableCell className="py-2">
                     <span
@@ -321,6 +352,8 @@ export default async function PromoterPayoutsPage() {
                         {batch.txHash.slice(0, 10)}...
                         <ArrowRight className="size-3" />
                       </a>
+                    ) : batch.paymentReference ? (
+                      batch.paymentReference
                     ) : (
                       "-"
                     )}
@@ -331,7 +364,7 @@ export default async function PromoterPayoutsPage() {
               {weeklyBatches.length === 0 ? (
                 <TableRow className="border-[#0B2E2F]/10">
                   <TableCell
-                    colSpan={6}
+                    colSpan={7}
                     className="py-8 text-center text-[11px] text-[#0B2E2F]/58"
                   >
                     No weekly payout batches yet. New earnings accumulate through

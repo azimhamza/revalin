@@ -1,5 +1,5 @@
 import { listFulfillmentOrders } from '@/lib/checkout/fulfillment-service';
-import { FulfillmentTable } from './_components/fulfillment-table';
+import { FulfillmentTable, type FulfillmentTabKey } from './_components/fulfillment-table';
 
 export const metadata = {
   title: 'Fulfillment | Revalin Admin',
@@ -29,7 +29,7 @@ export default async function FulfillmentPage({
     'pending',
   ];
   const status =
-    validStatuses.find((s) => s === statusParam) || 'label_ready';
+    validStatuses.find((s) => s === statusParam) || 'all';
 
   const result = await listFulfillmentOrders({
     status: status as Parameters<typeof listFulfillmentOrders>[0]['status'],
@@ -41,7 +41,7 @@ export default async function FulfillmentPage({
     <FulfillmentTable
       initialOrders={result.data}
       initialTotal={result.total}
-      initialStatus={status as 'label_ready'}
+      initialStatus={status as FulfillmentTabKey}
       isDev={isDev}
     />
   );

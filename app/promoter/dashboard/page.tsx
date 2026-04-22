@@ -16,6 +16,11 @@ import {
   listPromoterInvites,
 } from "@/lib/checkout/promoter-service";
 import { getPromoterEarningsForPromoter } from "@/lib/checkout/promoter-earnings-service";
+import {
+  buildPayoutDestinationPreview,
+  getPayoutMethodLabel,
+  hasCompletePayoutDestination,
+} from "@/lib/checkout/payout-methods";
 import { getPromoterWeeklyPayoutBatchesForPromoter } from "@/lib/checkout/promoter-weekly-payout-service";
 import { DEFAULT_PROMOTER_COMMISSION_RATE } from "@/lib/checkout/promoter-math";
 
@@ -43,13 +48,6 @@ function formatUsd(value: string | number) {
     currency: "USD",
     maximumFractionDigits: 2,
   }).format(Number(value || 0));
-}
-
-function walletPreview(value: string) {
-  const normalized = value.trim();
-  if (!normalized) return "No wallet on file";
-  if (normalized.length <= 14) return normalized;
-  return `${normalized.slice(0, 8)}...${normalized.slice(-6)}`;
 }
 
 function formatDate(date: Date | string | null | undefined) {
@@ -88,10 +86,29 @@ export default async function PromoterDashboardPage() {
   );
   const totalPaid = weeklyBatches
     .filter((batch) => batch.status === "paid")
-    .reduce((sum, batch) => sum + Number(batch.totalNormalizedCommissionAmount), 0);
+    .reduce((sum, batch) => sum + Number(batch.netPayoutAmount), 0);
   const successfulInvites = inviteRows.filter(
     (row) => row.invite.status === "successful",
   ).length;
+  const payoutReady = hasCompletePayoutDestination({
+    payoutMethod: promoter.payoutMethod,
+    walletAddress: promoter.walletAddress,
+    achAccountHolderName: promoter.achAccountHolderName,
+    achBankName: promoter.achBankName,
+    achAccountType: promoter.achAccountType,
+    achRoutingNumberLast4: promoter.achRoutingNumberLast4,
+    achAccountNumberLast4: promoter.achAccountNumberLast4,
+  });
+  const payoutDestinationPreview = buildPayoutDestinationPreview({
+    payoutMethod: promoter.payoutMethod,
+    walletAddress: promoter.walletAddress,
+    achAccountHolderName: promoter.achAccountHolderName,
+    achBankName: promoter.achBankName,
+    achAccountType: promoter.achAccountType,
+    achRoutingNumberLast4: promoter.achRoutingNumberLast4,
+    achAccountNumberLast4: promoter.achAccountNumberLast4,
+  });
+  const payoutMethodLabel = getPayoutMethodLabel(promoter.payoutMethod);
 
   const earningsByCode = new Map<string, number>();
   for (const earning of earnings) {
@@ -124,7 +141,7 @@ export default async function PromoterDashboardPage() {
         <PromoterStatCard
           label="Paid out"
           value={formatUsd(totalPaid)}
-          detail="Completed weekly USDC payouts."
+          detail="Completed net payouts after any ACH fee."
           size="compact"
         />
       </section>
@@ -147,14 +164,22 @@ export default async function PromoterDashboardPage() {
         </div>
       </PromoterPanel>
 
-      <PromoterPanel id="payout-wallet">
+      <PromoterPanel id="payout-settings">
         <PromoterSectionHeader
-          eyebrow="Wallet"
-          title="Payout wallet"
-          description={`Current wallet: ${walletPreview(promoter.walletAddress)}`}
+          eyebrow="Payout"
+          title="Payout settings"
+          description={`${payoutReady ? payoutMethodLabel : "Payout details needed"}. ${payoutDestinationPreview.subtitle || payoutDestinationPreview.title}`}
         />
         <div className="mt-3">
-          <PromoterWalletForm currentWallet={promoter.walletAddress} />
+          <PromoterWalletForm
+            currentMethod={promoter.payoutMethod}
+            currentWallet={promoter.walletAddress}
+            achAccountHolderName={promoter.achAccountHolderName}
+            achBankName={promoter.achBankName}
+            achAccountType={promoter.achAccountType}
+            achRoutingNumberLast4={promoter.achRoutingNumberLast4}
+            achAccountNumberLast4={promoter.achAccountNumberLast4}
+          />
         </div>
       </PromoterPanel>
 

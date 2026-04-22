@@ -1834,10 +1834,10 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     if (cardCheckoutFired.current) return;
     cardCheckoutFired.current = true;
 
-    // Give the user at least 5 seconds to read the info before redirecting
+    // Brief pause so the user can scan the info before redirecting
     const timer = window.setTimeout(() => {
       void submitCheckoutPayment();
-    }, 5000);
+    }, 2000);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCardCheckoutOpen]);

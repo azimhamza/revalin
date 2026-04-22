@@ -6,6 +6,7 @@ import { PageLayout } from "@/components/layout/page-layout";
 import { getServerSession } from "@/lib/auth-server";
 import { isTemporarilyHiddenAppRoute } from "@/lib/account-destination";
 import { getAffiliateByUserIdentity } from "@/lib/checkout/affiliate-service";
+import { hasCompletePayoutDestination } from "@/lib/checkout/payout-methods";
 
 import { AffiliateNav } from "./_components/affiliate-nav";
 import { AffiliateSetupToast } from "./_components/affiliate-setup-toast";
@@ -14,11 +15,10 @@ import {
   affiliatePrimaryButtonClass,
   affiliateSecondaryButtonClass,
 } from "./_components/affiliate-shell";
-import { getConfiguredWallet } from "./wallet-utils";
 
 function getAffiliateSetupToastState(args: {
   affiliateRecord: Awaited<ReturnType<typeof getAffiliateByUserIdentity>>;
-  hasWallet: boolean;
+  hasPayoutDestination: boolean;
   role: string | null | undefined;
   userId?: string | null;
 }) {
@@ -49,13 +49,13 @@ function getAffiliateSetupToastState(args: {
       actionLabel = "Open application";
     }
 
-    if (!args.hasWallet) {
+    if (!args.hasPayoutDestination) {
       messages.push(
-        "Add a Polygon payout wallet so the team can send approved USDC payouts faster.",
+        "Add payout details so the team can send approved payouts.",
       );
       if (!actionHref) {
         actionHref = "/affiliate/dashboard#payout-settings";
-        actionLabel = "Set payout wallet";
+        actionLabel = "Set payout details";
       }
     }
 
@@ -72,14 +72,14 @@ function getAffiliateSetupToastState(args: {
     args.userId,
     args.affiliateRecord ? "record" : "missing-record",
     args.affiliateRecord?.status ?? "none",
-    args.hasWallet ? "wallet" : "no-wallet",
+    args.hasPayoutDestination ? "payout" : "no-payout",
     args.affiliateRecord?.discountCode ? "discount" : "no-discount",
   ].join(":");
 
   const title = !args.affiliateRecord
     ? "Partner record needed"
-    : !args.hasWallet && args.affiliateRecord.status === "approved"
-      ? "Set payout wallet"
+    : !args.hasPayoutDestination && args.affiliateRecord.status === "approved"
+      ? "Set payout details"
       : "Growth Partner update";
 
   return {
@@ -120,21 +120,29 @@ export default async function AffiliateDashboardLayout({
     redirect(affiliateRecord ? "/affiliate/signup" : "/account");
   }
 
-  const hasWallet = Boolean(
-    getConfiguredWallet(affiliateRecord?.walletAddress),
-  );
+  const hasPayoutDestination = affiliateRecord
+    ? hasCompletePayoutDestination({
+        payoutMethod: affiliateRecord.payoutMethod,
+        walletAddress: affiliateRecord.walletAddress,
+        achAccountHolderName: affiliateRecord.achAccountHolderName,
+        achBankName: affiliateRecord.achBankName,
+        achAccountType: affiliateRecord.achAccountType,
+        achRoutingNumberLast4: affiliateRecord.achRoutingNumberLast4,
+        achAccountNumberLast4: affiliateRecord.achAccountNumberLast4,
+      })
+    : false;
   const primaryActionHref = affiliateRecord
     ? "/affiliate/dashboard#payout-settings"
     : "/contact";
   const primaryActionLabel = affiliateRecord
-    ? hasWallet
+    ? hasPayoutDestination
       ? "Payout settings"
-      : "Set payout wallet"
+      : "Set payout details"
     : "Contact support";
   const showWorkspace = Boolean(affiliateRecord) || role === "admin";
   const setupToast = getAffiliateSetupToastState({
     affiliateRecord,
-    hasWallet,
+    hasPayoutDestination,
     role,
     userId: session.user.id,
   });

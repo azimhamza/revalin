@@ -205,9 +205,9 @@ function mapShippingService(
     quoteCategory: service.quoteCategory,
     source: service.source,
     carrier: service.carrier,
-    carrierCode: service.carrierCode,
-    serviceCode: service.serviceCode,
-    shipengineRateId: service.shipengineRateId,
+    carrierCode: service.carrierCode?.trim() || undefined,
+    serviceCode: service.serviceCode?.trim() || undefined,
+    shipengineRateId: service.shipengineRateId?.trim() || undefined,
     estimatedDays: service.estimatedDays,
     pickup: service.pickup,
     price: {

@@ -62,6 +62,16 @@ export const payoutBatchTypeEnum = pgEnum("payout_batch_type", [
   "pay_now",
 ]);
 
+export const payoutMethodEnum = pgEnum("payout_method", [
+  "crypto_usdc_polygon",
+  "ach_bank_transfer",
+]);
+
+export const achAccountTypeEnum = pgEnum("ach_account_type", [
+  "checking",
+  "savings",
+]);
+
 export const fulfillmentStatusEnum = pgEnum("fulfillment_status", [
   "pending",
   "label_ready",
@@ -291,6 +301,20 @@ export const affiliates = pgTable(
     commissionRate: varchar("commission_rate", { length: 16 })
       .default("0.15")
       .notNull(),
+    payoutMethod: payoutMethodEnum("payout_method")
+      .default("crypto_usdc_polygon")
+      .notNull(),
+    achAccountHolderName: varchar("ach_account_holder_name", { length: 256 }),
+    achBankName: varchar("ach_bank_name", { length: 256 }),
+    achAccountType: achAccountTypeEnum("ach_account_type"),
+    encryptedAchRoutingNumber: text("encrypted_ach_routing_number"),
+    achRoutingNumberIv: varchar("ach_routing_number_iv", { length: 64 }),
+    achRoutingNumberTag: varchar("ach_routing_number_tag", { length: 64 }),
+    achRoutingNumberLast4: varchar("ach_routing_number_last4", { length: 4 }),
+    encryptedAchAccountNumber: text("encrypted_ach_account_number"),
+    achAccountNumberIv: varchar("ach_account_number_iv", { length: 64 }),
+    achAccountNumberTag: varchar("ach_account_number_tag", { length: 64 }),
+    achAccountNumberLast4: varchar("ach_account_number_last4", { length: 4 }),
     status: affiliateStatusEnum("status").default("pending").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -358,6 +382,9 @@ export const affiliateWeeklyPayouts = pgTable(
     payoutCurrencyCode: varchar("payout_currency_code", { length: 8 })
       .default("USD")
       .notNull(),
+    payoutMethod: payoutMethodEnum("payout_method")
+      .default("crypto_usdc_polygon")
+      .notNull(),
     currentTierKey: varchar("current_tier_key", { length: 32 }),
     currentTierLabel: varchar("current_tier_label", { length: 64 }),
     nextTierKey: varchar("next_tier_key", { length: 32 }),
@@ -367,7 +394,28 @@ export const affiliateWeeklyPayouts = pgTable(
     encryptedWalletAddress: text("encrypted_wallet_address"),
     walletIv: varchar("wallet_iv", { length: 64 }),
     walletTag: varchar("wallet_tag", { length: 64 }),
+    achAccountHolderName: varchar("ach_account_holder_name", { length: 256 }),
+    achBankName: varchar("ach_bank_name", { length: 256 }),
+    achAccountType: achAccountTypeEnum("ach_account_type"),
+    encryptedAchRoutingNumber: text("encrypted_ach_routing_number"),
+    achRoutingNumberIv: varchar("ach_routing_number_iv", { length: 64 }),
+    achRoutingNumberTag: varchar("ach_routing_number_tag", { length: 64 }),
+    achRoutingNumberLast4: varchar("ach_routing_number_last4", { length: 4 }),
+    encryptedAchAccountNumber: text("encrypted_ach_account_number"),
+    achAccountNumberIv: varchar("ach_account_number_iv", { length: 64 }),
+    achAccountNumberTag: varchar("ach_account_number_tag", { length: 64 }),
+    achAccountNumberLast4: varchar("ach_account_number_last4", { length: 4 }),
+    payoutFeeRate: varchar("payout_fee_rate", { length: 16 })
+      .default("0")
+      .notNull(),
+    payoutFeeAmount: varchar("payout_fee_amount", { length: 32 })
+      .default("0.00")
+      .notNull(),
+    netPayoutAmount: varchar("net_payout_amount", { length: 32 })
+      .default("0.00")
+      .notNull(),
     txHash: varchar("tx_hash", { length: 128 }),
+    paymentReference: varchar("payment_reference", { length: 256 }),
     adminNotes: text("admin_notes"),
     status: payoutStatusEnum("status").default("pending").notNull(),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
@@ -479,6 +527,20 @@ export const promoters = pgTable(
     defaultCommissionRate: varchar("default_commission_rate", { length: 16 })
       .default("0.025")
       .notNull(),
+    payoutMethod: payoutMethodEnum("payout_method")
+      .default("crypto_usdc_polygon")
+      .notNull(),
+    achAccountHolderName: varchar("ach_account_holder_name", { length: 256 }),
+    achBankName: varchar("ach_bank_name", { length: 256 }),
+    achAccountType: achAccountTypeEnum("ach_account_type"),
+    encryptedAchRoutingNumber: text("encrypted_ach_routing_number"),
+    achRoutingNumberIv: varchar("ach_routing_number_iv", { length: 64 }),
+    achRoutingNumberTag: varchar("ach_routing_number_tag", { length: 64 }),
+    achRoutingNumberLast4: varchar("ach_routing_number_last4", { length: 4 }),
+    encryptedAchAccountNumber: text("encrypted_ach_account_number"),
+    achAccountNumberIv: varchar("ach_account_number_iv", { length: 64 }),
+    achAccountNumberTag: varchar("ach_account_number_tag", { length: 64 }),
+    achAccountNumberLast4: varchar("ach_account_number_last4", { length: 4 }),
     status: promoterStatusEnum("status").default("approved").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -592,10 +654,34 @@ export const promoterWeeklyPayouts = pgTable(
     payoutCurrencyCode: varchar("payout_currency_code", { length: 8 })
       .default("USD")
       .notNull(),
+    payoutMethod: payoutMethodEnum("payout_method")
+      .default("crypto_usdc_polygon")
+      .notNull(),
     encryptedWalletAddress: text("encrypted_wallet_address"),
     walletIv: varchar("wallet_iv", { length: 64 }),
     walletTag: varchar("wallet_tag", { length: 64 }),
+    achAccountHolderName: varchar("ach_account_holder_name", { length: 256 }),
+    achBankName: varchar("ach_bank_name", { length: 256 }),
+    achAccountType: achAccountTypeEnum("ach_account_type"),
+    encryptedAchRoutingNumber: text("encrypted_ach_routing_number"),
+    achRoutingNumberIv: varchar("ach_routing_number_iv", { length: 64 }),
+    achRoutingNumberTag: varchar("ach_routing_number_tag", { length: 64 }),
+    achRoutingNumberLast4: varchar("ach_routing_number_last4", { length: 4 }),
+    encryptedAchAccountNumber: text("encrypted_ach_account_number"),
+    achAccountNumberIv: varchar("ach_account_number_iv", { length: 64 }),
+    achAccountNumberTag: varchar("ach_account_number_tag", { length: 64 }),
+    achAccountNumberLast4: varchar("ach_account_number_last4", { length: 4 }),
+    payoutFeeRate: varchar("payout_fee_rate", { length: 16 })
+      .default("0")
+      .notNull(),
+    payoutFeeAmount: varchar("payout_fee_amount", { length: 32 })
+      .default("0.00")
+      .notNull(),
+    netPayoutAmount: varchar("net_payout_amount", { length: 32 })
+      .default("0.00")
+      .notNull(),
     txHash: varchar("tx_hash", { length: 128 }),
+    paymentReference: varchar("payment_reference", { length: 256 }),
     adminNotes: text("admin_notes"),
     status: payoutStatusEnum("status").default("pending").notNull(),
     approvedAt: timestamp("approved_at", { withTimezone: true }),

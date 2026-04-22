@@ -4,10 +4,12 @@ import {
 } from "@/lib/checkout/payout-periods";
 import {
   getWeeklyPayoutBatchPeriodOverview,
+  generateWeeklyPayoutBatches,
   listPayNowPayoutBatches,
 } from "@/lib/checkout/weekly-payout-service";
 import {
   getPromoterWeeklyPayoutBatchPeriodOverview,
+  generatePromoterWeeklyPayoutBatches,
   listPromoterPayNowPayoutBatches,
 } from "@/lib/checkout/promoter-weekly-payout-service";
 
@@ -43,8 +45,14 @@ export default async function PayoutsPage({ searchParams }: PayoutsPageProps) {
     payNowBatches,
     promoterPayNowBatches,
   ] = await Promise.all([
-    getWeeklyPayoutBatchPeriodOverview(periodDate),
-    getPromoterWeeklyPayoutBatchPeriodOverview(periodDate),
+    (async () => {
+      await generateWeeklyPayoutBatches({ periodDate });
+      return getWeeklyPayoutBatchPeriodOverview(periodDate);
+    })(),
+    (async () => {
+      await generatePromoterWeeklyPayoutBatches({ periodDate });
+      return getPromoterWeeklyPayoutBatchPeriodOverview(periodDate);
+    })(),
     listPayNowPayoutBatches({ limit: 100 }),
     listPromoterPayNowPayoutBatches({ limit: 100 }),
   ]);
