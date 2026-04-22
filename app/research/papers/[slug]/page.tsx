@@ -9,6 +9,7 @@ import {
   listRelatedPapers,
 } from "@/lib/research/queries";
 import { renderMdx, renderMdxHtml } from "@/lib/research/mdx";
+import { getSiteUrl, resolveSiteUrl } from "@/lib/site";
 
 import { PaperHero } from "./components/paper-hero";
 import { PaperMeta } from "./components/paper-meta";
@@ -18,16 +19,7 @@ import { ResearchDisclaimerFooter } from "./components/research-disclaimer-foote
 
 export const revalidate = 3600;
 
-const SITE_URL = "https://revalin.com";
-
-function resolveSiteUrl(pathOrUrl: string) {
-  try {
-    return new URL(pathOrUrl).toString();
-  } catch {
-    const normalizedPath = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
-    return `${SITE_URL}${normalizedPath}`;
-  }
-}
+const SITE_URL = getSiteUrl();
 
 export async function generateStaticParams() {
   try {

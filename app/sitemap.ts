@@ -3,8 +3,9 @@ import type { MetadataRoute } from 'next';
 import { getCollections, getProducts } from '@/lib/swell';
 import { HIDDEN_PRODUCT_TAG } from '@/lib/constants';
 import { listPeptides, listPublishedPapers } from '@/lib/research/queries';
+import { getSiteUrl } from '@/lib/site';
 
-const SITE_URL = 'https://revalin.com';
+const SITE_URL = getSiteUrl();
 
 export const revalidate = 3600;
 
@@ -18,6 +19,7 @@ const STATIC_ROUTES: Array<{
   { path: '/research', changeFrequency: 'weekly', priority: 0.7 },
   { path: '/research/papers', changeFrequency: 'weekly', priority: 0.7 },
   { path: '/coa', changeFrequency: 'weekly', priority: 0.6 },
+  { path: '/grow', changeFrequency: 'monthly', priority: 0.6 },
   { path: '/about', changeFrequency: 'monthly', priority: 0.5 },
   { path: '/contact', changeFrequency: 'monthly', priority: 0.5 },
   { path: '/faq', changeFrequency: 'monthly', priority: 0.5 },

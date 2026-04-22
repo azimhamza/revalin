@@ -1,3 +1,22 @@
+const DEFAULT_SITE_URL = 'https://revalin.ca';
+const KNOWN_SITE_HOSTS = ['revalin.ca', 'www.revalin.ca', 'revalin.com', 'www.revalin.com'];
+
+function normalizeSiteUrl(value) {
+  const candidate = value?.trim();
+  if (!candidate) return null;
+
+  try {
+    const parsed = new URL(candidate.includes('://') ? candidate : `https://${candidate}`);
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+const siteUrl = normalizeSiteUrl(process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL) ?? DEFAULT_SITE_URL;
+const canonicalHost = new URL(siteUrl).hostname;
+const alternateHosts = KNOWN_SITE_HOSTS.filter(host => host !== canonicalHost);
+
 const nextConfig = {
   /* config options here */
   experimental: {
@@ -10,6 +29,14 @@ const nextConfig = {
   },
   typescript: {
     ignoreBuildErrors: true,
+  },
+  async redirects() {
+    return alternateHosts.map(host => ({
+      source: '/:path*',
+      has: [{ type: 'host', value: host }],
+      destination: `${siteUrl}/:path*`,
+      permanent: true,
+    }));
   },
   images: {
     unoptimized: true,

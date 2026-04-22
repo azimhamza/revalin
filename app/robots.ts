@@ -1,6 +1,7 @@
 import type { MetadataRoute } from 'next';
+import { getSiteUrl } from '@/lib/site';
 
-const SITE_URL = 'https://revalin.com';
+const SITE_URL = getSiteUrl();
 
 export default function robots(): MetadataRoute.Robots {
   return {
@@ -16,12 +17,20 @@ export default function robots(): MetadataRoute.Robots {
           '/affiliate/dashboard',
           '/affiliate/dashboard/',
           '/affiliate/signup',
+          '/promoter/dashboard',
+          '/promoter/dashboard/',
+          '/promoter/signup',
           '/login',
+          '/login/',
           '/signup',
+          '/signup/',
           '/verify-email',
+          '/verify-email/',
           '/forgot-password',
+          '/forgot-password/',
           '/checkout',
           '/checkout/',
+          '/auth/',
           '/order/',
           '/api/',
         ],

@@ -8,6 +8,7 @@ import { getCollections, getLiveProduct, getProducts } from '@/lib/swell';
 import { resolveRequestCurrencyCode } from '@/lib/swell/currency';
 import { Product } from '../lib/swell/types';
 import { hasAnyVariantInStock } from '@/lib/inventory';
+import { getSiteUrl } from '@/lib/site';
 
 export const metadata = {
   title: 'Revalin',
@@ -23,6 +24,7 @@ export const dynamic = 'force-dynamic';
 const FEATURED_PRODUCT_HANDLE = 'glp-3-triple-agonist';
 const FEATURED_PRODUCT_KEYWORDS = ['glp-3', 'glp-3rt', 'triple-agonist'];
 const FEATURED_PRODUCTS_LIMIT = 5;
+const siteUrl = getSiteUrl();
 
 function isFeaturedProduct(product: Product): boolean {
   const handle = (product.handle || '').toLowerCase();
@@ -89,7 +91,7 @@ export default async function Home() {
     '@context': 'https://schema.org',
     '@type': 'Organization',
     name: 'Revalin',
-    url: 'https://revalin.com',
+    url: siteUrl,
     description:
       'Research peptide supplier offering independently tested, lab-grade compounds for in-vitro and pre-clinical research.',
     contactPoint: {

@@ -14,12 +14,14 @@ import { V0Provider } from '../lib/context';
 import { cn } from '../lib/utils';
 import Script from 'next/script';
 import { AppChrome } from '@/components/layout/app-chrome';
+import { getSiteUrl } from '@/lib/site';
 
 const V0Setup = dynamic(() => import('@/components/v0-setup'));
 
 const isV0 = process.env['VERCEL_URL']?.includes('vusercontent.net') ?? false;
 const openPanelClientId = process.env.NEXT_PUBLIC_OPENPANEL_CLIENT_ID;
 const shouldLoadOpenPanel = Boolean(openPanelClientId) && !isDevelopment;
+const siteUrl = getSiteUrl();
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -47,11 +49,12 @@ export const metadata: Metadata = {
     'in-vitro research products',
   ],
   applicationName: 'Revalin',
-  metadataBase: new URL('https://revalin.com'),
+  metadataBase: new URL(siteUrl),
   openGraph: {
     type: 'website',
     siteName: 'Revalin',
     title: 'Revalin',
+    url: siteUrl,
     description:
       'Revalin is a research peptide distributor for qualified buyers, offering lab-use peptide products for in-vitro and pre-clinical research.',
   },
