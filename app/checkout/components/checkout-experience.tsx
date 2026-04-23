@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
-import { ArrowRight, CheckCircle2, Copy, CreditCard, Landmark, Lock, Loader2, RefreshCw, ShieldCheck, Tag, Truck, UserCheck, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, Copy, CreditCard, Landmark, Lock, Loader2, RefreshCw, ShieldCheck, Tag, Truck, UserCheck, Wallet, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { ReactNode } from 'react';
 import { toast } from 'sonner';
@@ -27,6 +27,13 @@ import {
   isTerminalPaymentStatus,
 } from '@/lib/checkout/constants';
 import {
+  clearStoredCheckoutResume as clearStoredCheckoutResumeValue,
+  isCheckoutResumeExpired,
+  persistCheckoutResume,
+  readStoredCheckoutResume,
+  type CheckoutResume,
+} from '@/lib/checkout/client-resume';
+import {
   CARD_CHECKOUT_MINIMUM_USD,
   getCardCheckoutMinimumMessage,
   isCardCheckoutMinimumMet,
@@ -37,7 +44,7 @@ import type {
   CheckoutShippingAddress,
   CheckoutShippingService,
   ShieldClimbPublicPaymentData,
-  NowPaymentsPaymentData,
+  NowPaymentsPublicPaymentData,
 } from '@/lib/checkout/types';
 import { calculateCheckoutPricing, getCheckoutDiscounts } from '@/lib/checkout/pricing';
 import { cn } from '@/lib/utils';
@@ -379,7 +386,7 @@ function isShieldClimbOrder(payment: CheckoutOrderPublic['payment']): payment is
   return payment.provider === 'shieldclimb';
 }
 
-function isNowPaymentsOrder(payment: CheckoutOrderPublic['payment']): payment is NowPaymentsPaymentData {
+function isNowPaymentsOrder(payment: CheckoutOrderPublic['payment']): payment is NowPaymentsPublicPaymentData {
   return payment.provider === 'nowpayments';
 }
 
@@ -392,6 +399,7 @@ function getPollingId(payment: CheckoutOrderPublic['payment']): string | undefin
 function formatTicker(value: string) {
   const normalized = value.toUpperCase();
   if (normalized === 'USDTTRC20') return 'USDT TRC20';
+  if (normalized === 'USDCMATIC') return 'USDC Polygon';
   return normalized;
 }
 
@@ -824,6 +832,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const [isCardCheckoutOpen, setIsCardCheckoutOpen] = useState(false);
   const [isRefreshingStatus, setIsRefreshingStatus] = useState(false);
   const [isReleasingOrder, setIsReleasingOrder] = useState(false);
+  const [releaseAction, setReleaseAction] = useState<'edit' | 'switch' | null>(null);
   const [isDraftHydrated, setIsDraftHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
@@ -1181,6 +1190,32 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   }, [initialDiscountCode]);
 
   useEffect(() => {
+    if (!isDraftHydrated) return;
+    if (orderId || accessKey || activeOrder) return;
+
+    try {
+      const resume = readStoredCheckoutResume();
+      if (!resume) return;
+
+      if (!Number.isFinite(Date.parse(resume.savedAt)) || isCheckoutResumeExpired(resume)) {
+        clearStoredCheckoutResume();
+        return;
+      }
+
+      followCheckoutOrder(resume.orderId, resume.accessKey);
+    } catch {
+      clearStoredCheckoutResume();
+    }
+  }, [
+    accessKey,
+    activeOrder,
+    clearStoredCheckoutResume,
+    followCheckoutOrder,
+    isDraftHydrated,
+    orderId,
+  ]);
+
+  useEffect(() => {
     if (!isDraftHydrated || activeOrder || cart === undefined) return;
     if (!checkoutApiSession && !appliedDiscount) return;
 
@@ -1314,6 +1349,57 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     }
   }, [activeOrder, cartSignature, discountCode]);
 
+  const resetQuoteState = useCallback(() => {
+    quoteAbortController.current?.abort();
+    setQuote(null);
+    setSelectedShippingServiceId('');
+    lastQuoteRequestSignature.current = null;
+  }, []);
+
+  const updateCheckoutUrl = useCallback((nextOrderId?: string, nextAccessKey?: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+
+    if (nextOrderId && nextAccessKey) {
+      params.set('order', nextOrderId);
+      params.set('key', nextAccessKey);
+    } else {
+      params.delete('order');
+      params.delete('key');
+    }
+
+    const nextQuery = params.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
+
+  const syncCheckoutUrlImmediately = useCallback((nextOrderId?: string, nextAccessKey?: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+
+    if (nextOrderId && nextAccessKey) {
+      params.set('order', nextOrderId);
+      params.set('key', nextAccessKey);
+    } else {
+      params.delete('order');
+      params.delete('key');
+    }
+
+    const nextQuery = params.toString();
+    const nextUrl = nextQuery ? `${pathname}?${nextQuery}` : pathname;
+    window.history.replaceState(window.history.state, '', nextUrl);
+  }, [pathname, searchParams]);
+
+  const followCheckoutOrder = useCallback((nextOrderId: string, nextAccessKey: string) => {
+    syncCheckoutUrlImmediately(nextOrderId, nextAccessKey);
+    updateCheckoutUrl(nextOrderId, nextAccessKey);
+  }, [syncCheckoutUrlImmediately, updateCheckoutUrl]);
+
+  const clearStoredCheckoutResume = useCallback(() => {
+    try {
+      clearStoredCheckoutResumeValue();
+    } catch {
+      // Best effort only.
+    }
+  }, []);
+
   useEffect(() => {
     if (!orderId || !accessKey) {
       setCheckoutSession(null);
@@ -1342,8 +1428,24 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
         if (cancelled) return;
 
+        const supersededByOrderId = data.order.payment.supersededByOrderId?.trim();
+        const supersededByAccessKey = data.order.payment.supersededByAccessKey?.trim();
+        if (
+          supersededByOrderId &&
+          supersededByAccessKey &&
+          (supersededByOrderId !== orderId || supersededByAccessKey !== accessKey)
+        ) {
+          setCheckoutSession(null);
+          setQuote(null);
+          setSelectedShippingServiceId('');
+          setError(null);
+          followCheckoutOrder(supersededByOrderId, supersededByAccessKey);
+          return;
+        }
+
         const normalizedPaymentStatus = data.order.payment.status.toLowerCase();
         if (INACTIVE_CHECKOUT_RESTORE_STATUSES.has(normalizedPaymentStatus)) {
+          clearStoredCheckoutResume();
           setCheckoutSession(null);
           setQuote(null);
           setSelectedShippingServiceId('');
@@ -1385,6 +1487,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
           normalizedPaymentStatus !== 'finished' &&
           normalizedPaymentStatus !== 'paid'
         ) {
+          clearStoredCheckoutResume();
           setCheckoutSession(null);
           setQuote(null);
           setSelectedShippingServiceId('');
@@ -1424,7 +1527,66 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     return () => {
       cancelled = true;
     };
-  }, [accessKey, cart, orderId]);
+  }, [accessKey, cart, clearStoredCheckoutResume, followCheckoutOrder, orderId]);
+
+  useEffect(() => {
+    if (!isDraftHydrated) return;
+
+    try {
+      if (!checkoutSession?.order) return;
+
+      const normalizedPaymentStatus = checkoutSession.order.payment.status.toLowerCase();
+      if (
+        INACTIVE_CHECKOUT_RESTORE_STATUSES.has(normalizedPaymentStatus) ||
+        isTerminalPaymentStatus(normalizedPaymentStatus)
+      ) {
+        clearStoredCheckoutResume();
+        return;
+      }
+
+      const resume: CheckoutResume = {
+        version: 1,
+        orderId: checkoutSession.order.orderId,
+        accessKey: checkoutSession.accessKey,
+        provider: checkoutSession.order.payment.provider,
+        status: checkoutSession.order.payment.status,
+        savedAt: new Date().toISOString(),
+        updatedAt: checkoutSession.order.updatedAt,
+      };
+
+      persistCheckoutResume(resume);
+    } catch {
+      // Best effort only.
+    }
+  }, [
+    checkoutSession,
+    clearStoredCheckoutResume,
+    isDraftHydrated,
+  ]);
+
+  useEffect(() => {
+    const supersededByOrderId = activeOrder?.payment.supersededByOrderId?.trim();
+    const supersededByAccessKey = activeOrder?.payment.supersededByAccessKey?.trim();
+
+    if (!supersededByOrderId || !supersededByAccessKey) {
+      return;
+    }
+
+    if (
+      supersededByOrderId === activeOrder?.orderId &&
+      supersededByAccessKey === checkoutSession?.accessKey
+    ) {
+      return;
+    }
+
+    followCheckoutOrder(supersededByOrderId, supersededByAccessKey);
+  }, [
+    activeOrder?.orderId,
+    activeOrder?.payment.supersededByAccessKey,
+    activeOrder?.payment.supersededByOrderId,
+    checkoutSession?.accessKey,
+    followCheckoutOrder,
+  ]);
 
   useEffect(() => {
     if (activeOrder) return;
@@ -1485,52 +1647,15 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     };
   }, []);
 
-  const resetQuoteState = useCallback(() => {
-    quoteAbortController.current?.abort();
-    setQuote(null);
-    setSelectedShippingServiceId('');
-    lastQuoteRequestSignature.current = null;
-  }, []);
-
-  const updateCheckoutUrl = (nextOrderId?: string, nextAccessKey?: string) => {
-    const params = new URLSearchParams(searchParams.toString());
-
-    if (nextOrderId && nextAccessKey) {
-      params.set('order', nextOrderId);
-      params.set('key', nextAccessKey);
-    } else {
-      params.delete('order');
-      params.delete('key');
-    }
-
-    const nextQuery = params.toString();
-    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
-  };
-
-  const syncCheckoutUrlImmediately = (nextOrderId?: string, nextAccessKey?: string) => {
-    const params = new URLSearchParams(searchParams.toString());
-
-    if (nextOrderId && nextAccessKey) {
-      params.set('order', nextOrderId);
-      params.set('key', nextAccessKey);
-    } else {
-      params.delete('order');
-      params.delete('key');
-    }
-
-    const nextQuery = params.toString();
-    const nextUrl = nextQuery ? `${pathname}?${nextQuery}` : pathname;
-    window.history.replaceState(window.history.state, '', nextUrl);
-  };
-
   const resetCheckoutSession = useCallback(() => {
     resetQuoteState();
     setCheckoutApiSession(null);
     setCheckoutSession(null);
     setError(null);
     previousPaymentSnapshot.current = null;
+    clearStoredCheckoutResume();
     updateCheckoutUrl();
-  }, [resetQuoteState, updateCheckoutUrl]);
+  }, [clearStoredCheckoutResume, resetQuoteState, updateCheckoutUrl]);
 
   const handleShippingChange = (name: keyof CheckoutShippingAddress, value: string) => {
     setShippingAddress(current => ({ ...current, [name]: value }));
@@ -2069,15 +2194,6 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     }
 
     if (paymentMethod === 'card') {
-      if (
-        shieldClimbPaymentWindow.current &&
-        !shieldClimbPaymentWindow.current.closed
-      ) {
-        shieldClimbPaymentWindow.current.close();
-      }
-
-      shieldClimbPaymentWindow.current = window.open('', '_blank');
-      // Show info dialog first — useEffect below triggers the actual payment
       setIsCardCheckoutOpen(true);
       return;
     }
@@ -2085,23 +2201,25 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     await submitCheckoutPayment();
   };
 
-  const cardCheckoutFired = useRef(false);
+  const continueToCardCheckout = useCallback(async () => {
+    if (isCreatingPayment) return;
 
-  useEffect(() => {
-    if (!isCardCheckoutOpen) {
-      cardCheckoutFired.current = false;
+    if (
+      shieldClimbPaymentWindow.current &&
+      !shieldClimbPaymentWindow.current.closed
+    ) {
+      shieldClimbPaymentWindow.current.close();
+    }
+
+    const paymentWindow = window.open('', '_blank');
+    if (!paymentWindow) {
+      setError('Allow pop-ups for Revalin so we can open the secure payment page in a new tab.');
       return;
     }
-    if (cardCheckoutFired.current) return;
-    cardCheckoutFired.current = true;
 
-    // Brief pause so the user can scan the info before redirecting
-    const timer = window.setTimeout(() => {
-      void submitCheckoutPayment();
-    }, 2000);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCardCheckoutOpen]);
+    shieldClimbPaymentWindow.current = paymentWindow;
+    await submitCheckoutPayment();
+  }, [isCreatingPayment, submitCheckoutPayment]);
 
   const refreshStatus = async () => {
     if (!pollingId) return;
@@ -2210,6 +2328,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       if (!checkoutSession || !activeOrder) return;
 
       setIsReleasingOrder(true);
+      setReleaseAction('switch');
       setError(null);
 
       try {
@@ -2247,18 +2366,141 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
             : 'Unable to switch payment methods right now.'
         );
       } finally {
+        setReleaseAction(null);
         setIsReleasingOrder(false);
       }
     },
-    [activeOrder, checkoutSession, quoteRequestSignature, requestQuote, shippingAddress]
+    [
+      activeOrder,
+      checkoutSession,
+      quoteRequestSignature,
+      requestQuote,
+      shippingAddress,
+      syncCheckoutUrlImmediately,
+      updateCheckoutUrl,
+    ]
   );
 
   const paymentStatus = activeOrder?.payment.status || 'waiting';
   const nowPayment = activeOrder?.payment && isNowPaymentsOrder(activeOrder.payment) ? activeOrder.payment : null;
   const shieldClimbPayment = activeOrder?.payment && isShieldClimbOrder(activeOrder.payment) ? activeOrder.payment : null;
   const paymentExpiresAt = nowPayment ? formatDateTime(nowPayment.validUntil || nowPayment.expirationEstimateDate) : null;
+  const isPartiallyPaid = paymentStatus === 'partially_paid';
+
+  const editActiveOrder = useCallback(async () => {
+    if (!checkoutSession || !activeOrder || isPartiallyPaid) return;
+
+    setIsReleasingOrder(true);
+    setReleaseAction('edit');
+    setError(null);
+
+    try {
+      const preservedShippingServiceId = activeOrder.shippingService?.id || '';
+      const response = await fetch(
+        `/api/checkout/v2/orders/${encodeURIComponent(activeOrder.orderId)}?key=${encodeURIComponent(
+          checkoutSession.accessKey
+        )}&reason=edit_order`,
+        {
+          method: 'DELETE',
+        }
+      );
+      const payload = await readJsonSafely(response);
+
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, 'Unable to return this checkout to edit mode.'));
+      }
+
+      quoteAbortController.current?.abort();
+      setCheckoutSession(null);
+      setQuote(null);
+      setSelectedShippingServiceId(preservedShippingServiceId);
+      lastQuoteRequestSignature.current = null;
+      syncCheckoutUrlImmediately();
+      updateCheckoutUrl();
+
+      if (isShippingAddressReady(shippingAddress)) {
+        await requestQuote(shippingAddress, quoteRequestSignature);
+      }
+    } catch (releaseError: unknown) {
+      setError(
+        releaseError instanceof Error
+          ? releaseError.message
+          : 'Unable to return this checkout to edit mode right now.'
+      );
+    } finally {
+      setReleaseAction(null);
+      setIsReleasingOrder(false);
+    }
+  }, [
+    activeOrder,
+    checkoutSession,
+    isPartiallyPaid,
+    quoteRequestSignature,
+    requestQuote,
+    shippingAddress,
+    syncCheckoutUrlImmediately,
+    updateCheckoutUrl,
+  ]);
+
+  const activeOrderTotalAmount = activeOrder ? Number(activeOrder.totals.totalAmount.amount || 0) : 0;
+  const remainingBalanceAmount = (() => {
+    if (!activeOrder) return 0;
+    const parsed = Number(activeOrder.payment.remainingBalanceAmount);
+    if (Number.isFinite(parsed)) {
+      return Math.max(parsed, 0);
+    }
+
+    if (!isPartiallyPaid) {
+      return 0;
+    }
+
+    return Math.max(
+      activeOrderTotalAmount - Number(activeOrder.payment.cumulativePaidAmount || 0),
+      0,
+    );
+  })();
+  const cumulativePaidAmount = (() => {
+    if (!activeOrder) return 0;
+    const parsed = Number(activeOrder.payment.cumulativePaidAmount);
+    if (Number.isFinite(parsed)) {
+      return Math.max(parsed, 0);
+    }
+
+    if (remainingBalanceAmount > 0) {
+      return Math.max(activeOrderTotalAmount - remainingBalanceAmount, 0);
+    }
+
+    const fallback = Number(activeOrder.payment.amountPaidToDate || 0);
+    return Number.isFinite(fallback) ? Math.max(fallback, 0) : 0;
+  })();
+
+  const nowPaymentsRemainingCrypto = (() => {
+    if (!isPartiallyPaid || !nowPayment) return 0;
+    const payAmount = Number(nowPayment.payAmount || 0);
+    const amountReceived = Number(nowPayment.amountReceived || 0);
+    return Math.max(payAmount - amountReceived, 0);
+  })();
+
+  const partialPaymentPaidDisplay = (() => {
+    if (!isPartiallyPaid || !activeOrder) return null;
+    return {
+      received: formatPrice(cumulativePaidAmount.toFixed(2), activeOrder.currencyCode),
+      total: formatPrice(activeOrderTotalAmount.toFixed(2), activeOrder.currencyCode),
+      remaining: formatPrice(remainingBalanceAmount.toFixed(2), activeOrder.currencyCode),
+    };
+  })();
+
+  const canPayRemainderWithCard =
+    !isPartiallyPaid ||
+    !activeOrder ||
+    activeOrder.currencyCode.trim().toUpperCase() !== 'USD'
+      ? true
+      : remainingBalanceAmount >= CARD_CHECKOUT_MINIMUM_USD;
+
   const canSwitchToAlternatePayment =
-    shieldClimbPayment ? true : !isCardCheckoutDisabled;
+    isPartiallyPaid
+      ? (shieldClimbPayment ? true : canPayRemainderWithCard)
+      : (shieldClimbPayment ? true : !isCardCheckoutDisabled);
 
   const canPlaceOrder =
     cart &&
@@ -2356,11 +2598,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                   ))}
                 </div>
               </div>
-            ) : activeOrder && paymentStatus !== 'finished' && paymentStatus !== 'paid' ? (
+            ) : activeOrder && paymentStatus !== 'finished' && paymentStatus !== 'paid' && !isPartiallyPaid ? (
               <div className="rounded-[26px] border border-border/70 bg-card p-4 text-sm text-foreground/65">
                 Need to make changes? Use{' '}
                 <span className="font-semibold text-foreground">Edit order</span>{' '}
-                above to go back.
+                above to return to cart and shipping before you pay.
               </div>
             ) : null}
           </aside>
@@ -2899,6 +3141,24 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                           <RefreshCw className={cn('size-3.5', isRefreshingStatus && 'animate-spin')} />
                           Refresh
                         </Button>
+                        {!isTerminalPaymentStatus(paymentStatus) && !isPartiallyPaid ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={editActiveOrder}
+                            disabled={isReleasingOrder}
+                          >
+                            {isReleasingOrder && releaseAction === 'edit' ? (
+                              <>
+                                <Loader2 className="size-3.5 animate-spin" />
+                                Returning...
+                              </>
+                            ) : (
+                              'Edit order'
+                            )}
+                          </Button>
+                        ) : null}
                         {!isTerminalPaymentStatus(paymentStatus) ? (
                           <Button
                             type="button"
@@ -2907,7 +3167,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                             onClick={() => releaseActiveOrder(shieldClimbPayment ? 'crypto' : 'card')}
                             disabled={isReleasingOrder || !canSwitchToAlternatePayment}
                           >
-                            {isReleasingOrder ? (
+                            {isReleasingOrder && releaseAction === 'switch' ? (
                               <>
                                 <Loader2 className="size-3.5 animate-spin" />
                                 Switching...
@@ -2915,7 +3175,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                             ) : (
                               canSwitchToAlternatePayment
                                 ? 'Choose different payment'
-                                : 'Card unavailable below $15'
+                                : (isPartiallyPaid ? 'Card unavailable below $15' : 'Card unavailable below $15')
                             )}
                           </Button>
                         ) : (
@@ -2931,6 +3191,80 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                         {/* ── ShieldClimb (card) payment view ── */}
                         {shieldClimbPayment ? (
                           <>
+                            {/* ── Partial payment banner ── */}
+                            {isPartiallyPaid && partialPaymentPaidDisplay ? (
+                              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+                                <div className="flex items-start gap-3">
+                                  <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600" />
+                                  <div>
+                                    <p className="font-semibold">Partial payment received</p>
+                                    <p className="mt-1 text-amber-800">
+                                      We received {partialPaymentPaidDisplay.received} of {partialPaymentPaidDisplay.total}. <span className="font-semibold">{partialPaymentPaidDisplay.remaining} remaining.</span>
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {/* ── "Don't close tab" banner ── */}
+                            {!isTerminalPaymentStatus(paymentStatus) && !isPartiallyPaid ? (
+                              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3.5">
+                                <div className="flex items-start gap-3">
+                                  <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600" />
+                                  <div>
+                                    <p className="text-sm font-semibold text-amber-900">Do not close this tab</p>
+                                    <p className="mt-0.5 text-xs leading-5 text-amber-800">
+                                      Complete your payment in the other tab. This page automatically tracks your payment and will update when confirmed.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {/* ── Remainder payment options (for partially_paid) ── */}
+                            {isPartiallyPaid ? (
+                              <div className="rounded-2xl border border-[#0B2E2F]/15 bg-white px-5 py-5">
+                                <div className="flex items-center gap-3 mb-4">
+                                  <div className="flex size-9 items-center justify-center rounded-full bg-amber-500">
+                                    <Wallet className="size-4 text-white" />
+                                  </div>
+                                  <div>
+                                    <p className="text-sm font-semibold">Pay remaining balance</p>
+                                    <p className="text-xs text-foreground/50">{partialPaymentPaidDisplay?.remaining} left to pay</p>
+                                  </div>
+                                </div>
+                                <div className="space-y-2.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => releaseActiveOrder('crypto')}
+                                    disabled={isReleasingOrder}
+                                    className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl border border-[#0B2E2F]/15 bg-[#0B2E2F] px-5 py-3 text-sm font-semibold text-[#F4F1EA] transition-colors hover:bg-[#0B2E2F]/90 disabled:opacity-50"
+                                  >
+                                    {isReleasingOrder ? <Loader2 className="size-4 animate-spin" /> : <Wallet className="size-4" />}
+                                    Pay with crypto
+                                    <ArrowRight className="size-4" />
+                                  </button>
+                                  {canPayRemainderWithCard ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => releaseActiveOrder('card')}
+                                      disabled={isReleasingOrder}
+                                      className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl border border-[#0B2E2F]/15 bg-white px-5 py-3 text-sm font-semibold text-[#0B2E2F] transition-colors hover:bg-[#0B2E2F]/5 disabled:opacity-50"
+                                    >
+                                      {isReleasingOrder ? <Loader2 className="size-4 animate-spin" /> : <CreditCard className="size-4" />}
+                                      Pay with card
+                                      <ArrowRight className="size-4" />
+                                    </button>
+                                  ) : (
+                                    <div className="flex items-center justify-center gap-2 rounded-xl border border-border/50 bg-background/60 px-5 py-3 text-sm text-foreground/45">
+                                      <CreditCard className="size-4" />
+                                      Card unavailable
+                                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">${CARD_CHECKOUT_MINIMUM_USD} min</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
                             <div className="rounded-2xl border border-[#0B2E2F]/15 bg-white px-5 py-5">
                               <div className="flex items-center gap-3 mb-4">
                                 <div className="flex size-9 items-center justify-center rounded-full bg-[#0B2E2F]">
@@ -2953,9 +3287,10 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                                 <ArrowRight className="size-4" />
                               </a>
                               <p className="mt-3 text-center text-xs leading-4 text-foreground/45">
-                                Opens in a new tab so this page can keep tracking your payment automatically.
+                                You may need to complete payment in the new tab. This page tracks your payment automatically.
                               </p>
                             </div>
+                            )}
 
                             <div className="grid gap-3 md:grid-cols-2">
                               <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
@@ -2973,14 +3308,34 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                         {/* ── NOWPayments (crypto) payment view ── */}
                         {nowPayment ? (
                           <>
+                            {/* ── Partial payment banner (crypto) ── */}
+                            {isPartiallyPaid && partialPaymentPaidDisplay ? (
+                              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+                                <div className="flex items-start gap-3">
+                                  <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600" />
+                                  <div>
+                                    <p className="font-semibold">Partial payment received</p>
+                                    <p className="mt-1 text-amber-800">
+                                      We received {partialPaymentPaidDisplay.received} of {partialPaymentPaidDisplay.total}. <span className="font-semibold">{partialPaymentPaidDisplay.remaining} remaining.</span>
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+
                             <div className="grid gap-3 md:grid-cols-2">
                               <div className="rounded-2xl border border-border/60 bg-white p-4">
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Send exactly</p>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">
+                                  {isPartiallyPaid ? 'Send remaining' : 'Send exactly'}
+                                </p>
                                 <div className="mt-2 flex items-center justify-between gap-3">
                                   <p className="text-xl font-semibold tracking-tight">
-                                    {nowPayment.payAmount} {formatTicker(nowPayment.paymentCurrency)}
+                                    {isPartiallyPaid
+                                      ? `${nowPaymentsRemainingCrypto.toFixed(4)} ${formatTicker(nowPayment.paymentCurrency)}`
+                                      : `${nowPayment.payAmount} ${formatTicker(nowPayment.paymentCurrency)}`
+                                    }
                                   </p>
-                                  <button type="button" onClick={() => copyText('Amount', nowPayment.payAmount)} className="rounded-full border border-border bg-background p-1.5 text-foreground/70 transition-colors hover:text-foreground" aria-label="Copy payment amount">
+                                  <button type="button" onClick={() => copyText('Amount', isPartiallyPaid ? nowPaymentsRemainingCrypto.toFixed(4) : nowPayment.payAmount)} className="rounded-full border border-border bg-background p-1.5 text-foreground/70 transition-colors hover:text-foreground" aria-label="Copy payment amount">
                                     <Copy className="size-3.5" />
                                   </button>
                                 </div>
@@ -3045,6 +3400,71 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                         ) : null}
 
                         {copiedValue ? <p className="text-sm font-medium text-[#0B2E2F]">{copiedValue} copied.</p> : null}
+
+                        {/* ── Order summary in payment pending view ── */}
+                        {isPartiallyPaid ? (
+                          <div className="rounded-2xl border border-border/60 bg-white p-4">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Order summary</p>
+
+                            <div className="mt-3 divide-y divide-border/50">
+                              {activeOrder.lines.map(line => (
+                                <div key={line.id} className="flex items-center gap-3 py-2.5">
+                                  {line.imageUrl ? (
+                                    <img src={line.imageUrl} alt={line.productTitle} className="size-10 rounded-lg border border-border/40 object-cover" />
+                                  ) : (
+                                    <div className="flex size-10 items-center justify-center rounded-lg border border-border/40 bg-background text-xs text-foreground/30">img</div>
+                                  )}
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium truncate">{line.productTitle}</p>
+                                    <p className="text-xs text-foreground/50">Qty: {line.quantity}</p>
+                                  </div>
+                                  <p className="text-sm font-semibold">{formatPrice(line.lineTotal.amount, line.lineTotal.currencyCode)}</p>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="mt-3 space-y-1.5 border-t border-border/50 pt-3 text-sm">
+                              <div className="flex justify-between">
+                                <span className="text-foreground/65">Subtotal</span>
+                                <span>{formatPrice(activeOrder.totals.subtotalAmount.amount, activeOrder.totals.subtotalAmount.currencyCode)}</span>
+                              </div>
+                              {activeOrder.totals.discountAmount && Number(activeOrder.totals.discountAmount.amount) > 0 ? (
+                                <div className="flex justify-between">
+                                  <span className="text-foreground/65">Discount</span>
+                                  <span>-{formatPrice(activeOrder.totals.discountAmount.amount, activeOrder.totals.discountAmount.currencyCode)}</span>
+                                </div>
+                              ) : null}
+                              {activeOrder.totals.shippingAmount ? (
+                                <div className="flex justify-between">
+                                  <span className="text-foreground/65">Shipping</span>
+                                  <span>{Number(activeOrder.totals.shippingAmount.amount) === 0 ? 'Free' : formatPrice(activeOrder.totals.shippingAmount.amount, activeOrder.totals.shippingAmount.currencyCode)}</span>
+                                </div>
+                              ) : null}
+                              {activeOrder.totals.taxAmount && Number(activeOrder.totals.taxAmount.amount) > 0 ? (
+                                <div className="flex justify-between">
+                                  <span className="text-foreground/65">Tax</span>
+                                  <span>{formatPrice(activeOrder.totals.taxAmount.amount, activeOrder.totals.taxAmount.currencyCode)}</span>
+                                </div>
+                              ) : null}
+                              <div className="flex justify-between border-t border-border/50 pt-1.5 font-semibold">
+                                <span>Total</span>
+                                <span>{formatPrice(activeOrder.totals.totalAmount.amount, activeOrder.totals.totalAmount.currencyCode)}</span>
+                              </div>
+                              {partialPaymentPaidDisplay ? (
+                                <>
+                                  <div className="flex justify-between text-green-700">
+                                    <span className="font-medium">Amount paid</span>
+                                    <span className="font-semibold">{partialPaymentPaidDisplay.received}</span>
+                                  </div>
+                                  <div className="flex justify-between text-amber-700">
+                                    <span className="font-semibold">Remaining balance</span>
+                                    <span className="font-semibold">{partialPaymentPaidDisplay.remaining}</span>
+                                  </div>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
 
                       <div className="space-y-4">
@@ -3101,7 +3521,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
               </div>
             </div>
             <div className="mt-4 rounded-xl border border-border/60 bg-background px-4 py-3.5">
-              <p className="text-[13px] leading-5 text-foreground/70">You&apos;ll pay with your card as normal. The transaction is settled through blockchain, which keeps processing <span className="font-medium text-foreground">fast and fees low</span>. Nothing extra is needed from you.</p>
+              <p className="text-[13px] leading-5 text-foreground/70">We&apos;ll open the secure payment page in a <span className="font-medium text-foreground">new tab</span>. Keep this tab open so Revalin can confirm your payment and finish the order automatically.</p>
             </div>
           </div>
 
@@ -3120,14 +3540,49 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                 </div>
                 <p className="text-[13px] leading-5 text-foreground/70">The provider may ask to <span className="font-medium text-foreground">verify your identity</span> — this is a standard security step.</p>
               </div>
+              <div className="flex items-start gap-3 px-4 py-3.5">
+                <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F]">
+                  <RefreshCw className="size-3 text-[#F4F1EA]" />
+                </div>
+                <p className="text-[13px] leading-5 text-foreground/70">If you close the payment tab and come back later, Revalin will try to <span className="font-medium text-foreground">resume and re-check</span> your pending checkout automatically.</p>
+              </div>
             </div>
           </div>
 
-          {/* Loading footer */}
+          {/* Action footer */}
           <div className="border-t border-border/50 px-6 py-4">
-            <div className="flex items-center justify-center gap-2.5">
-              <Loader2 className="size-4 animate-spin text-[#0B2E2F]" />
-              <span className="text-sm font-medium text-[#0B2E2F]">Setting up your payment&hellip;</span>
+            <div className="flex flex-col gap-2.5">
+              <Button
+                type="button"
+                onClick={() => void continueToCardCheckout()}
+                disabled={isCreatingPayment}
+                className="w-full"
+              >
+                {isCreatingPayment ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Opening secure payment...
+                  </>
+                ) : (
+                  <>
+                    Continue to secure payment
+                    <ArrowRight className="size-4" />
+                  </>
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  if (!isCreatingPayment) {
+                    setIsCardCheckoutOpen(false);
+                  }
+                }}
+                disabled={isCreatingPayment}
+                className="w-full"
+              >
+                Back to checkout
+              </Button>
             </div>
           </div>
         </DialogContent>

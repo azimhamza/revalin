@@ -21,8 +21,16 @@ import {
   getNowPaymentsMinimumAmount,
 } from '@/lib/checkout/nowpayments';
 import {
+  buildCarryoverComparableFromFinalizeInput,
+  buildCarryoverContext,
+  buildCheckoutCarryoverPublicData,
+  isSameCarryoverCheckoutOrder,
+  isSupersededCheckoutOrder,
+} from '@/lib/checkout/carryover';
+import {
   saveCheckoutOrder,
   findCheckoutOrderByCartId,
+  findCheckoutOrdersByCartId,
   findOpenCheckoutOrdersByEmail,
   updateCheckoutOrder,
 } from '@/lib/checkout/order-store';
@@ -75,7 +83,11 @@ import type {
   NowPaymentsPaymentData,
   ShieldClimbPaymentData,
 } from '@/lib/checkout/types';
-import { toPublicCheckoutOrder } from '@/lib/checkout/types';
+import {
+  isNowPaymentsPayment,
+  isShieldClimbPayment,
+  toPublicCheckoutOrder,
+} from '@/lib/checkout/types';
 
 type FinalizeCheckoutInput = {
   sessionId: string;
@@ -119,6 +131,7 @@ export type FinalizeCheckoutDependencies = {
   getCommissionMonthKey: typeof getCommissionMonthKey;
   getSuccessfulPromoterForAffiliate: typeof getSuccessfulPromoterForAffiliate;
   findCheckoutOrderByCartId: typeof findCheckoutOrderByCartId;
+  findCheckoutOrdersByCartId: typeof findCheckoutOrdersByCartId;
   findOpenCheckoutOrdersByEmail: typeof findOpenCheckoutOrdersByEmail;
   saveCheckoutOrder: typeof saveCheckoutOrder;
   updateCheckoutOrder: typeof updateCheckoutOrder;
@@ -220,6 +233,14 @@ function doesExistingOrderMatchCheckoutAttempt(args: {
   existingOrder: CheckoutOrderRecord;
   input: FinalizeCheckoutInput;
 }) {
+  if (args.existingOrder.payment.status === 'partially_paid') {
+    return false;
+  }
+
+  if (isSupersededCheckoutOrder(args.existingOrder)) {
+    return false;
+  }
+
   const orderPaymentMethod =
     args.existingOrder.payment.provider === 'shieldclimb' ? 'card' : 'crypto';
 
@@ -288,9 +309,86 @@ function doesExistingOrderMatchCheckoutAttempt(args: {
   return true;
 }
 
+function toPublicCheckoutOrderWithCarryover(
+  order: CheckoutOrderRecord,
+  relatedOrders: CheckoutOrderRecord[],
+) {
+  const supersededByOrderId = order.payment.supersededByOrderId?.trim();
+  const supersededByOrder = supersededByOrderId
+    ? relatedOrders.find(
+        (candidate) =>
+          candidate.orderId === supersededByOrderId &&
+          isSameCarryoverCheckoutOrder(order, candidate),
+      )
+    : null;
+
+  return toPublicCheckoutOrder(order, {
+    payment: buildCheckoutCarryoverPublicData({
+      order,
+      relatedOrders,
+      supersededByAccessKey: supersededByOrder?.accessKey ?? null,
+    }),
+  });
+}
+
+async function supersedeCarryoverChainOrders(args: {
+  checkoutOrder: CheckoutOrderRecord;
+  chainOrders: CheckoutOrderRecord[];
+  dependencies: Pick<
+    FinalizeCheckoutDependencies,
+    'cancelSwellOrder' | 'updateCheckoutOrder'
+  >;
+}) {
+  if (args.chainOrders.length === 0) {
+    return;
+  }
+
+  const supersededAt = new Date().toISOString();
+  const reason = `Superseded by newer checkout order ${args.checkoutOrder.orderId}.`;
+
+  await Promise.all(
+    args.chainOrders.map(async (chainOrder) => {
+      if (chainOrder.orderId === args.checkoutOrder.orderId) {
+        return;
+      }
+
+      await args.dependencies
+        .cancelSwellOrder(chainOrder.swell.orderId, reason)
+        .catch((error) => {
+          console.error('Unable to cancel superseded carryover Swell order:', error);
+        });
+
+      await args.dependencies
+        .updateCheckoutOrder(chainOrder.orderId, (current) => {
+          if (isTerminalPaymentStatus(current.payment.status)) {
+            return current;
+          }
+
+          const normalizedStatus = current.payment.status.trim().toLowerCase();
+          const keepHistoricalPartial = normalizedStatus === 'partially_paid';
+
+          return {
+            ...current,
+            payment: {
+              ...current.payment,
+              status: keepHistoricalPartial ? current.payment.status : 'replaced',
+              supersededByOrderId: args.checkoutOrder.orderId,
+              updatedAt: supersededAt,
+            },
+            latestError: keepHistoricalPartial ? current.latestError : reason,
+          };
+        })
+        .catch((error) => {
+          console.error('Unable to mark carryover checkout order superseded:', error);
+        });
+    }),
+  );
+}
+
 async function replaceSupersededOpenOrders(args: {
   checkoutOrder: CheckoutOrderRecord;
   customerEmail: string;
+  excludedOrderIds?: Set<string>;
   dependencies: Pick<
     FinalizeCheckoutDependencies,
     'findOpenCheckoutOrdersByEmail' | 'cancelSwellOrder' | 'updateCheckoutOrder'
@@ -311,6 +409,10 @@ async function replaceSupersededOpenOrders(args: {
 
   await Promise.all(
     openOrders.map(async (openOrder) => {
+      if (args.excludedOrderIds?.has(openOrder.orderId)) {
+        return;
+      }
+
       await args.dependencies
         .cancelSwellOrder(openOrder.swell.orderId, reason)
         .catch((error) => {
@@ -328,6 +430,7 @@ async function replaceSupersededOpenOrders(args: {
             payment: {
               ...current.payment,
               status: 'replaced',
+              supersededByOrderId: args.checkoutOrder.orderId,
               updatedAt: replacedAt,
             },
             latestError: reason,
@@ -512,6 +615,9 @@ function buildNowPaymentsOrderRecord(args: {
   sourceWalletAddress?: string | null;
   payment: Awaited<ReturnType<typeof createNowPaymentsPayment>>;
   ipnCallbackEnabled: boolean;
+  amountPaidToDate?: string;
+  attemptAmount?: string;
+  carryoverRootOrderId?: string;
   nowIso?: string;
 }): CheckoutOrderRecord {
   const now = args.nowIso ?? new Date().toISOString();
@@ -540,6 +646,9 @@ function buildNowPaymentsOrderRecord(args: {
     createdAt: args.payment.created_at,
     updatedAt: args.payment.updated_at,
     ipnCallbackEnabled: args.ipnCallbackEnabled,
+    amountPaidToDate: args.amountPaidToDate,
+    attemptAmount: args.attemptAmount,
+    carryoverRootOrderId: args.carryoverRootOrderId,
   };
 
   return {
@@ -624,6 +733,9 @@ function buildShieldClimbOrderRecord(args: {
   expectedValueCoin?: string;
   paymentCurrency?: string;
   paymentStatus?: string;
+  amountPaidToDate?: string;
+  attemptAmount?: string;
+  carryoverRootOrderId?: string;
   nowIso?: string;
 }): CheckoutOrderRecord {
   const now = args.nowIso ?? new Date().toISOString();
@@ -643,6 +755,9 @@ function buildShieldClimbOrderRecord(args: {
     paymentCurrency: args.paymentCurrency,
     createdAt: now,
     updatedAt: now,
+    amountPaidToDate: args.amountPaidToDate,
+    attemptAmount: args.attemptAmount,
+    carryoverRootOrderId: args.carryoverRootOrderId,
   };
 
   return {
@@ -770,18 +885,30 @@ export function createFinalizeCheckoutSession(
         affiliateData,
       });
 
-      const existingOrder =
-        await dependencies.findCheckoutOrderByCartId(fallbackCartId);
-      if (
-        existingOrder &&
+      const cartOrders = await dependencies.findCheckoutOrdersByCartId(
+        fallbackCartId,
+      );
+      const carryoverComparable = buildCarryoverComparableFromFinalizeInput({
+        currencyCode: args.cartSnapshot.currencyCode,
+        cartLines: args.cartSnapshot.lines.map((line) => ({
+          merchandiseId: line.merchandiseId,
+          quantity: line.quantity,
+        })),
+        shippingAddress: args.shippingAddress,
+        shippingServiceId: args.selectedShippingServiceId,
+        discountCode: args.discountCode,
+      });
+      const existingOrder = cartOrders.find((order) =>
         doesExistingOrderMatchCheckoutAttempt({
-          existingOrder,
+          existingOrder: order,
           input: args,
-        })
-      ) {
+        }),
+      );
+
+      if (existingOrder) {
         return {
           accessKey: existingOrder.accessKey,
-          order: toPublicCheckoutOrder(existingOrder),
+          order: toPublicCheckoutOrderWithCarryover(existingOrder, cartOrders),
           redirectUrl:
             existingOrder.payment.provider === 'shieldclimb'
               ? existingOrder.payment.redirectUrl
@@ -954,8 +1081,51 @@ export function createFinalizeCheckoutSession(
         });
       }
 
+      const carryoverContext = buildCarryoverContext({
+        orders: cartOrders,
+        comparable: carryoverComparable,
+        orderTotal,
+      });
+
+      if (
+        carryoverContext.latestSuccessfulOrder &&
+        carryoverContext.creditedAmount + 0.01 >= orderTotal
+      ) {
+        await dependencies
+          .cancelSwellOrder(
+            swellOrder.id,
+            `Checkout already satisfied by existing order ${carryoverContext.latestSuccessfulOrder.orderId}.`,
+          )
+          .catch((error) => {
+            console.error('Unable to cancel duplicate Swell order after carryover reconciliation:', error);
+          });
+
+        return {
+          accessKey: carryoverContext.latestSuccessfulOrder.accessKey,
+          order: toPublicCheckoutOrderWithCarryover(
+            carryoverContext.latestSuccessfulOrder,
+            cartOrders,
+          ),
+          redirectUrl:
+            carryoverContext.latestSuccessfulOrder.payment.provider ===
+            'shieldclimb'
+              ? carryoverContext.latestSuccessfulOrder.payment.redirectUrl
+              : null,
+        };
+      }
+
+      const amountAlreadyPaid = carryoverContext.creditedAmount;
+      const remainderPaymentAmount = amountAlreadyPaid > 0
+        ? Math.max(orderTotal - amountAlreadyPaid, 0.01)
+        : orderTotal;
+      const amountPaidToDate = amountAlreadyPaid > 0
+        ? amountAlreadyPaid.toFixed(2)
+        : undefined;
+
       const orderId = dependencies.createOrderId();
       const accessKey = dependencies.createAccessKey();
+      const carryoverRootOrderId =
+        carryoverContext.carryoverRootOrderId || orderId;
       const shieldClimbCallbackToken =
         dependencies.createShieldClimbCallbackToken();
       const session = await dependencies.optionalSession();
@@ -1002,6 +1172,9 @@ export function createFinalizeCheckoutSession(
             callbackToken: shieldClimbCallbackToken,
             redirectUrl: '',
             paymentStatus: 'initializing',
+            amountPaidToDate,
+            attemptAmount: remainderPaymentAmount.toFixed(2),
+            carryoverRootOrderId,
             nowIso: dependencies.nowIso(),
           }),
           affiliate: affiliateData,
@@ -1016,10 +1189,10 @@ export function createFinalizeCheckoutSession(
         callbackUrl.searchParams.set('orderId', orderId);
         callbackUrl.searchParams.set('callbackToken', shieldClimbCallbackToken);
 
-        let paymentAmount = orderTotal;
+        let paymentAmount = remainderPaymentAmount;
         if (fiatCurrency !== 'usd') {
           const converted = await dependencies.convertToUsd({
-            amount: orderTotal,
+            amount: remainderPaymentAmount,
             fromCurrency: fiatCurrency.toUpperCase(),
           });
           paymentAmount = Number(converted.value_coin);
@@ -1095,8 +1268,7 @@ export function createFinalizeCheckoutSession(
           },
         });
 
-        const checkoutOrder = await dependencies.saveCheckoutOrder({
-          ...buildShieldClimbOrderRecord({
+        const scOrderRecord = buildShieldClimbOrderRecord({
             orderId,
             accessKey,
             cartId: fallbackCartId,
@@ -1129,18 +1301,37 @@ export function createFinalizeCheckoutSession(
             expectedValueCoin,
             paymentCurrency: 'USD',
             paymentStatus: 'unpaid',
+            amountPaidToDate,
+            attemptAmount: remainderPaymentAmount.toFixed(2),
+            carryoverRootOrderId,
             nowIso: dependencies.nowIso(),
-          }),
+          });
+
+        const checkoutOrder = await dependencies.saveCheckoutOrder({
+          ...scOrderRecord,
           affiliate: affiliateData,
           promoter: promoterData,
         });
         checkoutOrderId = checkoutOrder.orderId;
 
+        await supersedeCarryoverChainOrders({
+          checkoutOrder,
+          chainOrders: carryoverContext.chainOrders,
+          dependencies,
+        });
+
         await replaceSupersededOpenOrders({
           checkoutOrder,
           customerEmail: args.shippingAddress.email,
+          excludedOrderIds: new Set(
+            carryoverContext.chainOrders.map((order) => order.orderId),
+          ),
           dependencies,
         });
+
+        const publicRelatedOrders = await dependencies.findCheckoutOrdersByCartId(
+          fallbackCartId,
+        );
 
         const initiationTelemetry = {
           orderId,
@@ -1167,15 +1358,16 @@ export function createFinalizeCheckoutSession(
         return {
           accessKey,
           redirectUrl,
-          order: toPublicCheckoutOrder(
+          order: toPublicCheckoutOrderWithCarryover(
             checkoutOrder,
+            publicRelatedOrders,
           ) satisfies CheckoutOrderPublic,
         };
       }
 
       const [estimate, minimum] = await Promise.all([
         dependencies.getNowPaymentsEstimate({
-          amount: orderTotal,
+          amount: remainderPaymentAmount,
           currencyFrom: fiatCurrency,
           currencyTo: paymentCurrency,
         }),
@@ -1197,7 +1389,7 @@ export function createFinalizeCheckoutSession(
       }
 
       const payment = await dependencies.createNowPaymentsPayment({
-        price_amount: Number(orderTotal.toFixed(2)),
+        price_amount: Number(remainderPaymentAmount.toFixed(2)),
         price_currency: fiatCurrency,
         pay_currency: paymentCurrency,
         ipn_callback_url: ipnCallbackEnabled
@@ -1264,8 +1456,7 @@ export function createFinalizeCheckoutSession(
         },
       });
 
-      const checkoutOrder = await dependencies.saveCheckoutOrder({
-        ...buildNowPaymentsOrderRecord({
+      const npOrderRecord = buildNowPaymentsOrderRecord({
           orderId,
           accessKey,
           cartId: fallbackCartId,
@@ -1292,18 +1483,37 @@ export function createFinalizeCheckoutSession(
           sourceWalletAddress: args.sourceWalletAddress,
           payment,
           ipnCallbackEnabled,
+          amountPaidToDate,
+          attemptAmount: remainderPaymentAmount.toFixed(2),
+          carryoverRootOrderId,
           nowIso: dependencies.nowIso(),
-        }),
+        });
+
+      const checkoutOrder = await dependencies.saveCheckoutOrder({
+        ...npOrderRecord,
         affiliate: affiliateData,
         promoter: promoterData,
       });
       checkoutOrderId = checkoutOrder.orderId;
 
+      await supersedeCarryoverChainOrders({
+        checkoutOrder,
+        chainOrders: carryoverContext.chainOrders,
+        dependencies,
+      });
+
       await replaceSupersededOpenOrders({
         checkoutOrder,
         customerEmail: args.shippingAddress.email,
+        excludedOrderIds: new Set(
+          carryoverContext.chainOrders.map((order) => order.orderId),
+        ),
         dependencies,
       });
+
+      const publicRelatedOrders = await dependencies.findCheckoutOrdersByCartId(
+        fallbackCartId,
+      );
 
       const initiationTelemetry = {
         orderId,
@@ -1329,8 +1539,9 @@ export function createFinalizeCheckoutSession(
 
       return {
         accessKey,
-        order: toPublicCheckoutOrder(
+        order: toPublicCheckoutOrderWithCarryover(
           checkoutOrder,
+          publicRelatedOrders,
         ) satisfies CheckoutOrderPublic,
       };
     } catch (caughtError) {
@@ -1390,6 +1601,7 @@ export const finalizeCheckoutSession = createFinalizeCheckoutSession({
   getCommissionMonthKey,
   getSuccessfulPromoterForAffiliate,
   findCheckoutOrderByCartId,
+  findCheckoutOrdersByCartId,
   findOpenCheckoutOrdersByEmail,
   saveCheckoutOrder,
   updateCheckoutOrder,

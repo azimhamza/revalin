@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isSameCarryoverCheckoutOrder } from './carryover.ts';
 import type {
   CheckoutIpnEvent,
   CheckoutOrderPayment,
@@ -90,6 +91,7 @@ export type PaymentLifecycleDependencies = {
     shippingAddress: CheckoutShippingAddress;
     itemCount: number;
     selectedShippingService: CheckoutShippingService;
+    orderCreatedAt?: string;
   }) => Promise<PurchasedLabelResult>;
   getCheckoutOrder: (orderId: string) => Promise<CheckoutOrderRecord | null>;
   updateCheckoutOrder: (
@@ -123,6 +125,12 @@ export type PaymentLifecycleDependencies = {
     email: string;
     discountCode?: string;
   }) => Promise<unknown>;
+  findOpenCheckoutOrdersByEmail: (args: {
+    email: string;
+    excludeOrderId?: string;
+    provider?: PaymentLifecycleProvider;
+  }) => Promise<CheckoutOrderRecord[]>;
+  cancelSwellOrder: (orderId: string, reason?: string) => Promise<unknown>;
 };
 
 type ProcessingStepOutcome = {
@@ -213,6 +221,43 @@ function isProviderMatch(
   return provider === 'nowpayments'
     ? isNowPaymentsPayment(order.payment)
     : isShieldClimbPayment(order.payment);
+}
+
+function shouldAutoCancelOlderUnpaidOrder(args: {
+  paidOrder: CheckoutOrderRecord;
+  candidate: CheckoutOrderRecord;
+  paidOrderCreatedAtMs: number;
+}) {
+  if (args.candidate.orderId === args.paidOrder.orderId) {
+    return false;
+  }
+
+  if (isSameCarryoverCheckoutOrder(args.paidOrder, args.candidate)) {
+    return false;
+  }
+
+  const candidateStatus = normalizePaymentStatus(args.candidate.payment.status);
+  if (!candidateStatus || candidateStatus === 'partially_paid') {
+    return false;
+  }
+
+  if (
+    isImmutableNonSuccessStatus(candidateStatus) ||
+    candidateStatus === 'finished' ||
+    candidateStatus === 'paid'
+  ) {
+    return false;
+  }
+
+  const candidateCreatedAtMs = Date.parse(args.candidate.createdAt);
+  if (
+    !Number.isFinite(args.paidOrderCreatedAtMs) ||
+    !Number.isFinite(candidateCreatedAtMs)
+  ) {
+    return false;
+  }
+
+  return candidateCreatedAtMs < args.paidOrderCreatedAtMs;
 }
 
 function isStaleProcessingStep(step: CheckoutProcessingStepState) {
@@ -372,6 +417,7 @@ export function createPaymentLifecycle(
         shippingAddress: order.shippingAddress,
         itemCount,
         selectedShippingService: order.shippingService,
+        orderCreatedAt: order.createdAt,
       });
     } catch (error) {
       console.error('Unable to honor selected shipping service during label purchase.', {
@@ -601,6 +647,201 @@ export function createPaymentLifecycle(
     return dependencies.getCheckoutOrder(orderId);
   }
 
+  async function cleanupOlderUnpaidOrdersAfterSuccess(order: CheckoutOrderRecord) {
+    const customerEmail = order.shippingAddress.email?.trim().toLowerCase();
+    if (!customerEmail) {
+      return;
+    }
+
+    const openOrders = await dependencies.findOpenCheckoutOrdersByEmail({
+      email: customerEmail,
+      excludeOrderId: order.orderId,
+    });
+
+    if (openOrders.length === 0) {
+      return;
+    }
+
+    const paidOrderCreatedAtMs = Date.parse(order.createdAt);
+    const ordersToCancel = openOrders.filter((candidate) =>
+      shouldAutoCancelOlderUnpaidOrder({
+        paidOrder: order,
+        candidate,
+        paidOrderCreatedAtMs,
+      }),
+    );
+
+    if (ordersToCancel.length === 0) {
+      return;
+    }
+
+    const cancelledAt = new Date().toISOString();
+    const reason = `Cancelled after newer checkout order ${order.orderId} completed successfully.`;
+
+    await Promise.all(
+      ordersToCancel.map(async (openOrder) => {
+        const updatedOrder = await dependencies
+          .updateCheckoutOrder(openOrder.orderId, (current) => {
+            if (
+              !shouldAutoCancelOlderUnpaidOrder({
+                paidOrder: order,
+                candidate: current,
+                paidOrderCreatedAtMs,
+              })
+            ) {
+              return current;
+            }
+
+            return {
+              ...current,
+              payment: {
+                ...current.payment,
+                status: 'cancelled',
+                updatedAt: cancelledAt,
+              },
+              latestError: reason,
+            };
+          })
+          .catch((error) => {
+            console.error(
+              'Unable to mark older unrelated unpaid checkout cancelled:',
+              error,
+            );
+            return null;
+          });
+
+        if (
+          updatedOrder?.payment.status !== 'cancelled' ||
+          updatedOrder.latestError !== reason
+        ) {
+          return;
+        }
+
+        await dependencies
+          .cancelSwellOrder(openOrder.swell.orderId, reason)
+          .catch((error) => {
+            console.error(
+              'Unable to cancel older unrelated unpaid Swell order:',
+              error,
+            );
+          });
+      }),
+    );
+  }
+
+  async function runTargetedSuccessfulOrderProcessingStep(
+    orderId: string,
+    step: CheckoutProcessingStepName
+  ) {
+    const currentOrder = await dependencies.getCheckoutOrder(orderId);
+    if (!currentOrder || !isSuccessfulOrder(currentOrder)) {
+      return currentOrder;
+    }
+
+    const processing = ensureCheckoutOrderProcessing(currentOrder.processing);
+    const currentStep = processing[step];
+
+    if (currentStep.status === 'completed' || currentStep.status === 'skipped') {
+      return currentOrder;
+    }
+
+    if (currentStep.status === 'processing' && !isStaleProcessingStep(currentStep)) {
+      return currentOrder;
+    }
+
+    if (shouldSkipProcessingStep(step, currentOrder)) {
+      await finalizeProcessingStep({
+        orderId,
+        step,
+        status:
+          step === 'labelPurchase' && currentOrder.shipengine?.labelUrl
+            ? 'completed'
+            : 'skipped',
+      });
+      return dependencies.getCheckoutOrder(orderId);
+    }
+
+    const claim = await claimProcessingStep(orderId, step);
+    if (!claim.order) {
+      return null;
+    }
+
+    if (!claim.claimed) {
+      return claim.order;
+    }
+
+    try {
+      const outcome = normalizeProcessingStepOutcome(
+        await performProcessingStep(step, claim.order)
+      );
+      await finalizeProcessingStep({
+        orderId,
+        step,
+        claimId: claim.claimId,
+        status: outcome.status,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown processing step error';
+
+      await finalizeProcessingStep({
+        orderId,
+        step,
+        claimId: claim.claimId,
+        status: 'failed',
+        error: message,
+      });
+
+      if (step === 'labelPurchase') {
+        await dependencies.updateCheckoutOrder(orderId, current => ({
+          ...current,
+          fulfillmentStatus: 'error',
+          shipengine: {
+            ...current.shipengine,
+            labelError: message,
+          },
+        }));
+      }
+    }
+
+    return dependencies.getCheckoutOrder(orderId);
+  }
+
+  async function retryFailedLabelPurchase(orderId: string) {
+    const order = await dependencies.getCheckoutOrder(orderId);
+    if (!order) {
+      throw new Error(`Order ${orderId} not found.`);
+    }
+
+    if (!isSuccessfulOrder(order)) {
+      throw new Error(`Order ${orderId} has not been paid yet.`);
+    }
+
+    if (order.fulfillmentStatus !== 'error') {
+      throw new Error(
+        `Order ${orderId} is not awaiting label retry (current status: ${order.fulfillmentStatus || 'pending'}).`
+      );
+    }
+
+    if (order.shipengine?.labelUrl) {
+      throw new Error(`Order ${orderId} already has a shipping label.`);
+    }
+
+    const afterLabelPurchase = await runTargetedSuccessfulOrderProcessingStep(
+      orderId,
+      'labelPurchase'
+    );
+
+    if (!afterLabelPurchase || !afterLabelPurchase.shipengine?.labelUrl) {
+      return afterLabelPurchase;
+    }
+
+    return runTargetedSuccessfulOrderProcessingStep(
+      orderId,
+      'shippingLabelEmail'
+    );
+  }
+
   async function applyVerifiedPaymentStatus(
     args: ApplyVerifiedPaymentStatusArgs
   ): Promise<ApplyVerifiedPaymentStatusResult> {
@@ -684,8 +925,19 @@ export function createPaymentLifecycle(
 
     if (targetSuccess && isSuccessfulOrder(finalOrder)) {
       const processedOrder = await runSuccessfulOrderProcessing(finalOrder.orderId);
+      const successfulOrder = processedOrder || finalOrder;
+
+      await cleanupOlderUnpaidOrdersAfterSuccess(successfulOrder).catch(
+        (error) => {
+          console.error(
+            'Unable to clean up older unrelated unpaid checkout orders:',
+            error,
+          );
+        },
+      );
+
       return {
-        order: processedOrder || finalOrder,
+        order: successfulOrder,
         paymentStateChanged,
         transitionedToFailure,
         wasNoopTerminal: false,
@@ -704,6 +956,7 @@ export function createPaymentLifecycle(
     buildInitialCheckoutOrderProcessing,
     ensureCheckoutOrderProcessing,
     runSuccessfulOrderProcessing,
+    retryFailedLabelPurchase,
     applyVerifiedPaymentStatus,
   };
 }

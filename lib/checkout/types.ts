@@ -83,6 +83,10 @@ export type NowPaymentsPaymentData = {
   createdAt?: string;
   updatedAt?: string;
   ipnCallbackEnabled: boolean;
+  amountPaidToDate?: string;
+  attemptAmount?: string;
+  carryoverRootOrderId?: string;
+  supersededByOrderId?: string;
 };
 
 export type ShieldClimbPaymentData = {
@@ -105,23 +109,50 @@ export type ShieldClimbPaymentData = {
   txidOut?: string | null;
   createdAt?: string;
   updatedAt?: string;
+  amountPaidToDate?: string;
+  attemptAmount?: string;
+  carryoverRootOrderId?: string;
+  supersededByOrderId?: string;
 };
 
 export type CheckoutOrderPayment = NowPaymentsPaymentData | ShieldClimbPaymentData;
+
+export type CheckoutPaymentCarryoverPublicData = {
+  amountPaidToDate?: string;
+  attemptAmount?: string;
+  carryoverRootOrderId?: string;
+  supersededByOrderId?: string;
+  supersededByAccessKey?: string;
+  cumulativePaidAmount?: string;
+  remainingBalanceAmount?: string;
+};
+
+export type NowPaymentsPublicPaymentData =
+  NowPaymentsPaymentData & CheckoutPaymentCarryoverPublicData;
 
 export type ShieldClimbPublicPaymentData = {
   provider: 'shieldclimb';
   status: string;
   redirectUrl: string;
+  expectedValueCoin?: string;
   swellPaymentId?: string;
   valueCoinReceived?: string | null;
   txidIn?: string | null;
   txidOut?: string | null;
   createdAt?: string;
   updatedAt?: string;
+  amountPaidToDate?: string;
+  attemptAmount?: string;
+  carryoverRootOrderId?: string;
+  supersededByOrderId?: string;
+  supersededByAccessKey?: string;
+  cumulativePaidAmount?: string;
+  remainingBalanceAmount?: string;
 };
 
-export type CheckoutOrderPublicPayment = NowPaymentsPaymentData | ShieldClimbPublicPaymentData;
+export type CheckoutOrderPublicPayment =
+  | NowPaymentsPublicPaymentData
+  | ShieldClimbPublicPaymentData;
 
 export function isShieldClimbPayment(payment: CheckoutOrderPayment): payment is ShieldClimbPaymentData {
   return payment.provider === 'shieldclimb';
@@ -239,25 +270,42 @@ export type CheckoutOrderPublic = Omit<CheckoutOrderRecord, 'accessKey' | 'payme
   fulfillmentStatus?: FulfillmentStatus | null;
 };
 
-function toPublicCheckoutPayment(payment: CheckoutOrderPayment): CheckoutOrderPublicPayment {
+function toPublicCheckoutPayment(
+  payment: CheckoutOrderPayment,
+  carryover?: CheckoutPaymentCarryoverPublicData,
+): CheckoutOrderPublicPayment {
   if (!isShieldClimbPayment(payment)) {
-    return payment;
+    return {
+      ...payment,
+      ...carryover,
+    };
   }
 
   return {
     provider: payment.provider,
     status: payment.status,
     redirectUrl: payment.redirectUrl,
+    expectedValueCoin: payment.expectedValueCoin,
     swellPaymentId: payment.swellPaymentId,
     valueCoinReceived: payment.valueCoinReceived,
     txidIn: payment.txidIn,
     txidOut: payment.txidOut,
     createdAt: payment.createdAt,
     updatedAt: payment.updatedAt,
+    amountPaidToDate: payment.amountPaidToDate,
+    attemptAmount: payment.attemptAmount,
+    carryoverRootOrderId: payment.carryoverRootOrderId,
+    supersededByOrderId: payment.supersededByOrderId,
+    supersededByAccessKey: carryover?.supersededByAccessKey,
+    cumulativePaidAmount: carryover?.cumulativePaidAmount,
+    remainingBalanceAmount: carryover?.remainingBalanceAmount,
   };
 }
 
-export function toPublicCheckoutOrder(order: CheckoutOrderRecord): CheckoutOrderPublic {
+export function toPublicCheckoutOrder(
+  order: CheckoutOrderRecord,
+  extras?: { payment?: CheckoutPaymentCarryoverPublicData },
+): CheckoutOrderPublic {
   const {
     accessKey: _accessKey,
     userId: _userId,
@@ -267,6 +315,6 @@ export function toPublicCheckoutOrder(order: CheckoutOrderRecord): CheckoutOrder
   } = order;
   return {
     ...publicOrder,
-    payment: toPublicCheckoutPayment(payment),
+    payment: toPublicCheckoutPayment(payment, extras?.payment),
   };
 }

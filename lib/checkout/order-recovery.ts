@@ -11,6 +11,10 @@ export function isReusableCheckoutOrder(order: CheckoutOrderRecord) {
     return false;
   }
 
+  if (typeof order.payment.supersededByOrderId === 'string' && order.payment.supersededByOrderId.trim()) {
+    return false;
+  }
+
   if (isNowPaymentsPayment(order.payment)) {
     return hasNonEmptyValue(order.payment.paymentId);
   }

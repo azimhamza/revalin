@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getCheckoutOrder } from '@/lib/checkout/order-store';
-import { toPublicCheckoutOrder } from '@/lib/checkout/types';
+import { buildPublicCheckoutOrder } from '@/lib/checkout/public-order';
 import { OrderStatusView } from './components/order-status-view';
 
 export const metadata: Metadata = {
@@ -24,7 +24,7 @@ export default async function OrderStatusPage({ params, searchParams }: Props) {
 
   if (!order || order.accessKey !== key) notFound();
 
-  const publicOrder = toPublicCheckoutOrder(order);
+  const publicOrder = await buildPublicCheckoutOrder(order);
 
   return (
     <div className="min-h-screen bg-[#F4F1EA]">

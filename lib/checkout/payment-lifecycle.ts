@@ -1,6 +1,11 @@
 import { createPayoutFromOrder } from '@/lib/checkout/payout-service';
 import { purchaseShipEngineLabel } from '@/lib/checkout/shipengine';
-import { getCheckoutOrder, updateCheckoutOrder } from '@/lib/checkout/order-store';
+import {
+  findOpenCheckoutOrdersByEmail,
+  getCheckoutOrder,
+  updateCheckoutOrder,
+} from '@/lib/checkout/order-store';
+import { cancelSwellOrder } from '@/lib/checkout/swell-order-management';
 import { syncCheckoutOrderToSwell, syncShieldClimbOrderToSwell } from '@/lib/checkout/swell-payment-sync';
 import { sendPaymentCompletedEvent, trackPurchaseFromOrder } from '@/lib/checkout/telemetry';
 import {
@@ -41,6 +46,8 @@ const paymentLifecycleDependencies: PaymentLifecycleDependencies = {
   isSuccessfulPaymentStatus,
   isWelcomeDiscountCode,
   markWelcomeDiscountUsed,
+  findOpenCheckoutOrdersByEmail,
+  cancelSwellOrder,
 };
 
 const paymentLifecycle = createPaymentLifecycle(paymentLifecycleDependencies);
@@ -61,6 +68,9 @@ export type {
 
 export const runSuccessfulOrderProcessing =
   paymentLifecycle.runSuccessfulOrderProcessing;
+
+export const retryFailedLabelPurchase =
+  paymentLifecycle.retryFailedLabelPurchase;
 
 export const applyVerifiedPaymentStatus =
   paymentLifecycle.applyVerifiedPaymentStatus;

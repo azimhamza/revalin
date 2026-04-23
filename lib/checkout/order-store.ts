@@ -238,17 +238,22 @@ export async function updateCheckoutOrder(
 }
 
 export async function findCheckoutOrderByCartId(cartId: string): Promise<CheckoutOrderRecord | null> {
+  const reusableOrder = (await findCheckoutOrdersByCartId(cartId))
+    .find(order => isReusableCheckoutOrder(order));
+
+  return reusableOrder || null;
+}
+
+export async function findCheckoutOrdersByCartId(
+  cartId: string,
+): Promise<CheckoutOrderRecord[]> {
   const rows = await db
     .select()
     .from(checkoutOrders)
     .where(eq(checkoutOrders.cartId, cartId))
     .orderBy(desc(checkoutOrders.updatedAt));
 
-  const reusableOrder = rows
-    .map(rowToRecord)
-    .find(order => isReusableCheckoutOrder(order));
-
-  return reusableOrder || null;
+  return rows.map(rowToRecord);
 }
 
 export async function findCheckoutOrderByPaymentId(paymentId: string): Promise<CheckoutOrderRecord | null> {

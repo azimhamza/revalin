@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation';
 
+import { CheckoutRecoveryMonitor } from '@/components/checkout/checkout-recovery-monitor';
 import { WelcomePopup } from '@/components/home/welcome-popup';
 import type { Collection } from '@/lib/swell/types';
 import { ResearchDisclaimerPopup } from '@/app/research/components/research-disclaimer-popup';
@@ -26,6 +27,7 @@ export function AppChrome({ collections }: AppChromeProps) {
 
   return (
     <>
+      <CheckoutRecoveryMonitor />
       <ResearchDisclaimerPopup />
       <WelcomePopup />
       <Header collections={collections} />

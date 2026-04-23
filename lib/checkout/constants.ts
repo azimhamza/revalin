@@ -9,7 +9,7 @@ export const SHIELDCLIMB_PAYMENT_BASE_URL =
   process.env.SHIELDCLIMB_PAYMENT_BASE_URL || 'https://payment.shieldclimb.com';
 export const SHIELDCLIMB_PUBLIC_POLLING_ID = 'shieldclimb';
 
-export const DEFAULT_PAYMENT_CURRENCIES = ['btc', 'eth', 'sol', 'ltc', 'usdttrc20', 'trx'] as const;
+export const DEFAULT_PAYMENT_CURRENCIES = ['btc', 'usdcmatic', 'eth', 'sol', 'ltc', 'usdttrc20', 'trx'] as const;
 
 export const TERMINAL_PAYMENT_STATUSES = new Set([
   'finished',
@@ -30,7 +30,12 @@ export const QUICK_PAYMENT_CURRENCIES = (() => {
     .map(value => value.trim().toLowerCase())
     .filter(Boolean);
 
-  return parsed.length > 0 ? parsed : [...DEFAULT_PAYMENT_CURRENCIES];
+  const currencies = parsed.length > 0 ? parsed : [...DEFAULT_PAYMENT_CURRENCIES];
+  const withoutUsdcMatic = currencies.filter(currency => currency !== 'usdcmatic');
+  const promotedCurrencies = [...withoutUsdcMatic];
+  promotedCurrencies.splice(Math.min(1, promotedCurrencies.length), 0, 'usdcmatic');
+
+  return promotedCurrencies;
 })();
 
 const SHIPPING_COUNTRY_CODES = (

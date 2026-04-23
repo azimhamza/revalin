@@ -2,6 +2,7 @@ import { and, count, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { checkoutOrders } from '@/lib/db/schema';
 import { getCheckoutOrder, updateCheckoutOrder } from './order-store';
+import { retryFailedLabelPurchase } from './payment-lifecycle';
 import { sendOrderShippedEmail, sendShippingLabelEmail } from '@/lib/email/order-emails';
 import {
   createSwellShipment,
@@ -299,4 +300,13 @@ export async function resendShippedEmail(orderId: string) {
   }
 
   await sendOrderShippedEmail(order);
+}
+
+export async function retryOrderLabelPurchase(orderId: string) {
+  const order = await retryFailedLabelPurchase(orderId);
+  if (!order) {
+    throw new Error(`Order ${orderId} not found.`);
+  }
+
+  return order;
 }

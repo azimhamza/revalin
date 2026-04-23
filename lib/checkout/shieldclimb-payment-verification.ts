@@ -63,7 +63,7 @@ export type VerifyShieldClimbPaymentResult =
       transitioned: false;
     }
   | {
-      status: 'paid';
+      status: 'paid' | 'partially_paid';
       order: CheckoutOrderRecord;
       transitioned: boolean;
     };
@@ -74,25 +74,47 @@ function parseCoinAmount(value?: string | null) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function assertExpectedAmountReceived(args: {
+type AmountCheckResult =
+  | { met: true; expected: number; received: number }
+  | { met: false; reason: 'underpaid' | 'invalid_value_coin' | 'no_expected'; expected: number | null; received: number | null };
+
+function checkExpectedAmountReceived(args: {
   expectedValueCoin?: string | null;
   receivedValueCoin: string;
-}) {
+}): AmountCheckResult {
   const expected = parseCoinAmount(args.expectedValueCoin);
-  if (expected === null) return;
+  if (expected === null) return { met: true, expected: 0, received: 0 };
 
   const received = parseCoinAmount(args.receivedValueCoin);
   if (received === null) {
-    throw new ShieldClimbPaymentValidationError(
-      'ShieldClimb payment callback has an invalid received amount.',
-      'invalid_value_coin',
-    );
+    return { met: false, reason: 'invalid_value_coin', expected, received: null };
   }
 
   const minimumAcceptedSettlement =
     expected * (1 - getShieldClimbAbsorbedFeePercent());
 
   if (received + VALUE_COIN_TOLERANCE < minimumAcceptedSettlement) {
+    return { met: false, reason: 'underpaid', expected, received };
+  }
+
+  return { met: true, expected, received };
+}
+
+function assertExpectedAmountReceived(args: {
+  expectedValueCoin?: string | null;
+  receivedValueCoin: string;
+}) {
+  const result = checkExpectedAmountReceived(args);
+  if (result.met) return;
+
+  if (result.reason === 'invalid_value_coin') {
+    throw new ShieldClimbPaymentValidationError(
+      'ShieldClimb payment callback has an invalid received amount.',
+      'invalid_value_coin',
+    );
+  }
+
+  if (result.reason === 'underpaid') {
     throw new ShieldClimbPaymentValidationError(
       'ShieldClimb payment callback amount is below the absorbable settlement threshold.',
       'underpaid',
@@ -194,13 +216,65 @@ export async function verifyAndFinalizeShieldClimbPayment(args: {
     return { status: 'wrong_provider', order, transitioned: false };
   }
 
-  if (order.payment.status !== 'unpaid' && order.payment.status !== 'paid') {
+  if (
+    order.payment.status !== 'unpaid' &&
+    order.payment.status !== 'paid' &&
+    order.payment.status !== 'partially_paid'
+  ) {
     return { status: 'inactive', order, transitioned: false };
   }
 
   const callbackReceivedAt = args.callbackData ? new Date().toISOString() : null;
   if (args.callbackData) {
-    assertCallbackMatchesOrder(order, args.callbackData);
+    try {
+      assertCallbackMatchesOrder(order, args.callbackData);
+    } catch (validationError) {
+      if (
+        validationError instanceof ShieldClimbPaymentValidationError &&
+        validationError.reason === 'underpaid'
+      ) {
+        const ipnEvent = buildCallbackIpnEvent({
+          callbackData: args.callbackData,
+          receivedAt: callbackReceivedAt!,
+        });
+
+        const result = await applyVerifiedPaymentStatus({
+          orderId: order.orderId,
+          provider: 'shieldclimb',
+          targetStatus: 'partially_paid',
+          source: 'shieldclimb_callback',
+          ipnEvent,
+          paymentUpdater: current => {
+            if (!isShieldClimbPayment(current.payment)) {
+              return current.payment;
+            }
+
+            return {
+              ...current.payment,
+              status: 'partially_paid',
+              valueCoinReceived: args.callbackData!.valueCoin,
+              coinReceived: args.callbackData!.coin,
+              txidIn: args.callbackData!.txidIn,
+              txidOut: args.callbackData!.txidOut,
+              callbackVerifiedAt: callbackReceivedAt!,
+              updatedAt: new Date().toISOString(),
+            };
+          },
+        });
+
+        if (!result.order) {
+          return { status: 'not_found', order: null, transitioned: false };
+        }
+
+        return {
+          status: 'partially_paid' as const,
+          order: result.order,
+          transitioned: result.paymentStateChanged,
+        };
+      }
+
+      throw validationError;
+    }
   }
 
   if (!args.callbackData) {
@@ -221,6 +295,53 @@ export async function verifyAndFinalizeShieldClimbPayment(args: {
         valueCoin: providerStatus.value_coin,
       })
     ) {
+      if (
+        providerStatus.value_coin &&
+        providerStatus.coin?.trim().toLowerCase() === SHIELDCLIMB_SETTLEMENT_COIN
+      ) {
+        const amountCheck = checkExpectedAmountReceived({
+          expectedValueCoin: order.payment.expectedValueCoin,
+          receivedValueCoin: providerStatus.value_coin,
+        });
+
+        if (!amountCheck.met && amountCheck.reason === 'underpaid') {
+          const partialResult = await applyVerifiedPaymentStatus({
+            orderId: order.orderId,
+            provider: 'shieldclimb',
+            targetStatus: 'partially_paid',
+            source: 'shieldclimb_poll',
+            paymentUpdater: current => {
+              if (!isShieldClimbPayment(current.payment)) {
+                return current.payment;
+              }
+
+              return {
+                ...current.payment,
+                status: 'partially_paid',
+                valueCoinReceived:
+                  providerStatus.value_coin ??
+                  current.payment.valueCoinReceived ??
+                  null,
+                coinReceived: providerStatus.coin ?? current.payment.coinReceived ?? null,
+                txidOut:
+                  providerStatus.txid_out ?? current.payment.txidOut ?? null,
+                updatedAt: new Date().toISOString(),
+              };
+            },
+          });
+
+          if (!partialResult.order) {
+            return { status: 'not_found', order: null, transitioned: false };
+          }
+
+          return {
+            status: 'partially_paid' as const,
+            order: partialResult.order,
+            transitioned: partialResult.paymentStateChanged,
+          };
+        }
+      }
+
       return { status: 'invalid_payment', order, transitioned: false };
     }
 

@@ -2,7 +2,15 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { CheckCircle2, Clock, ExternalLink, Package, Truck } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
+  Clock,
+  ExternalLink,
+  Package,
+  Truck,
+} from 'lucide-react';
 import type { CheckoutOrderPublic } from '@/lib/checkout/types';
 import { getCheckoutDiscounts } from '@/lib/checkout/pricing';
 import { getApiData, readJsonSafely } from '@/lib/api/client';
@@ -141,6 +149,15 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
   const normalizedPaymentStatus = order.payment.status.toLowerCase();
   const isPaid = order.payment.status === 'finished' || order.payment.status === 'paid';
   const isInactive = isInactivePaymentStatus(order.payment.status);
+  const isPartiallyPaid = normalizedPaymentStatus === 'partially_paid';
+  const latestCheckoutHref =
+    order.payment.supersededByOrderId && order.payment.supersededByAccessKey
+      ? `/checkout?order=${encodeURIComponent(order.payment.supersededByOrderId)}&key=${encodeURIComponent(order.payment.supersededByAccessKey)}`
+      : null;
+  const currentCheckoutHref = `/checkout?order=${encodeURIComponent(order.orderId)}&key=${encodeURIComponent(accessKey)}`;
+  const cumulativePaidAmount = Number(order.payment.cumulativePaidAmount || 0);
+  const remainingBalanceAmount = Number(order.payment.remainingBalanceAmount || 0);
+  const hasPartialBalance = cumulativePaidAmount > 0 && remainingBalanceAmount > 0;
   const orderDiscounts = getCheckoutDiscounts({
     currencyCode: order.currencyCode,
     discounts: order.totals.discounts,
@@ -183,9 +200,13 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
         <p className="mt-1 text-sm text-[#0B2E2F]/60">
           {isPaid
             ? 'Thank you for your order.'
-            : isInactive
-              ? 'This payment request is no longer active.'
-              : 'Awaiting payment confirmation.'}
+            : latestCheckoutHref
+              ? 'This payment attempt has a newer checkout continuation.'
+              : isInactive
+                ? 'This payment request is no longer active.'
+                : isPartiallyPaid
+                  ? 'We received part of your payment. Complete the remaining balance to finish your order.'
+                  : 'Awaiting payment confirmation.'}
         </p>
       </div>
 
@@ -195,7 +216,28 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
           <StatusTimeline currentStatus={status} />
         </div>
 
-        {isInactive ? (
+        {latestCheckoutHref ? (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5 text-sm text-amber-900">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <div>
+                <p className="font-semibold">A newer checkout is active for this order.</p>
+                <p className="mt-1 leading-6">
+                  {hasPartialBalance
+                    ? `We’ve credited ${formatCurrency(cumulativePaidAmount, order.currencyCode)} toward this order. ${formatCurrency(remainingBalanceAmount, order.currencyCode)} remains on the latest checkout.`
+                    : 'This payment attempt was superseded by a newer checkout. Use the latest checkout to continue payment.'}
+                </p>
+                <Link
+                  href={latestCheckoutHref}
+                  className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#0B2E2F] px-4 py-2.5 text-sm font-semibold text-[#F4F1EA] transition-colors hover:bg-[#0B2E2F]/90"
+                >
+                  Continue payment
+                  <ArrowRight className="size-4" />
+                </Link>
+              </div>
+            </div>
+          </div>
+        ) : isInactive ? (
           <div className="mt-4 rounded-xl border border-[#B42318]/15 bg-[#FEF3F2] px-4 py-3.5 text-sm text-[#912018]">
             <div className="flex items-start gap-2.5">
               <Clock className="mt-0.5 size-4 shrink-0" />
@@ -213,6 +255,27 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
                   className="mt-3 inline-flex items-center rounded-xl bg-[#0B2E2F] px-4 py-2.5 text-sm font-semibold text-[#F4F1EA] transition-colors hover:bg-[#0B2E2F]/90"
                 >
                   Start new checkout
+                </Link>
+              </div>
+            </div>
+          </div>
+        ) : isPartiallyPaid && hasPartialBalance ? (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5 text-sm text-amber-900">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <div>
+                <p className="font-semibold">Partial payment received.</p>
+                <p className="mt-1 leading-6">
+                  We&apos;ve credited {formatCurrency(cumulativePaidAmount, order.currencyCode)} of{' '}
+                  {formatCurrency(order.totals.totalAmount.amount, order.currencyCode)}.{' '}
+                  {formatCurrency(remainingBalanceAmount, order.currencyCode)} remains.
+                </p>
+                <Link
+                  href={currentCheckoutHref}
+                  className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#0B2E2F] px-4 py-2.5 text-sm font-semibold text-[#F4F1EA] transition-colors hover:bg-[#0B2E2F]/90"
+                >
+                  Open checkout
+                  <ArrowRight className="size-4" />
                 </Link>
               </div>
             </div>
@@ -340,6 +403,22 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
               {formatCurrency(order.totals.totalAmount.amount, order.currencyCode)}
             </span>
           </div>
+          {hasPartialBalance ? (
+            <>
+              <div className="flex justify-between text-sm text-green-700">
+                <span className="font-medium">Amount paid</span>
+                <span className="font-semibold">
+                  {formatCurrency(cumulativePaidAmount, order.currencyCode)}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm text-amber-700">
+                <span className="font-semibold">Remaining balance</span>
+                <span className="font-semibold">
+                  {formatCurrency(remainingBalanceAmount, order.currencyCode)}
+                </span>
+              </div>
+            </>
+          ) : null}
         </div>
       </div>
 

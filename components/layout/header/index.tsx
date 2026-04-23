@@ -37,7 +37,13 @@ export function Header({ collections }: HeaderProps) {
   return (
     <>
       {/* Scrolling Banner */}
-      <div className="fixed top-0 left-0 z-50 w-full backdrop-blur-sm border-b border-foreground/10 overflow-hidden" style={{ backgroundColor: '#0B2E2F' }}>
+      <div
+        className="fixed left-0 z-50 w-full overflow-hidden border-b border-foreground/10 backdrop-blur-sm"
+        style={{
+          top: 'var(--revalin-pending-banner-height, 0px)',
+          backgroundColor: '#0B2E2F',
+        }}
+      >
         <div className="banner-scroll flex w-max items-center gap-6 py-1.5 md:gap-8">
           {[...BANNER_ITEMS, ...BANNER_ITEMS].map((item, i) => (
             <span key={i} className="flex shrink-0 items-center gap-1.5 text-[8px] md:text-[10px] tracking-[0.05em] md:tracking-[0.14em] text-background/90 font-medium uppercase">
@@ -58,7 +64,12 @@ export function Header({ collections }: HeaderProps) {
       </div>
 
       {/* Main Header */}
-      <header className="grid fixed top-[28px] md:top-[30px] left-0 z-50 grid-cols-3 items-start w-full p-sides md:grid-cols-12 md:gap-sides">
+      <header
+        className="fixed left-0 z-50 grid w-full grid-cols-3 items-start p-sides [--revalin-site-header-base-top:28px] md:grid-cols-12 md:gap-sides md:[--revalin-site-header-base-top:30px]"
+        style={{
+          top: 'calc(var(--revalin-pending-banner-height, 0px) + var(--revalin-site-header-base-top))',
+        }}
+      >
         <div className="block flex-none md:hidden">
           <MobileMenu collections={collections} />
         </div>

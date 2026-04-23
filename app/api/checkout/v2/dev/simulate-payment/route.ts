@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { createApiRoute } from '@/lib/api/route';
 import { apiError } from '@/lib/api/errors';
 import { getCheckoutOrder } from '@/lib/checkout/order-store';
+import { buildPublicCheckoutOrder } from '@/lib/checkout/public-order';
 import { applyVerifiedPaymentStatus } from '@/lib/checkout/payment-lifecycle';
-import { isNowPaymentsPayment, isShieldClimbPayment, toPublicCheckoutOrder } from '@/lib/checkout/types';
+import { isNowPaymentsPayment, isShieldClimbPayment } from '@/lib/checkout/types';
 import { sendPaymentFailedEvent } from '@/lib/email/marketing-events';
 
 const bodySchema = z.object({
@@ -50,7 +51,7 @@ const handler = createApiRoute({
         throw apiError.internal('Failed to process payment simulation.');
       }
 
-      return { data: { order: toPublicCheckoutOrder(result.order) } };
+      return { data: { order: await buildPublicCheckoutOrder(result.order) } };
     }
 
     // action === 'fail'
@@ -74,7 +75,7 @@ const handler = createApiRoute({
 
     return {
       data: {
-        order: result.order ? toPublicCheckoutOrder(result.order) : null,
+        order: result.order ? await buildPublicCheckoutOrder(result.order) : null,
       },
     };
   },

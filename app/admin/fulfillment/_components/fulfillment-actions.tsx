@@ -9,6 +9,7 @@ import {
   Mail,
   Package,
   Play,
+  RefreshCw,
   Truck,
   Zap,
 } from 'lucide-react';
@@ -18,6 +19,13 @@ type Props = {
   order: FulfillmentOrderListItem;
   onActionComplete: () => void;
   isDev?: boolean;
+};
+
+type ActionResponse = {
+  data?: {
+    hasLabel?: boolean;
+    labelError?: string | null;
+  };
 };
 
 async function postAction(orderId: string, action: string) {
@@ -33,7 +41,7 @@ async function postAction(orderId: string, action: string) {
     );
   }
 
-  return response.json();
+  return response.json() as Promise<ActionResponse>;
 }
 
 function ShipConfirmModal({
@@ -135,7 +143,14 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
       setLoading(action);
       setError(null);
       try {
-        await postAction(order.orderId, action);
+        const result = await postAction(order.orderId, action);
+        if (
+          action === 'retry-label' &&
+          result.data?.hasLabel === false &&
+          result.data.labelError
+        ) {
+          setError(result.data.labelError);
+        }
         onActionComplete();
       } catch (err) {
         setError(
@@ -170,6 +185,10 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
   const canShip =
     order.fulfillmentStatus === 'label_ready' ||
     order.fulfillmentStatus === 'packed';
+  const canRetryLabel =
+    order.fulfillmentStatus === 'error' &&
+    !order.labelUrl &&
+    (order.paymentStatus === 'finished' || order.paymentStatus === 'paid');
   const canResendLabel = Boolean(order.labelUrl);
   const canResendShipped =
     order.fulfillmentStatus === 'handed_to_carrier';
@@ -218,6 +237,23 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
               <Play className="size-3.5" />
             )}
             Rerun
+          </button>
+        ) : null}
+
+        {/* Retry Label */}
+        {canRetryLabel ? (
+          <button
+            onClick={() => handleAction('retry-label')}
+            disabled={loading !== null}
+            className="flex items-center gap-1 rounded-lg bg-sky-50 px-2.5 py-1.5 text-xs font-semibold text-sky-800 hover:bg-sky-100 transition-colors disabled:opacity-40"
+            title="Retry shipping label purchase"
+          >
+            {loading === 'retry-label' ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            Retry Label
           </button>
         ) : null}
 

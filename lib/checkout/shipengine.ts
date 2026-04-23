@@ -10,6 +10,10 @@ const SHIPENGINE_CARRIER_IDS = (process.env.SHIPENGINE_CARRIER_IDS || '')
 const SHIPENGINE_LABEL_PURCHASE_TIMEOUT_MS = Number(
   process.env.SHIPENGINE_LABEL_PURCHASE_TIMEOUT_MS || 15_000
 );
+const SHIPENGINE_SHIP_DATE_TIME_ZONE = (
+  process.env.SHIPENGINE_SHIP_DATE_TIME_ZONE || 'America/Toronto'
+)
+  .trim() || 'America/Toronto';
 
 const SHIPENGINE_ORIGIN = {
   name: (process.env.SHIPENGINE_ORIGIN_NAME || 'Revalin Fulfillment').trim(),
@@ -114,6 +118,29 @@ function normalizeShipEngineValue(value?: string | null) {
   return normalized || undefined;
 }
 
+function getShipEngineShipDate(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: SHIPENGINE_SHIP_DATE_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return formatter.format(date);
+}
+
+function toShipEngineShipDate(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return getShipEngineShipDate(parsed);
+}
+
 function parsePositiveNumber(value: number) {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
@@ -188,6 +215,7 @@ function buildShipmentPayload(args: {
 
   return {
     validate_address: 'validate_and_clean',
+    ship_date: getShipEngineShipDate(),
     ship_to: {
       name: `${args.shippingAddress.firstName} ${args.shippingAddress.lastName}`.trim(),
       phone: args.shippingAddress.phone || undefined,
@@ -456,6 +484,7 @@ export async function purchaseShipEngineLabel(args: {
   shippingAddress: CheckoutShippingAddress;
   itemCount: number;
   selectedShippingService: CheckoutShippingService;
+  orderCreatedAt?: string;
 }) {
   if (args.selectedShippingService.source !== 'shipengine') {
     throw new Error(
@@ -471,8 +500,14 @@ export async function purchaseShipEngineLabel(args: {
   const savedRateId = normalizeShipEngineValue(
     args.selectedShippingService.shipengineRateId
   );
+  const currentShipDate = getShipEngineShipDate();
+  const orderCreatedShipDate = toShipEngineShipDate(args.orderCreatedAt);
+  const shouldReuseSavedRateId =
+    !savedRateId ||
+    !orderCreatedShipDate ||
+    orderCreatedShipDate === currentShipDate;
 
-  if (savedRateId) {
+  if (savedRateId && shouldReuseSavedRateId) {
     try {
       const label = await purchaseShipEngineLabelByRateId(savedRateId);
       const trackingUrl = await getShipEngineTrackingUrl({
@@ -514,6 +549,19 @@ export async function purchaseShipEngineLabel(args: {
         }
       );
     }
+  } else if (savedRateId) {
+    console.info(
+      'Skipping saved ShipEngine rate id because it was quoted for an older shipment date. Requesting a fresh rate instead.',
+      {
+        rateId: savedRateId,
+        carrierCode:
+          normalizeShipEngineValue(args.selectedShippingService.carrierCode) || null,
+        serviceCode:
+          normalizeShipEngineValue(args.selectedShippingService.serviceCode) || null,
+        currentShipDate,
+        quotedShipDate: orderCreatedShipDate,
+      }
+    );
   }
 
   const rateResult = await shipEngineRequest<ShipEngineRateApiResponse>('/v1/rates', {

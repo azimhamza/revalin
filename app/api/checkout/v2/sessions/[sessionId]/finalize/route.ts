@@ -19,7 +19,7 @@ import {
   updateCheckoutSession,
 } from '@/lib/checkout/session-store';
 import type { CheckoutOrderPublic } from '@/lib/checkout/types';
-import { toPublicCheckoutOrder } from '@/lib/checkout/types';
+import { buildPublicCheckoutOrder } from '@/lib/checkout/public-order';
 
 const paramsSchema = z.object({
   sessionId: z.string().trim().min(1),
@@ -46,7 +46,7 @@ export const POST = createApiRoute({
           data: {
             session: toCheckoutSessionState(current),
             accessKey: current.finalizedAccessKey,
-            order: toPublicCheckoutOrder(existingOrder),
+            order: await buildPublicCheckoutOrder(existingOrder),
             redirectUrl:
               existingOrder.payment.provider === 'shieldclimb'
                 ? existingOrder.payment.redirectUrl

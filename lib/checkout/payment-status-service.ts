@@ -2,11 +2,11 @@ import { apiError } from '@/lib/api/errors';
 import { SHIELDCLIMB_PUBLIC_POLLING_ID } from '@/lib/checkout/constants';
 import { getNowPaymentsPayment } from '@/lib/checkout/nowpayments';
 import { getCheckoutOrder } from '@/lib/checkout/order-store';
+import { buildPublicCheckoutOrder } from '@/lib/checkout/public-order';
 import { applyVerifiedPaymentStatus } from '@/lib/checkout/payment-lifecycle';
 import {
   isNowPaymentsPayment,
   isShieldClimbPayment,
-  toPublicCheckoutOrder,
 } from '@/lib/checkout/types';
 import { verifyAndFinalizeShieldClimbPayment } from '@/lib/checkout/shieldclimb-payment-verification';
 import { sendPaymentFailedEvent } from '@/lib/email/marketing-events';
@@ -34,7 +34,7 @@ export async function refreshCheckoutPaymentStatus(args: {
       const verification = await verifyAndFinalizeShieldClimbPayment({
         orderId: args.orderId,
       });
-      return toPublicCheckoutOrder(verification.order ?? order);
+      return buildPublicCheckoutOrder(verification.order ?? order);
     }
 
     if (isNowPaymentsPayment(order.payment)) {
@@ -88,7 +88,7 @@ export async function refreshCheckoutPaymentStatus(args: {
         );
       }
 
-      return toPublicCheckoutOrder(result.order || order);
+      return buildPublicCheckoutOrder(result.order || order);
     }
 
     throw apiError.badRequest('Unknown payment provider.');

@@ -110,7 +110,12 @@ export default async function Home() {
       <div className="contents md:grid md:grid-cols-12 md:gap-sides">
         <HomeSidebar collections={collections} />
         <div className="flex relative flex-col grid-cols-2 col-span-8 w-full md:grid">
-          <div className="fixed top-[28px] md:top-[30px] left-0 z-10 w-full pointer-events-none base-grid py-sides">
+          <div
+            className="fixed left-0 z-10 w-full pointer-events-none base-grid py-sides [--revalin-site-header-base-top:28px] md:[--revalin-site-header-base-top:30px]"
+            style={{
+              top: 'calc(var(--revalin-pending-banner-height, 0px) + var(--revalin-site-header-base-top))',
+            }}
+          >
             <div className="col-span-8 col-start-5">
               <div className="hidden px-6 lg:block">
                 <Badge variant="outline-secondary">latest drop</Badge>
