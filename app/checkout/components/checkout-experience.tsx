@@ -1190,32 +1190,6 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   }, [initialDiscountCode]);
 
   useEffect(() => {
-    if (!isDraftHydrated) return;
-    if (orderId || accessKey || activeOrder) return;
-
-    try {
-      const resume = readStoredCheckoutResume();
-      if (!resume) return;
-
-      if (!Number.isFinite(Date.parse(resume.savedAt)) || isCheckoutResumeExpired(resume)) {
-        clearStoredCheckoutResume();
-        return;
-      }
-
-      followCheckoutOrder(resume.orderId, resume.accessKey);
-    } catch {
-      clearStoredCheckoutResume();
-    }
-  }, [
-    accessKey,
-    activeOrder,
-    clearStoredCheckoutResume,
-    followCheckoutOrder,
-    isDraftHydrated,
-    orderId,
-  ]);
-
-  useEffect(() => {
     if (!isDraftHydrated || activeOrder || cart === undefined) return;
     if (!checkoutApiSession && !appliedDiscount) return;
 
@@ -1399,6 +1373,32 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       // Best effort only.
     }
   }, []);
+
+  useEffect(() => {
+    if (!isDraftHydrated) return;
+    if (orderId || accessKey || activeOrder) return;
+
+    try {
+      const resume = readStoredCheckoutResume();
+      if (!resume) return;
+
+      if (!Number.isFinite(Date.parse(resume.savedAt)) || isCheckoutResumeExpired(resume)) {
+        clearStoredCheckoutResume();
+        return;
+      }
+
+      followCheckoutOrder(resume.orderId, resume.accessKey);
+    } catch {
+      clearStoredCheckoutResume();
+    }
+  }, [
+    accessKey,
+    activeOrder,
+    clearStoredCheckoutResume,
+    followCheckoutOrder,
+    isDraftHydrated,
+    orderId,
+  ]);
 
   useEffect(() => {
     if (!orderId || !accessKey) {

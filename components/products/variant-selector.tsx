@@ -3,8 +3,7 @@
 import { cva, type VariantProps } from 'class-variance-authority';
 import { CartProduct, Product, ProductOption, ProductVariant, SelectedOptions } from '@/lib/swell/types';
 import { startTransition, useMemo, useState } from 'react';
-import { useQueryState, parseAsString } from 'nuqs';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ColorSwatch } from '@/components/ui/color-picker';
 import { Button } from '@/components/ui/button';
 import { cn, getColorHex } from '@/lib/utils';
@@ -222,10 +221,13 @@ export function VariantOptionSelector({
   hideLabel = false,
 }: VariantOptionSelectorProps) {
   const pathname = useParams<{ handle?: string }>();
+  const currentPathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const optionNameLowerCase = option.name.toLowerCase();
 
-  const [selectedValue, setSelectedValue] = useQueryState(optionNameLowerCase, parseAsString.withDefault(''));
-  const [activeProductId, setActiveProductId] = useQueryState('pid', parseAsString.withDefault(''));
+  const selectedValue = searchParams.get(optionNameLowerCase) || '';
+  const activeProductId = searchParams.get('pid') || '';
 
   const selectedOptions = useSelectedOptions(product);
 
@@ -234,10 +236,17 @@ export function VariantOptionSelector({
 
   const handleSelect = (valueName: string) => {
     startTransition(() => {
-      setSelectedValue(valueName);
+      const nextParams = new URLSearchParams(searchParams.toString());
+      nextParams.set(optionNameLowerCase, valueName);
+
       if (!isProductPage) {
-        setActiveProductId(getSwellProductId(product.id));
+        nextParams.set('pid', getSwellProductId(product.id));
       }
+
+      const nextQuery = nextParams.toString();
+      router.replace(nextQuery ? `${currentPathname}?${nextQuery}` : currentPathname, {
+        scroll: false,
+      });
     });
   };
 

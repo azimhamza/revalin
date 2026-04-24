@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation';
 
+import { AffiliateLandingTracker } from '@/components/affiliate/affiliate-landing-tracker';
 import { CheckoutRecoveryMonitor } from '@/components/checkout/checkout-recovery-monitor';
 import { WelcomePopup } from '@/components/home/welcome-popup';
 import type { Collection } from '@/lib/swell/types';
@@ -27,6 +28,7 @@ export function AppChrome({ collections }: AppChromeProps) {
 
   return (
     <>
+      <AffiliateLandingTracker />
       <CheckoutRecoveryMonitor />
       <ResearchDisclaimerPopup />
       <WelcomePopup />

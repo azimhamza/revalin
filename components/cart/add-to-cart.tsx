@@ -3,7 +3,7 @@
 import { PlusCircleIcon } from 'lucide-react';
 import { Product, ProductVariant } from '@/lib/swell/types';
 import { useMemo, useTransition } from 'react';
-import { useCart } from './cart-context';
+import { useOptionalCart } from './cart-context';
 import { Button, ButtonProps } from '../ui/button';
 import { cn } from '@/lib/utils';
 import { useSelectedVariant } from '@/components/products/variant-selector';
@@ -56,7 +56,7 @@ export function AddToCartButton({
   style,
   ...buttonProps
 }: AddToCartButtonProps) {
-  const { addItem, cart, warmCart } = useCart();
+  const cartContext = useOptionalCart();
   const [isLoading, startTransition] = useTransition();
 
   // Resolve variant locally only for variantless products (purely synchronous)
@@ -69,29 +69,39 @@ export function AddToCartButton({
   const inventory = useMemo(() => getInventoryState(product, resolvedVariant), [product, resolvedVariant]);
   const existingCartQuantity = useMemo(() => {
     if (!resolvedVariant) return 0;
-    return cart?.lines.find(line => line.merchandise.id === resolvedVariant.id)?.quantity || 0;
-  }, [cart, resolvedVariant]);
+    return cartContext?.cart?.lines.find(line => line.merchandise.id === resolvedVariant.id)?.quantity || 0;
+  }, [cartContext?.cart, resolvedVariant]);
   const hasReachedAvailableLimit =
     inventory.availableQuantity !== null && existingCartQuantity >= inventory.availableQuantity;
 
   const getButtonText = () => {
+    if (!cartContext) return 'Loading...';
     if (inventory.isBackorder) return 'Available in next shipment';
     if (!resolvedVariant) return 'Select one';
     if (hasReachedAvailableLimit) return 'Max quantity added';
     return 'Add To Cart';
   };
 
-  const isDisabled = inventory.isBackorder || hasReachedAvailableLimit || !resolvedVariant || isLoading;
+  const isDisabled =
+    !cartContext ||
+    inventory.isBackorder ||
+    hasReachedAvailableLimit ||
+    !resolvedVariant ||
+    isLoading;
   const isSelectOneState = !inventory.isBackorder && !resolvedVariant;
   const buttonStyle = isSelectOneState && unselectedStyle ? unselectedStyle : style;
   const { onPointerEnter, onFocus, onTouchStart, ...restButtonProps } = buttonProps;
 
   const handleWarmCart = () => {
+    if (!cartContext) {
+      return;
+    }
+
     if (!resolvedVariant || hasReachedAvailableLimit || inventory.isBackorder) {
       return;
     }
 
-    warmCart();
+    cartContext.warmCart();
   };
 
   const getLoaderSize = () => {
@@ -107,9 +117,9 @@ export function AddToCartButton({
       onSubmit={e => {
         e.preventDefault();
 
-        if (resolvedVariant && !hasReachedAvailableLimit) {
+        if (cartContext && resolvedVariant && !hasReachedAvailableLimit) {
           startTransition(async () => {
-            addItem(resolvedVariant, product);
+            cartContext.addItem(resolvedVariant, product);
             try {
               const refMatch = document.cookie.match(/(?:^|;\s*)revalin_ref=([^;]+)/);
               window.op?.track('product_added_to_cart', {

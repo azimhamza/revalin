@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { and, desc, eq, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { affiliates, promoters, user } from "@/lib/db/schema";
@@ -39,6 +40,12 @@ export type AffiliateRecord = {
   status: "pending" | "approved" | "rejected" | "suspended";
   createdAt: Date;
   updatedAt: Date;
+};
+
+export type AffiliateAttributionRecord = {
+  code: string;
+  discountCode: string | null;
+  status: "pending" | "approved" | "rejected" | "suspended";
 };
 
 export type AffiliateRoleOrphanUser = {
@@ -220,6 +227,32 @@ export async function getApprovedAffiliateByCode(
   if (!row || row.status !== "approved") return null;
 
   return decryptRow(row);
+}
+
+const getAffiliateAttributionByCodeCached = unstable_cache(
+  async (normalizedCode: string): Promise<AffiliateAttributionRecord | null> => {
+    const rows = await db
+      .select({
+        code: affiliates.code,
+        discountCode: affiliates.discountCode,
+        status: affiliates.status,
+      })
+      .from(affiliates)
+      .where(eq(affiliates.code, normalizedCode))
+      .limit(1);
+
+    return rows[0] ?? null;
+  },
+  ["affiliate-attribution-by-code"],
+  { revalidate: 300 },
+);
+
+export async function getAffiliateAttributionByCode(
+  code: string,
+): Promise<AffiliateAttributionRecord | null> {
+  const normalizedCode = code.toLowerCase().trim();
+  if (!normalizedCode) return null;
+  return getAffiliateAttributionByCodeCached(normalizedCode);
 }
 
 export async function getAffiliateByCode(

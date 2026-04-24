@@ -380,3 +380,7 @@ export function useCart(): UseCartReturn {
   }
   return context;
 }
+
+export function useOptionalCart(): UseCartReturn | undefined {
+  return useContext(CartContext);
+}
