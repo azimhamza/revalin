@@ -27,8 +27,10 @@ import {
 } from "@/lib/checkout/payout-periods";
 
 export type CommissionTierDefinition = CommissionTierConfig;
-export type CommissionMonthRecord = typeof affiliateCommissionMonths.$inferSelect;
-export type CommissionEventRecord = typeof affiliateCommissionEvents.$inferSelect;
+export type CommissionMonthRecord =
+  typeof affiliateCommissionMonths.$inferSelect;
+export type CommissionEventRecord =
+  typeof affiliateCommissionEvents.$inferSelect;
 export type AffiliatePayoutRecord = typeof affiliatePayouts.$inferSelect;
 
 export type CommissionMonthSummary = {
@@ -82,7 +84,9 @@ export type PayoutApprovalPreview = {
   affectedCount: number;
 };
 
-export function getCommissionMonthKey(value: Date | string | number = new Date()) {
+export function getCommissionMonthKey(
+  value: Date | string | number = new Date(),
+) {
   return getTimeZoneMonthKey(value, getDefaultPayoutTimezone());
 }
 
@@ -192,7 +196,8 @@ function buildPayoutImpact(
   tier: CommissionTierDefinition,
 ): PayoutRecalculationImpact {
   const nextAmount = formatAmount(
-    parseAmount(payout.normalizedOrderTotal ?? payout.orderTotal) * effectiveRateNumeric,
+    parseAmount(payout.normalizedOrderTotal ?? payout.orderTotal) *
+      effectiveRateNumeric,
   );
 
   return {
@@ -215,15 +220,18 @@ function buildPayoutImpact(
   };
 }
 
-async function computeCommissionMonthState(affiliateId: string, monthKey: string) {
+async function computeCommissionMonthState(
+  affiliateId: string,
+  monthKey: string,
+) {
   const [affiliate, existingSummary, priorSummary, payouts, tiers] =
     await Promise.all([
-    getAffiliateCore(affiliateId),
-    getExistingCommissionMonth(affiliateId, monthKey),
-    getLatestPriorCommissionMonth(affiliateId, monthKey),
-    getMonthPayoutRows(affiliateId, monthKey),
-    listCommissionTierConfig({ includeInactive: false }),
-  ]);
+      getAffiliateCore(affiliateId),
+      getExistingCommissionMonth(affiliateId, monthKey),
+      getLatestPriorCommissionMonth(affiliateId, monthKey),
+      getMonthPayoutRows(affiliateId, monthKey),
+      listCommissionTierConfig({ includeInactive: false }),
+    ]);
 
   const baselineRate = parseRate(affiliate.commissionRate);
   const startingRateNumeric = priorSummary
@@ -232,8 +240,7 @@ async function computeCommissionMonthState(affiliateId: string, monthKey: string
   const carriedForwardFromMonthKey = priorSummary?.monthKey ?? null;
   const recognizedPayouts = payouts.filter((row) => row.status !== "rejected");
   const recognizedRevenueNumeric = recognizedPayouts.reduce(
-    (sum, row) =>
-      sum + parseAmount(row.normalizedOrderTotal ?? row.orderTotal),
+    (sum, row) => sum + parseAmount(row.normalizedOrderTotal ?? row.orderTotal),
     0,
   );
   const recognizedOrderCount = recognizedPayouts.length;
@@ -243,7 +250,8 @@ async function computeCommissionMonthState(affiliateId: string, monthKey: string
     tiers,
   });
   const overrideRateNumeric =
-    existingSummary?.overrideRate === null || existingSummary?.overrideRate === undefined
+    existingSummary?.overrideRate === null ||
+    existingSummary?.overrideRate === undefined
       ? null
       : parseRate(existingSummary.overrideRate);
   const effectiveRateNumeric =
@@ -264,10 +272,18 @@ async function computeCommissionMonthState(affiliateId: string, monthKey: string
     amountToNextTier: progress.amountToNextTier,
   };
   const openPayouts = recognizedPayouts.filter(
-    (row) => row.status !== "paid" && row.status !== "rejected",
+    (row) =>
+      row.status !== "paid" &&
+      row.status !== "rejected" &&
+      row.paymentProvider !== "manual_adjustment",
   );
   const impacts = openPayouts.map((row) =>
-    buildPayoutImpact(row, nextSummaryValues.effectiveRate, effectiveRateNumeric, tier),
+    buildPayoutImpact(
+      row,
+      nextSummaryValues.effectiveRate,
+      effectiveRateNumeric,
+      tier,
+    ),
   );
 
   return {
@@ -325,7 +341,8 @@ export async function syncAffiliateCommissionMonth(args: {
       affiliateId: args.affiliateId,
       monthKey,
       startingRate: state.nextSummaryValues.startingRate,
-      carriedForwardFromMonthKey: state.nextSummaryValues.carriedForwardFromMonthKey,
+      carriedForwardFromMonthKey:
+        state.nextSummaryValues.carriedForwardFromMonthKey,
       recognizedRevenue: state.nextSummaryValues.recognizedRevenue,
       recognizedOrderCount: state.nextSummaryValues.recognizedOrderCount,
       tierKey: state.nextSummaryValues.tierKey,
@@ -382,7 +399,10 @@ export async function syncAffiliateCommissionMonth(args: {
     );
   }
 
-  if (args.recordEvent && state.existingSummary?.effectiveRate !== summaryRow.effectiveRate) {
+  if (
+    args.recordEvent &&
+    state.existingSummary?.effectiveRate !== summaryRow.effectiveRate
+  ) {
     await writeCommissionEvent({
       affiliateId: args.affiliateId,
       monthKey,
@@ -403,7 +423,12 @@ export async function syncAffiliateCommissionMonth(args: {
   }
 
   return {
-    summary: toSummary(state.affiliate.id, state.affiliate.code, summaryRow, state.tiers),
+    summary: toSummary(
+      state.affiliate.id,
+      state.affiliate.code,
+      summaryRow,
+      state.tiers,
+    ),
     impacts: state.impacts,
   };
 }
@@ -487,7 +512,7 @@ export async function setAffiliateCommissionOverride(args: {
       effectiveRate: before.summary.effectiveRate,
       overrideRate: normalizedOverride?.stored ?? null,
       overrideReason: normalizedOverride ? args.reason?.trim() || null : null,
-      overrideByUserId: normalizedOverride ? args.actorUserId ?? null : null,
+      overrideByUserId: normalizedOverride ? (args.actorUserId ?? null) : null,
       updatedAt: new Date(),
     })
     .onConflictDoUpdate({
@@ -498,7 +523,9 @@ export async function setAffiliateCommissionOverride(args: {
       set: {
         overrideRate: normalizedOverride?.stored ?? null,
         overrideReason: normalizedOverride ? args.reason?.trim() || null : null,
-        overrideByUserId: normalizedOverride ? args.actorUserId ?? null : null,
+        overrideByUserId: normalizedOverride
+          ? (args.actorUserId ?? null)
+          : null,
         updatedAt: new Date(),
       },
     });
@@ -589,7 +616,8 @@ export async function getPayoutApprovalPreview(
     throw new Error("Payout not found.");
   }
 
-  const monthKey = payout.commissionMonthKey || getCommissionMonthKey(payout.createdAt);
+  const monthKey =
+    payout.commissionMonthKey || getCommissionMonthKey(payout.createdAt);
   const { summary, impacts } = await syncAffiliateCommissionMonth({
     affiliateId: payout.affiliateId,
     monthKey,
@@ -598,7 +626,9 @@ export async function getPayoutApprovalPreview(
 
   const targetImpact =
     impacts.find((impact) => impact.payoutId === payoutId) ?? null;
-  const siblingImpacts = impacts.filter((impact) => impact.payoutId !== payoutId);
+  const siblingImpacts = impacts.filter(
+    (impact) => impact.payoutId !== payoutId,
+  );
 
   return {
     payoutId,

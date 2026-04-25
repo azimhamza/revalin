@@ -3,7 +3,10 @@ import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { affiliatePayouts, affiliates } from "@/lib/db/schema";
 import { getCheckoutOrder } from "@/lib/checkout/order-store";
-import type { CheckoutOrderAffiliate, CheckoutOrderRecord } from "@/lib/checkout/types";
+import type {
+  CheckoutOrderAffiliate,
+  CheckoutOrderRecord,
+} from "@/lib/checkout/types";
 import {
   formatAmount,
   parseAmount,
@@ -94,7 +97,7 @@ export async function getAllAffiliateEarnings(limit = 500) {
     .limit(limit);
 }
 
-async function sendEarnedEmailForEarning(earningId: string) {
+export async function sendAffiliateEarnedEmailForEarning(earningId: string) {
   const [row] = await db
     .select({
       earning: affiliatePayouts,
@@ -151,7 +154,7 @@ export async function createAffiliateEarningFromOrder(
   const existing = await getAffiliateEarningByOrderId(orderId);
   if (existing) {
     if (!existing.earnedEmailSentAt) {
-      await sendEarnedEmailForEarning(existing.id).catch((error) => {
+      await sendAffiliateEarnedEmailForEarning(existing.id).catch((error) => {
         console.error("[AFFILIATE-EARNING-EMAIL]", error);
       });
     }
@@ -165,7 +168,8 @@ export async function createAffiliateEarningFromOrder(
 
   const affiliate = order.affiliate;
   const earnedAt =
-    order.payment.updatedAt && !Number.isNaN(Date.parse(order.payment.updatedAt))
+    order.payment.updatedAt &&
+    !Number.isNaN(Date.parse(order.payment.updatedAt))
       ? new Date(order.payment.updatedAt)
       : new Date();
   const orderTotal = formatAmount(getOrderTotal(order));
@@ -218,7 +222,7 @@ export async function createAffiliateEarningFromOrder(
 
   const created = await getAffiliateEarningByOrderId(orderId);
   if (created) {
-    await sendEarnedEmailForEarning(created.id).catch((error) => {
+    await sendAffiliateEarnedEmailForEarning(created.id).catch((error) => {
       console.error("[AFFILIATE-EARNING-EMAIL]", error);
     });
   }
@@ -267,7 +271,8 @@ export async function backfillLegacyOpenAffiliateEarnings() {
         : await normalizeAffiliateRevenueToUsd(orderRecord);
     const commissionRate = row.earning.commissionRate;
     const normalizedCommissionAmount = formatAmount(
-      parseAmount(normalization.normalizedOrderTotal) * parseRate(commissionRate),
+      parseAmount(normalization.normalizedOrderTotal) *
+        parseRate(commissionRate),
     );
     const period = buildWeeklyPayoutPeriod(earnedAt);
     const commissionMonthKey =

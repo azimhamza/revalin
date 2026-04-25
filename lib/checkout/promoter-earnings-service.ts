@@ -4,7 +4,11 @@ import { db } from "@/lib/db";
 import { affiliates, promoterPayouts, promoters } from "@/lib/db/schema";
 import { getCheckoutOrder } from "@/lib/checkout/order-store";
 import type { CheckoutOrderRecord } from "@/lib/checkout/types";
-import { formatAmount, parseAmount, parseRate } from "@/lib/checkout/affiliate-math";
+import {
+  formatAmount,
+  parseAmount,
+  parseRate,
+} from "@/lib/checkout/affiliate-math";
 import { normalizeAffiliateRevenueToUsd } from "@/lib/checkout/affiliate-earnings-service";
 import { buildWeeklyPayoutPeriod } from "@/lib/checkout/payout-periods";
 import { getCommissionMonthKey } from "@/lib/checkout/commission-service";
@@ -39,7 +43,7 @@ export async function getPromoterEarningsForPromoter(
     .limit(limit);
 }
 
-async function sendEarnedEmailForEarning(earningId: string) {
+export async function sendPromoterEarnedEmailForEarning(earningId: string) {
   const [row] = await db
     .select({
       earning: promoterPayouts,
@@ -83,7 +87,7 @@ export async function createPromoterEarningFromOrder(
   const existing = await getPromoterEarningByOrderId(orderId);
   if (existing) {
     if (!existing.earnedEmailSentAt) {
-      await sendEarnedEmailForEarning(existing.id).catch((error) => {
+      await sendPromoterEarnedEmailForEarning(existing.id).catch((error) => {
         console.error("[PROMOTER-EARNING-EMAIL]", error);
       });
     }
@@ -97,7 +101,8 @@ export async function createPromoterEarningFromOrder(
 
   const promoter = order.promoter;
   const earnedAt =
-    order.payment.updatedAt && !Number.isNaN(Date.parse(order.payment.updatedAt))
+    order.payment.updatedAt &&
+    !Number.isNaN(Date.parse(order.payment.updatedAt))
       ? new Date(order.payment.updatedAt)
       : new Date();
   const orderTotal = formatAmount(getOrderTotal(order));
@@ -133,7 +138,7 @@ export async function createPromoterEarningFromOrder(
 
   const created = await getPromoterEarningByOrderId(orderId);
   if (created) {
-    await sendEarnedEmailForEarning(created.id).catch((error) => {
+    await sendPromoterEarnedEmailForEarning(created.id).catch((error) => {
       console.error("[PROMOTER-EARNING-EMAIL]", error);
     });
   }
