@@ -27,6 +27,18 @@ export type ProductNotificationAdminTarget = {
   stockLabel: string;
   stockMessage: string;
   isReadyToSend: boolean;
+  subscribers: ProductNotificationAdminSubscriber[];
+};
+
+export type ProductNotificationAdminSubscriber = {
+  id: string;
+  email: string;
+  status: ProductNotificationSubscriptionStatus;
+  createdAt: string;
+  signupEmailSentAt: string | null;
+  lastAttemptedAt: string | null;
+  notifiedAt: string | null;
+  lastError: string | null;
 };
 
 export type ProductNotificationAdminProduct = {

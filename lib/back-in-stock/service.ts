@@ -28,6 +28,7 @@ import {
   getProductNotificationAdminStats,
   getProductNotificationTargetMetricsByHandles,
   listPendingProductNotificationSubscriptionsForTarget,
+  listProductNotificationSubscribersForHandles,
   updateProductNotificationDispatch,
   updateProductNotificationDispatchProduct,
   updateProductNotificationSubscription,
@@ -501,6 +502,10 @@ function buildAdminTargetsForProduct(
       lastDispatchAt: string | null;
     }
   >,
+  subscribers: Map<
+    string,
+    Awaited<ReturnType<typeof listProductNotificationSubscribersForHandles>>
+  >,
 ) {
   const targets =
     product.variants.length > 0
@@ -515,6 +520,7 @@ function buildAdminTargetsForProduct(
       variantKey: target.variantKey,
     });
     const targetMetrics = metrics.get(selectionKey);
+    const targetSubscribers = subscribers.get(selectionKey) ?? [];
 
     return {
       productId: target.productId,
@@ -534,6 +540,7 @@ function buildAdminTargetsForProduct(
       isReadyToSend:
         !target.inventory.isBackorder &&
         (targetMetrics?.pendingSignupCount ?? 0) > 0,
+      subscribers: targetSubscribers,
     };
   });
 }
@@ -555,9 +562,11 @@ export async function getProductNotificationAdminData(args: {
     query: query || undefined,
   });
 
-  const metrics = await getProductNotificationTargetMetricsByHandles(
-    products.map((product) => product.handle),
-  );
+  const productHandles = products.map((product) => product.handle);
+  const [metrics, subscribers] = await Promise.all([
+    getProductNotificationTargetMetricsByHandles(productHandles),
+    listProductNotificationSubscribersForHandles(productHandles),
+  ]);
   const metricsBySelection = new Map(
     metrics.map((metric) => [
       buildProductNotificationSelectionKey({
@@ -567,10 +576,28 @@ export async function getProductNotificationAdminData(args: {
       metric,
     ]),
   );
+  const subscribersBySelection = new Map<
+    string,
+    Awaited<ReturnType<typeof listProductNotificationSubscribersForHandles>>
+  >();
+
+  for (const subscriber of subscribers) {
+    const selectionKey = buildProductNotificationSelectionKey({
+      productHandle: subscriber.productHandle,
+      variantKey: subscriber.variantKey,
+    });
+    const current = subscribersBySelection.get(selectionKey) ?? [];
+    current.push(subscriber);
+    subscribersBySelection.set(selectionKey, current);
+  }
 
   const adminProducts: ProductNotificationAdminProduct[] = products.map(
     (product) => {
-      const targets = buildAdminTargetsForProduct(product, metricsBySelection);
+      const targets = buildAdminTargetsForProduct(
+        product,
+        metricsBySelection,
+        subscribersBySelection,
+      );
 
       return {
         productId: product.id,

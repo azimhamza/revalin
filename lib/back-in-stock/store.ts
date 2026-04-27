@@ -16,6 +16,7 @@ import {
 } from "@/lib/db/schema";
 import type {
   ProductNotificationAdminAnalytics,
+  ProductNotificationAdminSubscriber,
   ProductNotificationAdminStats,
 } from "./types";
 import { buildProductNotificationTrend } from "./utils";
@@ -203,6 +204,57 @@ export async function getProductNotificationTargetMetricsByHandles(
     totalSignupCount: Number(row.totalSignupCount ?? 0),
     pendingSignupCount: Number(row.pendingSignupCount ?? 0),
     lastDispatchAt: row.lastDispatchAt,
+  }));
+}
+
+export async function listProductNotificationSubscribersForHandles(
+  productHandles: string[],
+): Promise<
+  Array<
+    ProductNotificationAdminSubscriber & {
+      productHandle: string;
+      variantKey: string;
+    }
+  >
+> {
+  if (productHandles.length === 0) {
+    return [];
+  }
+
+  const rows = await db
+    .select({
+      id: productNotificationSubscriptions.id,
+      email: productNotificationSubscriptions.email,
+      status: productNotificationSubscriptions.status,
+      productHandle: productNotificationSubscriptions.productHandle,
+      variantKey: productNotificationSubscriptions.variantKey,
+      createdAt: productNotificationSubscriptions.createdAt,
+      signupEmailSentAt: productNotificationSubscriptions.signupEmailSentAt,
+      lastAttemptedAt: productNotificationSubscriptions.lastAttemptedAt,
+      notifiedAt: productNotificationSubscriptions.notifiedAt,
+      lastError: productNotificationSubscriptions.lastError,
+    })
+    .from(productNotificationSubscriptions)
+    .where(
+      inArray(productNotificationSubscriptions.productHandle, productHandles),
+    )
+    .orderBy(
+      productNotificationSubscriptions.productTitle,
+      productNotificationSubscriptions.variantTitle,
+      desc(productNotificationSubscriptions.createdAt),
+    );
+
+  return rows.map((row) => ({
+    id: row.id,
+    email: row.email,
+    status: row.status,
+    productHandle: row.productHandle,
+    variantKey: row.variantKey,
+    createdAt: row.createdAt.toISOString(),
+    signupEmailSentAt: row.signupEmailSentAt?.toISOString() ?? null,
+    lastAttemptedAt: row.lastAttemptedAt?.toISOString() ?? null,
+    notifiedAt: row.notifiedAt?.toISOString() ?? null,
+    lastError: row.lastError,
   }));
 }
 

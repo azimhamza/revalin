@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation";
 import type {
   ProductNotificationAdminData,
   ProductNotificationAdminProduct,
+  ProductNotificationAdminSubscriber,
   ProductNotificationAdminTarget,
 } from "@/lib/back-in-stock/types";
 import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
@@ -82,6 +83,24 @@ function statusBadgeTone(target: ProductNotificationAdminTarget) {
   if (target.isBackorder) return "destructive";
   if (target.isLowStock) return "secondary";
   return "outline";
+}
+
+function subscriberStatusBadgeTone(
+  status: ProductNotificationAdminSubscriber["status"],
+) {
+  return status === "pending" ? "outline" : "secondary";
+}
+
+function formatSubscriberActivity(subscriber: ProductNotificationAdminSubscriber) {
+  if (subscriber.status === "notified") {
+    return `Notified ${formatDateTime(subscriber.notifiedAt)}`;
+  }
+
+  if (subscriber.lastAttemptedAt) {
+    return `Last tried ${formatDateTime(subscriber.lastAttemptedAt)}`;
+  }
+
+  return `Joined ${formatDateTime(subscriber.createdAt)}`;
 }
 
 function BreakdownChart({
@@ -658,57 +677,99 @@ export function ProductNotificationManagement({
                             const sending = activeSendKey === selectionKey;
 
                             return (
-                              <div
-                                key={selectionKey}
-                                className="grid grid-cols-[minmax(0,1.6fr)_minmax(110px,0.8fr)_88px_140px_120px_56px] gap-px bg-border/60"
-                              >
-                                <div className="bg-background px-3 py-2.5">
-                                  <p className="text-sm font-medium text-foreground">
-                                    {target.displayName}
-                                  </p>
-                                  <p className="mt-0.5 text-[11px] text-muted-foreground">
-                                    {target.stockMessage}
-                                  </p>
+                              <Fragment key={selectionKey}>
+                                <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(110px,0.8fr)_88px_140px_120px_56px] gap-px bg-border/60">
+                                  <div className="bg-background px-3 py-2.5">
+                                    <p className="text-sm font-medium text-foreground">
+                                      {target.displayName}
+                                    </p>
+                                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                      {target.stockMessage}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center bg-background px-3 py-2.5">
+                                    <Badge variant={statusBadgeTone(target)}>
+                                      {target.stockLabel}
+                                    </Badge>
+                                  </div>
+                                  <div className="flex items-center bg-background px-3 py-2.5 text-sm font-semibold text-foreground">
+                                    {target.pendingSignupCount}
+                                  </div>
+                                  <div className="flex items-center bg-background px-3 py-2.5 text-xs text-muted-foreground">
+                                    {formatDateTime(target.lastDispatchAt)}
+                                  </div>
+                                  <div className="flex items-center bg-background px-3 py-2.5">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      disabled={!target.isReadyToSend || sending}
+                                      onClick={() => sendSelections([target], "single")}
+                                      className={adminPrimaryButtonClass}
+                                    >
+                                      {sending ? (
+                                        <Loader2 className="size-3.5 animate-spin" />
+                                      ) : (
+                                        <Send className="size-3.5" />
+                                      )}
+                                      Send
+                                    </Button>
+                                  </div>
+                                  <div className="flex items-center justify-center bg-background px-3 py-2.5">
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedKeys.has(selectionKey)}
+                                      disabled={!target.isReadyToSend}
+                                      onChange={(event) =>
+                                        toggleSelected(target, event.target.checked)
+                                      }
+                                      className="size-4 accent-[#0B2E2F]"
+                                    />
+                                  </div>
                                 </div>
-                                <div className="flex items-center bg-background px-3 py-2.5">
-                                  <Badge variant={statusBadgeTone(target)}>
-                                    {target.stockLabel}
-                                  </Badge>
-                                </div>
-                                <div className="flex items-center bg-background px-3 py-2.5 text-sm font-semibold text-foreground">
-                                  {target.pendingSignupCount}
-                                </div>
-                                <div className="flex items-center bg-background px-3 py-2.5 text-xs text-muted-foreground">
-                                  {formatDateTime(target.lastDispatchAt)}
-                                </div>
-                                <div className="flex items-center bg-background px-3 py-2.5">
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    disabled={!target.isReadyToSend || sending}
-                                    onClick={() => sendSelections([target], "single")}
-                                    className={adminPrimaryButtonClass}
-                                  >
-                                    {sending ? (
-                                      <Loader2 className="size-3.5 animate-spin" />
-                                    ) : (
-                                      <Send className="size-3.5" />
-                                    )}
-                                    Send
-                                  </Button>
-                                </div>
-                                <div className="flex items-center justify-center bg-background px-3 py-2.5">
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedKeys.has(selectionKey)}
-                                    disabled={!target.isReadyToSend}
-                                    onChange={(event) =>
-                                      toggleSelected(target, event.target.checked)
-                                    }
-                                    className="size-4 accent-[#0B2E2F]"
-                                  />
-                                </div>
-                              </div>
+                                {target.subscribers.length > 0 ? (
+                                  <div className="bg-background px-3 py-3">
+                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                      <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                                        Subscribers
+                                      </p>
+                                      <p className="text-[11px] text-muted-foreground">
+                                        {target.subscribers.length} total
+                                      </p>
+                                    </div>
+                                    <div className="overflow-hidden border border-border/70">
+                                      {target.subscribers.map((subscriber) => (
+                                        <div
+                                          key={subscriber.id}
+                                          className="grid gap-2 border-b border-border/60 px-3 py-2 last:border-b-0 md:grid-cols-[minmax(0,1.4fr)_100px_minmax(0,1fr)] md:items-center"
+                                        >
+                                          <div className="min-w-0">
+                                            <p className="truncate text-xs font-semibold text-foreground">
+                                              {subscriber.email}
+                                            </p>
+                                            {subscriber.lastError ? (
+                                              <p className="mt-0.5 truncate text-[11px] text-destructive">
+                                                {subscriber.lastError}
+                                              </p>
+                                            ) : null}
+                                          </div>
+                                          <div>
+                                            <Badge
+                                              variant={subscriberStatusBadgeTone(
+                                                subscriber.status,
+                                              )}
+                                            >
+                                              {subscriber.status}
+                                            </Badge>
+                                          </div>
+                                          <p className="text-[11px] text-muted-foreground">
+                                            {formatSubscriberActivity(subscriber)}
+                                          </p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </Fragment>
                             );
                           })}
                         </div>
