@@ -2041,6 +2041,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
     if (!isShippingAddressReady(shippingAddress)) {
       setDiscountError('Complete the shipping address to validate a discount code.');
+      setShouldAutoApplyDiscount(true);
       return;
     }
 
@@ -2222,6 +2223,10 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       return;
     }
 
+    if (shouldAutoApplyDiscount && discountCode.trim() && !appliedDiscount) {
+      return;
+    }
+
     if (lastQuoteRequestSignature.current === quoteRequestSignature) {
       return;
     }
@@ -2231,7 +2236,16 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     }, 450);
 
     return () => window.clearTimeout(timeout);
-  }, [activeOrder, isLoadingQuote, quoteRequestSignature, requestQuote, shippingAddress]);
+  }, [
+    activeOrder,
+    appliedDiscount,
+    discountCode,
+    isLoadingQuote,
+    quoteRequestSignature,
+    requestQuote,
+    shippingAddress,
+    shouldAutoApplyDiscount,
+  ]);
 
   const submitCheckoutPayment = useCallback(async () => {
     if (!selectedShippingServiceId) {
