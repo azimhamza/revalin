@@ -32,6 +32,7 @@ import { ProductQuantityProvider } from './components/product-quantity-context';
 import { ProductInventoryPanel } from './components/product-inventory-panel';
 import { ProductViewTracker } from './components/product-view-tracker';
 import { getInventoryState } from '@/lib/inventory';
+import { DosageSubstitutionNotice } from './components/dosage-substitution-notice';
 
 export const dynamic = 'force-dynamic';
 
@@ -183,6 +184,10 @@ export default async function ProductPage(props: { params: Promise<{ handle: str
                 <div className="grid grid-cols-1 gap-4 md:items-start">
                   <Suspense fallback={<VariantSelectorSlots product={product} fallback />}>
                     <VariantSelectorSlots product={product} />
+                  </Suspense>
+
+                  <Suspense fallback={null}>
+                    <DosageSubstitutionNotice product={product} />
                   </Suspense>
 
                   <Suspense fallback={null}>

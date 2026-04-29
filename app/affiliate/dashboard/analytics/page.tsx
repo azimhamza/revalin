@@ -18,6 +18,8 @@ import {
 import { getServerSession } from "@/lib/auth-server";
 import { getAffiliateByUserIdentity } from "@/lib/checkout/affiliate-service";
 import {
+  getAffiliateVisitReferrerBreakdown,
+  getAffiliateVisitReferrerLabel,
   getAffiliateVisitSummary,
   getRecentAffiliateVisits,
 } from "@/lib/checkout/affiliate-visit-service";
@@ -84,16 +86,6 @@ function getEventTimestamp(event: OpenPanelEventRecord) {
   );
 }
 
-function getReferrerLabel(referrer: string | null | undefined) {
-  if (!referrer) return "Direct / unknown";
-
-  try {
-    return new URL(referrer).host.replace(/^www\./, "");
-  } catch {
-    return referrer;
-  }
-}
-
 function getDeviceLabel(userAgent: string | null | undefined) {
   if (!userAgent) return "Unknown device";
   return /mobile|android|iphone|ipad/i.test(userAgent)
@@ -145,13 +137,24 @@ export default async function AffiliateAnalyticsPage() {
 
   const openPanelConfigured = hasOpenPanelCredentials();
 
-  const [telemetry, visitSummary, recentVisits, referredOrderRows] =
+  const [
+    telemetry,
+    visitSummary,
+    recentVisits,
+    firstPartyReferrers,
+    referredOrderRows,
+  ] =
     await Promise.all([
       openPanelConfigured
         ? getAffiliateOpenPanelTelemetry(affiliate.code, "30d").catch(() => null)
         : Promise.resolve(null),
       getAffiliateVisitSummary(affiliate.id),
       getRecentAffiliateVisits(affiliate.id, 12),
+      getAffiliateVisitReferrerBreakdown({
+        affiliateId: affiliate.id,
+        startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        limit: 6,
+      }),
       db
         .select({
           payout: affiliatePayouts,
@@ -293,7 +296,11 @@ export default async function AffiliateAnalyticsPage() {
 
       <AffiliateAnalyticsVisuals
         trend={telemetry?.trend ?? []}
-        referrers={telemetry?.referrers ?? []}
+        referrers={
+          firstPartyReferrers.length > 0
+            ? firstPartyReferrers
+            : telemetry?.referrers ?? []
+        }
         landingPaths={telemetry?.landingPaths ?? []}
         devices={telemetry?.devices ?? []}
         countries={telemetry?.countries ?? []}
@@ -349,7 +356,7 @@ export default async function AffiliateAnalyticsPage() {
                         {formatEventTime(visit.createdAt)}
                       </TableCell>
                       <TableCell className="px-3 py-2.5 text-xs font-medium text-[#0B2E2F]">
-                        {getReferrerLabel(visit.referrer)}
+                        {getAffiliateVisitReferrerLabel(visit)}
                       </TableCell>
                       <TableCell className="px-3 py-2.5">
                         <span className={affiliateChipClass}>
@@ -439,11 +446,20 @@ export default async function AffiliateAnalyticsPage() {
                               {typeof event.referrerName === "string" &&
                               event.referrerName
                                 ? event.referrerName
-                                : getReferrerLabel(
-                                    typeof event.referrer === "string"
-                                      ? event.referrer
-                                      : null,
-                                  )}
+                                : getAffiliateVisitReferrerLabel({
+                                    referrer:
+                                      typeof event.referrer === "string"
+                                        ? event.referrer
+                                        : typeof properties.referrer ===
+                                            "string"
+                                          ? properties.referrer
+                                          : null,
+                                    referralPath:
+                                      typeof properties.referral_path ===
+                                      "string"
+                                        ? properties.referral_path
+                                        : null,
+                                  })}
                             </span>
                             {discountCode ? (
                               <span className={affiliateChipClass}>

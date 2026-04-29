@@ -5,17 +5,18 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useBodyScrollLock } from '@/lib/hooks/use-body-scroll-lock';
 import { LogoSvg } from '@/components/layout/header/logo-svg';
 import Link from 'next/link';
-import { RESEARCH_USE_SHORT_ACKNOWLEDGMENT } from '@/lib/compliance';
+import { FlaskConical, ShieldCheck, FileCheck2 } from 'lucide-react';
 
 const STORAGE_KEY = 'revalin_research_verified';
 
-const BUSINESS_TYPES = ['Research Lab', 'University', 'Medical Facility', 'Business'] as const;
+const INFO_POINTS = [
+  { icon: FlaskConical, text: 'Research-grade peptides for in-vitro and pre-clinical use' },
+  { icon: ShieldCheck, text: 'Independently tested by Janoshik Analytical' },
+  { icon: FileCheck2, text: 'Published COAs with every batch' },
+] as const;
 
 export function ResearchDisclaimerPopup() {
   const [isOpen, setIsOpen] = useState(true);
-  const [companyName, setCompanyName] = useState('');
-  const [businessType, setBusinessType] = useState('');
-  const [agreed, setAgreed] = useState(false);
 
   useBodyScrollLock(isOpen);
 
@@ -29,27 +30,12 @@ export function ResearchDisclaimerPopup() {
   }, []);
 
   const handleAccept = () => {
-    if (!agreed) return;
     try {
       window.localStorage.setItem(STORAGE_KEY, 'true');
-      if (companyName || businessType) {
-        window.localStorage.setItem(
-          `${STORAGE_KEY}_info`,
-          JSON.stringify({ company: companyName, type: businessType })
-        );
-      }
     } catch {
       // If storage is unavailable, keep an in-memory acknowledgement.
     }
     setIsOpen(false);
-  };
-
-  const handleExit = () => {
-    window.open('', '_self');
-    window.close();
-    setTimeout(() => {
-      window.location.replace('about:blank');
-    }, 80);
   };
 
   return (
@@ -71,8 +57,8 @@ export function ResearchDisclaimerPopup() {
               className="relative w-full max-w-md overflow-y-auto max-h-[90vh] rounded-2xl bg-[#F4F1EA] px-7 py-8 shadow-2xl md:px-10 md:py-10"
               role="dialog"
               aria-modal="true"
-              aria-labelledby="research-disclaimer-title"
-              aria-describedby="research-disclaimer-description"
+              aria-labelledby="age-gate-title"
+              aria-describedby="age-gate-description"
             >
               {/* Logo */}
               <div className="flex flex-col items-center">
@@ -84,79 +70,47 @@ export function ResearchDisclaimerPopup() {
 
               {/* Heading */}
               <h2
-                id="research-disclaimer-title"
+                id="age-gate-title"
                 className="text-center text-xl font-semibold tracking-tight text-[#0B2E2F]"
               >
-                Research Use Only
+                Welcome to Revalin
               </h2>
-              <p className="mt-2 text-center text-[13px] leading-relaxed text-[#0B2E2F]/60">
-                Please review before continuing
+              <p className="mt-2 text-center text-[13px] leading-relaxed text-[#0B2E2F]/55">
+                Canadian supplier of research-grade peptides for qualified researchers and institutions.
               </p>
 
-              {/* Body */}
-              <div className="mt-6 space-y-3">
-                <p
-                  id="research-disclaimer-description"
-                  className="text-[13px] leading-relaxed text-[#0B2E2F]/75"
-                >
-                  All products are provided exclusively for in-vitro and pre-clinical research.
-                  They are not intended for human or veterinary use, consumption, or therapeutic
-                  application.
-                </p>
-                <p className="text-[13px] leading-relaxed text-[#0B2E2F]/75">
-                  By continuing, you confirm your organization has appropriate facilities, trained
-                  personnel, and safety controls for lawful handling.
+              {/* Info points */}
+              <div className="mt-6 space-y-2.5">
+                {INFO_POINTS.map(({ icon: Icon, text }) => (
+                  <div key={text} className="flex items-center gap-3 rounded-xl bg-[#0B2E2F]/[0.04] px-4 py-3">
+                    <Icon className="size-4 shrink-0 text-[#0B2E2F]/50" strokeWidth={1.5} />
+                    <span className="text-[13px] text-[#0B2E2F]/70">{text}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Research disclaimer */}
+              <p
+                id="age-gate-description"
+                className="mt-5 text-center text-[12px] leading-relaxed text-[#0B2E2F]/50"
+              >
+                All products are for research purposes only. These products have not been evaluated or approved by the FDA.
+              </p>
+
+              {/* Age gate */}
+              <div className="mt-6 rounded-xl border border-[#0B2E2F]/8 bg-white/50 px-4 py-3.5 text-center">
+                <p className="text-[13px] font-medium text-[#0B2E2F]/80">
+                  You must be 21 or older to browse this site.
                 </p>
               </div>
 
-              {/* Form fields */}
-              <div className="mt-6 space-y-3">
-                <input
-                  type="text"
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  placeholder="Company / Institution (optional)"
-                  className="h-11 w-full rounded-lg border border-[#0B2E2F]/12 bg-white px-4 text-sm text-[#0B2E2F] placeholder:text-[#0B2E2F]/35 outline-none transition-colors focus:border-[#0B2E2F]/30"
-                />
-                <select
-                  value={businessType}
-                  onChange={(e) => setBusinessType(e.target.value)}
-                  className="h-11 w-full rounded-lg border border-[#0B2E2F]/12 bg-white px-4 text-sm text-[#0B2E2F] outline-none transition-colors focus:border-[#0B2E2F]/30"
-                >
-                  <option value="">Business Type (optional)</option>
-                  {BUSINESS_TYPES.map((type) => (
-                    <option key={type} value={type}>{type}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Acknowledgment checkbox */}
-              <label className="mt-5 flex cursor-pointer items-start gap-3">
-                <input
-                  type="checkbox"
-                  checked={agreed}
-                  onChange={(e) => setAgreed(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#0B2E2F]/20 accent-[#0B2E2F]"
-                />
-                <span className="text-[12px] leading-relaxed text-[#0B2E2F]/70">
-                  {RESEARCH_USE_SHORT_ACKNOWLEDGMENT}
-                </span>
-              </label>
-
-              {/* Buttons */}
-              <div className="mt-7 flex flex-col gap-2.5">
+              {/* Button */}
+              <div className="mt-6">
                 <button
                   onClick={handleAccept}
-                  disabled={!agreed}
-                  className="h-12 w-full rounded-full bg-[#0B2E2F] text-sm font-medium text-[#F4F1EA] transition-all hover:bg-[#0B2E2F]/90 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="h-12 w-full rounded-full bg-[#0B2E2F] text-sm font-medium text-[#F4F1EA] transition-all hover:bg-[#0B2E2F]/90"
                 >
-                  I Understand
-                </button>
-                <button
-                  onClick={handleExit}
-                  className="h-10 w-full rounded-full text-sm font-medium text-[#0B2E2F]/50 transition-colors hover:text-[#0B2E2F]/80"
-                >
-                  Leave Site
+                  I&apos;m 21 or older — Enter Site
                 </button>
               </div>
 

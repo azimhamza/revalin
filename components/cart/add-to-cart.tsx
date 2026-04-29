@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Loader } from '../ui/loader';
 import { getSwellProductId } from '@/lib/swell/utils';
 import { getInventoryState } from '@/lib/inventory';
+import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
 
 interface AddToCartProps extends ButtonProps {
   product: Product;
@@ -66,18 +67,25 @@ export function AddToCartButton({
     if (product.variants.length === 1) return product.variants[0];
     return undefined;
   }, [selectedVariant, product]);
-  const inventory = useMemo(() => getInventoryState(product, resolvedVariant), [product, resolvedVariant]);
+  const dosageSubstitution = useMemo(
+    () => resolveDosageSubstitution(product, resolvedVariant),
+    [product, resolvedVariant]
+  );
+  const cartVariant = dosageSubstitution.cartVariant;
+  const quantityMultiplier = dosageSubstitution.quantityMultiplier;
+  const inventory = useMemo(() => getInventoryState(product, cartVariant), [product, cartVariant]);
   const existingCartQuantity = useMemo(() => {
-    if (!resolvedVariant) return 0;
-    return cartContext?.cart?.lines.find(line => line.merchandise.id === resolvedVariant.id)?.quantity || 0;
-  }, [cartContext?.cart, resolvedVariant]);
+    if (!cartVariant) return 0;
+    return cartContext?.cart?.lines.find(line => line.merchandise.id === cartVariant.id)?.quantity || 0;
+  }, [cartContext?.cart, cartVariant]);
   const hasReachedAvailableLimit =
-    inventory.availableQuantity !== null && existingCartQuantity >= inventory.availableQuantity;
+    inventory.availableQuantity !== null &&
+    existingCartQuantity + quantityMultiplier > inventory.availableQuantity;
 
   const getButtonText = () => {
     if (!cartContext) return 'Loading...';
     if (inventory.isBackorder) return 'Available in next shipment';
-    if (!resolvedVariant) return 'Select one';
+    if (!cartVariant) return 'Select one';
     if (hasReachedAvailableLimit) return 'Max quantity added';
     return 'Add To Cart';
   };
@@ -86,9 +94,9 @@ export function AddToCartButton({
     !cartContext ||
     inventory.isBackorder ||
     hasReachedAvailableLimit ||
-    !resolvedVariant ||
+    !cartVariant ||
     isLoading;
-  const isSelectOneState = !inventory.isBackorder && !resolvedVariant;
+  const isSelectOneState = !inventory.isBackorder && !cartVariant;
   const buttonStyle = isSelectOneState && unselectedStyle ? unselectedStyle : style;
   const { onPointerEnter, onFocus, onTouchStart, ...restButtonProps } = buttonProps;
 
@@ -97,7 +105,7 @@ export function AddToCartButton({
       return;
     }
 
-    if (!resolvedVariant || hasReachedAvailableLimit || inventory.isBackorder) {
+    if (!cartVariant || hasReachedAvailableLimit || inventory.isBackorder) {
       return;
     }
 
@@ -117,16 +125,18 @@ export function AddToCartButton({
       onSubmit={e => {
         e.preventDefault();
 
-        if (cartContext && resolvedVariant && !hasReachedAvailableLimit) {
+        if (cartContext && cartVariant && !hasReachedAvailableLimit) {
           startTransition(async () => {
-            cartContext.addItem(resolvedVariant, product);
+            cartContext.addItem(cartVariant, product, quantityMultiplier);
             try {
               const refMatch = document.cookie.match(/(?:^|;\s*)revalin_ref=([^;]+)/);
               window.op?.track('product_added_to_cart', {
                 productHandle: product.handle,
                 productTitle: product.title,
-                variantTitle: resolvedVariant.title,
-                price: resolvedVariant.price?.amount || product.priceRange.minVariantPrice.amount,
+                variantTitle: cartVariant.title,
+                requestedVariantTitle: resolvedVariant?.title || null,
+                quantity: quantityMultiplier,
+                price: cartVariant.price?.amount || product.priceRange.minVariantPrice.amount,
                 affiliate_code: refMatch?.[1] ? decodeURIComponent(refMatch[1]) : null,
               });
             } catch {}
@@ -137,7 +147,7 @@ export function AddToCartButton({
     >
       <Button
         type="submit"
-        aria-label={inventory.isBackorder ? 'Available in next shipment' : !resolvedVariant ? 'Select one' : 'Add to cart'}
+        aria-label={inventory.isBackorder ? 'Available in next shipment' : !cartVariant ? 'Select one' : 'Add to cart'}
         disabled={isDisabled}
         onPointerEnter={event => {
           onPointerEnter?.(event);

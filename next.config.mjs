@@ -18,7 +18,7 @@ const canonicalHost = new URL(siteUrl).hostname;
 const alternateHosts = KNOWN_SITE_HOSTS.filter(host => host !== canonicalHost);
 
 const nextConfig = {
-  /* config options here */
+  trailingSlash: false,
   experimental: {
     inlineCss: true,
     useCache: true,

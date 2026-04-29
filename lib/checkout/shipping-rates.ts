@@ -258,6 +258,7 @@ export async function getShipEngineCheckoutServices(args: {
     shippingAddress: args.shippingAddress,
     itemCount: args.itemCount,
     currencyCode: args.currencyCode,
+    customsValueAmount: args.subtotalAmount,
   });
 
   if (!result || result.rates.length === 0) {

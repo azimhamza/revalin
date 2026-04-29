@@ -7,21 +7,24 @@ interface HomeSidebarProps {
 
 export function HomeSidebar({ collections }: HomeSidebarProps) {
   return (
-    <aside className="max-md:hidden col-span-4 h-screen sticky top-0 p-sides pt-top-spacing flex flex-col justify-between">
+    <aside className="max-md:hidden col-span-4 h-screen sticky top-0 p-sides pt-top-spacing flex flex-col justify-between pb-8">
       <div>
-        <p className="italic tracking-tighter text-base">Research-grade peptides. &gt;99% purity.</p>
+        <p className="italic tracking-tighter text-base">Research Peptides You Can Trust.</p>
+
         <div className="mt-5 text-base leading-tight">
-          <p>Third-party batch testing. COAs included.</p>
-          <p>Ships same day. Free Shipping over $250.</p>
+          <p>Certificate of Analysis on every batch.</p>
+          <p>&gt;99% purity, tested by Janoshik Analytical.</p>
         </div>
+
         <div className="mt-5 text-base leading-tight">
-          <p>Peptides that don&apos;t need promises, just proof.</p>
-          <p>Pure chemistry, zero hype.</p>
-          <p>Transparency with teeth — results over rhetoric.</p>
+          <p>Same-day shipping. Free insurance.</p>
+          <p>COAs included — no request form, no gatekeeping.</p>
         </div>
-        <p className="mt-5 text-sm text-muted-foreground tracking-wide">From Waterloo, Canada.</p>
+
+        <p className="mt-5 text-sm text-muted-foreground tracking-wide">From Waterloo, Ontario.</p>
       </div>
-      <ShopLinks collections={collections} />
+
+      <ShopLinks collections={collections} label="Shop All" showArrow shopAllHref="/shop" />
     </aside>
   );
 }

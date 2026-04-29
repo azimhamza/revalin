@@ -1,5 +1,6 @@
 import { Collection } from '@/lib/swell/types';
 import { cn } from '@/lib/utils';
+import { ArrowRight } from 'lucide-react';
 import { FALLBACK_COLLECTIONS } from '@/lib/swell/constants';
 import { IntentLink } from '@/components/navigation/intent-link';
 
@@ -10,15 +11,27 @@ interface ShopLinksProps {
   align?: 'left' | 'right';
   label?: string;
   className?: string;
+  showArrow?: boolean;
+  shopAllHref?: string;
 }
 
-export function ShopLinks({ collections, label = 'Shop', align = 'left', className }: ShopLinksProps) {
+export function ShopLinks({ collections, label = 'Shop', align = 'left', className, showArrow, shopAllHref }: ShopLinksProps) {
   // Keep category navigation usable when the storefront categories request fails or returns an empty cache entry.
   const items = collections.length > 0 ? collections : FALLBACK_COLLECTIONS;
 
   return (
     <div className={cn(align === 'right' ? 'text-right' : 'text-left', className)}>
-      <h4 className="text-lg font-extrabold md:text-xl">{label}</h4>
+      {showArrow && shopAllHref ? (
+        <IntentLink
+          href={shopAllHref}
+          className="group inline-flex items-center gap-2"
+        >
+          <h4 className="text-lg font-extrabold md:text-xl">{label}</h4>
+          <ArrowRight className="size-4 transition-transform group-hover:translate-x-1" strokeWidth={2} />
+        </IntentLink>
+      ) : (
+        <h4 className="text-lg font-extrabold md:text-xl">{label}</h4>
+      )}
 
       <ul className="flex flex-col gap-1.5 leading-5 mt-5">
         {items.map((item, index) => (

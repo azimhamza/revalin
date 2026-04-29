@@ -90,6 +90,8 @@ export type PaymentLifecycleDependencies = {
   purchaseShipEngineLabel: (args: {
     shippingAddress: CheckoutShippingAddress;
     itemCount: number;
+    customsValueAmount?: number;
+    customsCurrencyCode?: string;
     selectedShippingService: CheckoutShippingService;
     orderCreatedAt?: string;
   }) => Promise<PurchasedLabelResult>;
@@ -410,12 +412,18 @@ export function createPaymentLifecycle(
     }
 
     const itemCount = order.lines.reduce((total, line) => total + line.quantity, 0);
+    const customsValueAmount = order.lines.reduce(
+      (total, line) => total + Number(line.lineTotal.amount || 0),
+      0,
+    );
     let labelResult: PurchasedLabelResult;
 
     try {
       labelResult = await dependencies.purchaseShipEngineLabel({
         shippingAddress: order.shippingAddress,
         itemCount,
+        customsValueAmount,
+        customsCurrencyCode: order.currencyCode,
         selectedShippingService: order.shippingService,
         orderCreatedAt: order.createdAt,
       });

@@ -4,15 +4,19 @@ import { useSelectedVariant } from '@/components/products/variant-selector';
 import { Product } from '@/lib/swell/types';
 import { formatPrice, getDiscountPercentage, getDisplayCompareAtPrice, getDisplayPrice, resolveUnitPrice } from '@/lib/swell/utils';
 import { useProductQuantity } from './product-quantity-context';
+import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
 
 export function ProductPrice({ product }: { product: Product }) {
   const { quantity } = useProductQuantity();
   const selectedVariant = useSelectedVariant(product);
-  const basePrice = getDisplayPrice(product, selectedVariant);
-  const tiers = selectedVariant?.bulkPriceTiers?.length ? selectedVariant.bulkPriceTiers : product.bulkPriceTiers;
-  const effectiveAmount = resolveUnitPrice(basePrice.amount, quantity, tiers);
+  const dosageSubstitution = resolveDosageSubstitution(product, selectedVariant);
+  const displayVariant = dosageSubstitution.cartVariant;
+  const displayQuantity = quantity * dosageSubstitution.quantityMultiplier;
+  const basePrice = getDisplayPrice(product, displayVariant);
+  const tiers = displayVariant?.bulkPriceTiers?.length ? displayVariant.bulkPriceTiers : product.bulkPriceTiers;
+  const effectiveAmount = resolveUnitPrice(basePrice.amount, displayQuantity, tiers);
   const hasQuantityDiscount = Number(effectiveAmount) < Number(basePrice.amount || 0);
-  const compareAtPrice = getDisplayCompareAtPrice(product, selectedVariant, basePrice);
+  const compareAtPrice = getDisplayCompareAtPrice(product, displayVariant, basePrice);
 
   const comparePrice = hasQuantityDiscount
     ? [compareAtPrice, basePrice]

@@ -3,8 +3,8 @@
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
-import { AlertTriangle, ArrowRight, CheckCircle2, Copy, CreditCard, Landmark, Lock, Loader2, RefreshCw, ShieldCheck, Tag, Truck, UserCheck, Wallet, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { AlertTriangle, ArrowRight, BadgeCheck, CheckCircle2, Copy, CreditCard, FlaskConical, Landmark, Lock, Loader2, RefreshCw, ShieldCheck, Tag, Truck, UserCheck, Wallet, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type Ref } from 'react';
 import type { ReactNode } from 'react';
 import { toast } from 'sonner';
 import { CartItemCard } from '@/components/cart/cart-item';
@@ -119,6 +119,46 @@ type CheckoutDraft = {
 const CHECKOUT_DRAFT_KEY = 'revalin_checkout_draft';
 const SHIPPING_DRAFT_KEY = 'revalin_checkout_shipping_draft';
 const BRAND_FETCH_QUERY = 'c=1dxbfHSJFAPEGdCLU4o5B';
+const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+
+type GoogleAddressComponent = {
+  long_name: string;
+  short_name: string;
+  types: string[];
+};
+
+type GooglePlaceResult = {
+  address_components?: GoogleAddressComponent[];
+  formatted_address?: string;
+  name?: string;
+};
+
+type GooglePlacesAutocomplete = {
+  addListener: (eventName: 'place_changed', handler: () => void) => { remove: () => void };
+  getPlace: () => GooglePlaceResult;
+};
+
+type GooglePlacesApi = {
+  maps?: {
+    places?: {
+      Autocomplete: new (
+        input: HTMLInputElement,
+        options?: {
+          fields?: string[];
+          types?: string[];
+          componentRestrictions?: {
+            country: string[];
+          };
+        },
+      ) => GooglePlacesAutocomplete;
+    };
+    event?: {
+      clearInstanceListeners: (instance: GooglePlacesAutocomplete) => void;
+    };
+  };
+};
+
+let googlePlacesScriptPromise: Promise<void> | null = null;
 
 const SHIPPING_CARRIER_LOGOS: Record<string, string> = {
   'amazon shipping': `https://cdn.brandfetch.io/amazon.com/theme/dark/logo.svg?${BRAND_FETCH_QUERY}`,
@@ -207,6 +247,97 @@ function normalizeShippingAddressDraft(value: Partial<CheckoutShippingAddress> |
   return {
     ...DEFAULT_SHIPPING_ADDRESS,
     ...(value || {}),
+  };
+}
+
+function getGooglePlacesApi() {
+  return (window as Window & { google?: GooglePlacesApi }).google;
+}
+
+function loadGooglePlacesScript(apiKey: string) {
+  if (!apiKey) {
+    return Promise.reject(new Error('Google Maps API key is not configured.'));
+  }
+
+  const googlePlaces = getGooglePlacesApi()?.maps?.places;
+  if (googlePlaces?.Autocomplete) {
+    return Promise.resolve();
+  }
+
+  if (!googlePlacesScriptPromise) {
+    googlePlacesScriptPromise = new Promise((resolve, reject) => {
+      const existingScript = document.querySelector<HTMLScriptElement>(
+        'script[data-revalin-google-places="true"]',
+      );
+
+      if (existingScript) {
+        existingScript.addEventListener('load', () => resolve(), { once: true });
+        existingScript.addEventListener('error', () => reject(new Error('Unable to load Google Places.')), { once: true });
+        return;
+      }
+
+      const script = document.createElement('script');
+      const params = new URLSearchParams({
+        key: apiKey,
+        libraries: 'places',
+      });
+
+      script.src = `https://maps.googleapis.com/maps/api/js?${params.toString()}`;
+      script.async = true;
+      script.defer = true;
+      script.dataset.revalinGooglePlaces = 'true';
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Unable to load Google Places.'));
+      document.head.appendChild(script);
+    });
+  }
+
+  return googlePlacesScriptPromise;
+}
+
+function getAddressComponent(
+  components: GoogleAddressComponent[],
+  type: string,
+  name: 'long_name' | 'short_name' = 'long_name',
+) {
+  return components.find(component => component.types.includes(type))?.[name] || '';
+}
+
+function buildShippingAddressFromPlace(
+  place: GooglePlaceResult,
+  current: CheckoutShippingAddress,
+): CheckoutShippingAddress | null {
+  const components = place.address_components || [];
+  if (components.length === 0) {
+    return null;
+  }
+
+  const streetNumber = getAddressComponent(components, 'street_number');
+  const route = getAddressComponent(components, 'route');
+  const address1 = [streetNumber, route].filter(Boolean).join(' ').trim();
+  const city =
+    getAddressComponent(components, 'locality') ||
+    getAddressComponent(components, 'postal_town') ||
+    getAddressComponent(components, 'sublocality') ||
+    getAddressComponent(components, 'administrative_area_level_2');
+  const province = getAddressComponent(components, 'administrative_area_level_1', 'short_name');
+  const postalCode = [
+    getAddressComponent(components, 'postal_code'),
+    getAddressComponent(components, 'postal_code_suffix'),
+  ]
+    .filter(Boolean)
+    .join('-');
+  const country = getAddressComponent(components, 'country', 'short_name');
+  const subpremise = getAddressComponent(components, 'subpremise');
+
+  return {
+    ...current,
+    address1: address1 || place.name || current.address1,
+    address2: subpremise || current.address2,
+    city: city || current.city,
+    province: province || current.province,
+    postalCode: postalCode || current.postalCode,
+    country: country || current.country,
   };
 }
 
@@ -552,6 +683,7 @@ function ShippingField({
   autoComplete,
   placeholder,
   required = true,
+  inputRef,
 }: {
   label: string;
   name: keyof CheckoutShippingAddress;
@@ -561,11 +693,13 @@ function ShippingField({
   autoComplete?: string;
   placeholder?: string;
   required?: boolean;
+  inputRef?: Ref<HTMLInputElement>;
 }) {
   return (
     <label className="flex flex-col gap-1.5">
       <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">{label}</span>
       <input
+        ref={inputRef}
         type={type}
         name={name}
         value={value || ''}
@@ -818,6 +952,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const [sourceWalletAddress, setSourceWalletAddress] = useState('');
   const [discountCode, setDiscountCode] = useState(initialDiscountCode);
   const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
+  const [ageVerified, setAgeVerified] = useState(false);
   const [shouldAutoApplyDiscount, setShouldAutoApplyDiscount] = useState(Boolean(initialDiscountCode));
   const [isValidatingDiscount, setIsValidatingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
@@ -836,6 +971,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const [isDraftHydrated, setIsDraftHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
+  const [address1InputElement, setAddress1InputElement] = useState<HTMLInputElement | null>(null);
   const previousCartSignature = useRef<string | null>(null);
   const lastQuoteRequestSignature = useRef<string | null>(null);
   const quoteAbortController = useRef<AbortController | null>(null);
@@ -1144,6 +1280,45 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       setCountryOptions(SHIPPING_COUNTRIES);
     }
   }, []);
+
+  useEffect(() => {
+    if (!GOOGLE_MAPS_API_KEY || !address1InputElement) return;
+
+    let autocomplete: GooglePlacesAutocomplete | null = null;
+    let listener: { remove: () => void } | null = null;
+    let isDisposed = false;
+
+    loadGooglePlacesScript(GOOGLE_MAPS_API_KEY)
+      .then(() => {
+        if (isDisposed) return;
+
+        const Autocomplete = getGooglePlacesApi()?.maps?.places?.Autocomplete;
+        if (!Autocomplete) return;
+
+        autocomplete = new Autocomplete(address1InputElement, {
+          fields: ['address_components', 'formatted_address', 'name'],
+          types: ['address'],
+          componentRestrictions: { country: ['ca', 'us'] },
+        });
+        listener = autocomplete.addListener('place_changed', () => {
+          const place = autocomplete?.getPlace();
+          if (!place) return;
+
+          setShippingAddress(current => buildShippingAddressFromPlace(place, current) || current);
+        });
+      })
+      .catch((placesError) => {
+        console.warn('Google Places autocomplete is unavailable.', placesError);
+      });
+
+    return () => {
+      isDisposed = true;
+      listener?.remove();
+      if (autocomplete) {
+        getGooglePlacesApi()?.maps?.event?.clearInstanceListeners(autocomplete);
+      }
+    };
+  }, [address1InputElement]);
 
   useEffect(() => {
     try {
@@ -2507,6 +2682,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     cart.lines.length > 0 &&
     selectedShippingServiceId &&
     !isCreatingPayment &&
+    ageVerified &&
     !(paymentMethod === 'card' && isCardCheckoutDisabled);
 
   return (
@@ -2642,7 +2818,14 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
                     <div className="mt-4 grid gap-3 md:grid-cols-2">
                       <div className="md:col-span-2">
-                        <ShippingField label="Street address" name="address1" value={shippingAddress.address1} onChange={handleShippingChange} autoComplete="address-line1" />
+                        <ShippingField
+                          label="Street address"
+                          name="address1"
+                          value={shippingAddress.address1}
+                          onChange={handleShippingChange}
+                          autoComplete="address-line1"
+                          inputRef={setAddress1InputElement}
+                        />
                       </div>
                       <div className="md:col-span-2">
                         <ShippingField label="Apartment, suite, unit" name="address2" value={shippingAddress.address2} onChange={handleShippingChange} autoComplete="address-line2" placeholder="Optional" required={false} />
@@ -2962,8 +3145,56 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                     )}
                   </div>
 
+                  {/* ── 6. Age verification ── */}
+                  <div className="mx-4 border-t border-border/50 md:mx-5" />
+                  <div className="p-4 md:p-5">
+                    <div className="rounded-2xl border border-amber-300/60 bg-amber-50/80 px-4 py-3.5">
+                      <div className="flex items-center gap-2.5">
+                        <BadgeCheck className="size-4 shrink-0 text-amber-700" />
+                        <p className="text-sm font-semibold text-amber-900">Age Verification Required</p>
+                      </div>
+                      <p className="mt-1.5 text-[13px] leading-relaxed text-amber-800/70">
+                        Federal and provincial regulations require us to verify that all purchasers are at least 21 years of age.
+                      </p>
+                    </div>
+
+                    <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl border border-border/70 bg-background px-4 py-4 transition-colors hover:bg-muted/50">
+                      <input
+                        type="checkbox"
+                        checked={ageVerified}
+                        onChange={(e) => setAgeVerified(e.target.checked)}
+                        className="mt-0.5 size-[18px] shrink-0 rounded accent-[#0B2E2F]"
+                      />
+                      <span className="text-[13px] leading-relaxed text-foreground/80">
+                        I confirm that I am 21 years of age or older. I acknowledge that all products sold by Revalin are intended strictly for laboratory and research purposes only. These products are not intended for human consumption, are not dietary supplements, and have not been evaluated or approved by Health Canada or the FDA. I accept full responsibility for the use of any products purchased.
+                      </span>
+                    </label>
+                  </div>
+
                   {/* ── Place order CTA ── */}
                   <div className="border-t border-border/50 p-4 md:p-5">
+                    <p className="mb-4 text-[12px] leading-relaxed text-foreground/45">
+                      By clicking Place Order, you confirm that you have read and accept our{' '}
+                      <Link href="/terms-of-service" className="underline underline-offset-2 hover:text-foreground/70">Terms of Service</Link>
+                      {' '}and acknowledge our{' '}
+                      <Link href="/privacy-policy" className="underline underline-offset-2 hover:text-foreground/70">Privacy Policy</Link>.
+                    </p>
+
+                    {/* Trust badges */}
+                    <div className="mb-4 flex flex-wrap items-center justify-center gap-2">
+                      {[
+                        { icon: ShieldCheck, label: 'Secure Checkout' },
+                        { icon: FlaskConical, label: 'Lab Tested' },
+                        { icon: Truck, label: 'Insured Shipping' },
+                        { icon: Lock, label: 'Encrypted' },
+                      ].map(({ icon: Icon, label }) => (
+                        <div key={label} className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-muted/40 px-2.5 py-1.5">
+                          <Icon className="size-3.5 text-[#0B2E2F]/60" strokeWidth={1.5} />
+                          <span className="text-[11px] font-medium text-foreground/60">{label}</span>
+                        </div>
+                      ))}
+                    </div>
+
                     <Button
                       type="submit"
                       size="lg"
@@ -2976,24 +3207,21 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                           <Loader2 className="size-5 animate-spin" />
                           Placing order...
                         </>
-                      ) : paymentMethod === 'card' ? (
-                        <>
-                          <ShieldCheck className="size-5" />
-                          Secure checkout
-                        </>
                       ) : (
                         <>
-                          Place order
-                          <ArrowRight className="size-5" />
+                          <Lock className="size-4" />
+                          Place Order — Secure
                         </>
                       )}
                     </Button>
                     {paymentMethod === 'card' ? (
-                      <p className="mt-3 text-center text-xs text-foreground/50">
-                        Pay with your card as normal on a secure hosted page. Transaction settles via blockchain for speed.
+                      <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-foreground/45">
+                        <Lock className="size-3" />
+                        Your information is protected with 256-bit SSL encryption
                       </p>
                     ) : (
-                      <p className="mt-3 text-center text-xs text-foreground/50">
+                      <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-foreground/45">
+                        <Lock className="size-3" />
                         You&apos;ll receive a {formatTicker(paymentCurrency)} deposit address in the next step.{summaryCryptoDiscountAmount ? ` Direct crypto savings of ${formatPrice(summaryCryptoDiscountAmount, summaryCurrencyCode)} applied automatically.` : ' 5% discount applied automatically.'}
                       </p>
                     )}

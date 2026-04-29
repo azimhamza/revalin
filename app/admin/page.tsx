@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { ArrowUpRight } from "lucide-react";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 
 import {
   getAdminAffiliateTelemetry,
@@ -13,7 +13,10 @@ import {
   getOpenPanelMissingConfig,
   hasOpenPanelCredentials,
 } from "@/lib/analytics/openpanel";
-import type { OpenPanelNamedValue } from "@/lib/analytics/openpanel";
+import type {
+  AdminAffiliateTelemetry,
+  OpenPanelNamedValue,
+} from "@/lib/analytics/openpanel";
 import { db } from "@/lib/db";
 import {
   affiliatePayouts,
@@ -21,6 +24,7 @@ import {
   checkoutOrders,
   user,
 } from "@/lib/db/schema";
+import { getAffiliateVisitReferrerBreakdown } from "@/lib/checkout/affiliate-visit-service";
 
 import {
   AdminPanel,
@@ -42,6 +46,28 @@ type InsightListEntry = {
   count?: number | string | null;
   views?: number | string | null;
 };
+type AdminAnalyticsRange = "daily" | "monthly";
+type AdminOverviewPageProps = {
+  searchParams?: Promise<{
+    analyticsRange?: string | string[];
+  }>;
+};
+
+const ADMIN_ANALYTICS_RANGE_CONFIG: Record<
+  AdminAnalyticsRange,
+  { openPanelRange: string; label: string; startDate: () => Date }
+> = {
+  daily: {
+    openPanelRange: "24h",
+    label: "Last 24h",
+    startDate: () => new Date(Date.now() - 24 * 60 * 60 * 1000),
+  },
+  monthly: {
+    openPanelRange: "30d",
+    label: "Last 30d",
+    startDate: () => new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+  },
+};
 
 function getCount(rows: CountRow[]) {
   return Number(rows[0]?.count ?? 0);
@@ -51,13 +77,33 @@ function getListCount(entry: InsightListEntry) {
   return Number(entry?.sessions ?? entry?.count ?? entry?.views ?? 0);
 }
 
+function normalizeAdminAnalyticsRange(
+  value: string | string[] | undefined,
+): AdminAnalyticsRange {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return raw === "daily" ? "daily" : "monthly";
+}
+
 function normalizeReferrerLabel(value: string | null | undefined) {
   if (!value) return "Direct";
 
+  const normalizeKnownPlatform = (label: string) => {
+    const normalized = label.trim();
+    const lower = normalized.toLowerCase();
+
+    if (lower.includes("tiktok") || lower === "tt") return "TikTok";
+    if (lower.includes("instagram")) return "Instagram";
+    if (lower.includes("facebook") || lower === "fb") return "Facebook";
+    if (lower.includes("twitter") || lower === "x.com") return "X / Twitter";
+    if (lower === "direct / unknown") return "Direct";
+
+    return normalized;
+  };
+
   try {
-    return new URL(value).host.replace(/^www\./, "");
+    return normalizeKnownPlatform(new URL(value).host.replace(/^www\./, ""));
   } catch {
-    return value;
+    return normalizeKnownPlatform(value);
   }
 }
 
@@ -134,9 +180,129 @@ function formatDuration(value: string | number | null | undefined) {
   return `${seconds}s`;
 }
 
-export default async function AdminOverviewPage() {
+type ManualAffiliateTelemetryAdjustment = {
+  affiliateCode: string;
+  purchases: number;
+  revenue: number;
+};
+
+async function getManualAffiliateTelemetryAdjustments(
+  startDate: Date,
+): Promise<ManualAffiliateTelemetryAdjustment[]> {
+  const rows = await db
+    .select({
+      affiliateCode: affiliatePayouts.affiliateCode,
+      purchases: sql<number>`count(*)`,
+      revenue: sql<number>`coalesce(sum(coalesce(nullif(${affiliatePayouts.normalizedOrderTotal}, '')::numeric, nullif(${affiliatePayouts.orderTotal}, '')::numeric, 0)), 0)`,
+    })
+    .from(affiliatePayouts)
+    .where(
+      and(
+        eq(affiliatePayouts.paymentProvider, "manual_adjustment"),
+        inArray(affiliatePayouts.status, ["pending", "approved", "paid"]),
+        gte(affiliatePayouts.earnedAt, startDate),
+      ),
+    )
+    .groupBy(affiliatePayouts.affiliateCode);
+
+  return rows.map((row) => ({
+    affiliateCode: row.affiliateCode,
+    purchases: Number(row.purchases ?? 0),
+    revenue: Number(row.revenue ?? 0),
+  }));
+}
+
+function mergeManualAdjustmentsIntoAffiliateTelemetry(
+  telemetry: AdminAffiliateTelemetry | null,
+  manualAdjustments: ManualAffiliateTelemetryAdjustment[],
+  firstPartyReferrers: OpenPanelNamedValue[],
+): AdminAffiliateTelemetry | null {
+  if (manualAdjustments.length === 0 && firstPartyReferrers.length === 0) {
+    return telemetry;
+  }
+
+  const leaderboardMap = new Map(
+    (telemetry?.leaderboard ?? []).map((entry) => [
+      entry.affiliateCode,
+      { ...entry },
+    ]),
+  );
+
+  for (const adjustment of manualAdjustments) {
+    const entry = leaderboardMap.get(adjustment.affiliateCode) ?? {
+      affiliateCode: adjustment.affiliateCode,
+      visits: 0,
+      purchases: 0,
+      revenue: 0,
+      conversionRate: null,
+      avgOrderValue: null,
+    };
+
+    entry.purchases += adjustment.purchases;
+    entry.revenue += adjustment.revenue;
+    entry.conversionRate =
+      entry.visits > 0 ? entry.purchases / entry.visits : null;
+    entry.avgOrderValue =
+      entry.purchases > 0 ? entry.revenue / entry.purchases : null;
+    leaderboardMap.set(adjustment.affiliateCode, entry);
+  }
+
+  return {
+    trend: telemetry?.trend ?? [],
+    devices: telemetry?.devices ?? [],
+    referrers:
+      firstPartyReferrers.length > 0
+        ? firstPartyReferrers
+        : telemetry?.referrers ?? [],
+    countries: telemetry?.countries ?? [],
+    leaderboard: Array.from(leaderboardMap.values()).sort(
+      (a, b) =>
+        b.revenue - a.revenue ||
+        b.purchases - a.purchases ||
+        b.visits - a.visits,
+    ),
+  };
+}
+
+function mergeSiteReferrersWithFirstPartyAffiliateReferrers(
+  siteReferrers: OpenPanelNamedValue[],
+  firstPartyAffiliateReferrers: OpenPanelNamedValue[],
+) {
+  if (firstPartyAffiliateReferrers.length === 0) {
+    return siteReferrers;
+  }
+
+  const referrerMap = new Map(
+    siteReferrers.map((referrer) => [
+      normalizeReferrerLabel(referrer.name),
+      referrer.value,
+    ]),
+  );
+
+  for (const referrer of firstPartyAffiliateReferrers) {
+    const name = normalizeReferrerLabel(referrer.name);
+    if (name === "Direct") continue;
+
+    referrerMap.set(name, Math.max(referrerMap.get(name) ?? 0, referrer.value));
+  }
+
+  return Array.from(referrerMap.entries())
+    .map(([name, value]) => ({ name, value }))
+    .sort((left, right) => right.value - left.value || left.name.localeCompare(right.name))
+    .slice(0, 5);
+}
+
+export default async function AdminOverviewPage({
+  searchParams,
+}: AdminOverviewPageProps) {
+  const resolvedSearchParams = searchParams ? await searchParams : {};
+  const analyticsRange = normalizeAdminAnalyticsRange(
+    resolvedSearchParams.analyticsRange,
+  );
+  const analyticsRangeConfig = ADMIN_ANALYTICS_RANGE_CONFIG[analyticsRange];
   const openPanelConfigured = hasOpenPanelCredentials();
   const openPanelMissingConfig = getOpenPanelMissingConfig();
+  const selectedAnalyticsStartDate = analyticsRangeConfig.startDate();
   const [
     metrics,
     liveVisitors,
@@ -145,6 +311,9 @@ export default async function AdminOverviewPage() {
     topPages,
     referrers,
     affiliateTelemetry,
+    manualAffiliateTelemetryAdjustments,
+    affiliateFirstPartyReferrers,
+    siteFirstPartyReferrers,
     affiliateRows,
     userCount,
     orderCount,
@@ -154,15 +323,34 @@ export default async function AdminOverviewPage() {
     pendingPayoutCount,
     approvedPayoutCount,
   ] = await Promise.all([
-    getSiteMetrics("30d").catch(() => null),
+    getSiteMetrics(analyticsRangeConfig.openPanelRange).catch(() => null),
     getLiveVisitors().catch(() => null),
-    getInsightBreakdown("device", "30d", 6).catch(() => []),
-    getInsightBreakdown("country", "30d", 6).catch(() => []),
-    getTopPages("30d", 8).catch(() => []),
-    getReferrerData("30d", 8).catch(() => []),
+    getInsightBreakdown("device", analyticsRangeConfig.openPanelRange, 6).catch(
+      () => [],
+    ),
+    getInsightBreakdown(
+      "country",
+      analyticsRangeConfig.openPanelRange,
+      6,
+    ).catch(() => []),
+    getTopPages(analyticsRangeConfig.openPanelRange, 8).catch(() => []),
+    getReferrerData(analyticsRangeConfig.openPanelRange, 8).catch(() => []),
     openPanelConfigured
-      ? getAdminAffiliateTelemetry("30d").catch(() => null)
+      ? getAdminAffiliateTelemetry(analyticsRangeConfig.openPanelRange).catch(
+          () => null,
+        )
       : Promise.resolve(null),
+    getManualAffiliateTelemetryAdjustments(selectedAnalyticsStartDate).catch(
+      () => [],
+    ),
+    getAffiliateVisitReferrerBreakdown({
+      startDate: selectedAnalyticsStartDate,
+      limit: 6,
+    }).catch(() => []),
+    getAffiliateVisitReferrerBreakdown({
+      startDate: selectedAnalyticsStartDate,
+      limit: 6,
+    }).catch(() => []),
     db.select({ code: affiliates.code, name: affiliates.name }).from(affiliates),
     db
       .select({ count: sql<number>`count(*)` })
@@ -197,6 +385,11 @@ export default async function AdminOverviewPage() {
       .where(eq(affiliatePayouts.status, "approved"))
       .then(getCount),
   ]);
+  const mergedAffiliateTelemetry = mergeManualAdjustmentsIntoAffiliateTelemetry(
+    affiliateTelemetry,
+    manualAffiliateTelemetryAdjustments,
+    affiliateFirstPartyReferrers,
+  );
   const normalizedTopPages = normalizeInsightRows(
     topPages as InsightListEntry[],
     (page, index) =>
@@ -205,12 +398,15 @@ export default async function AdminOverviewPage() {
   const affiliateNames = Object.fromEntries(
     affiliateRows.map((row) => [row.code, row.name]),
   );
-  const normalizedReferrers = normalizeInsightRows(
-    referrers as InsightListEntry[],
-    (referrer) =>
-      normalizeReferrerLabel(
-        referrer.name?.trim() || referrer.referrer?.trim(),
-      ),
+  const normalizedReferrers = mergeSiteReferrersWithFirstPartyAffiliateReferrers(
+    normalizeInsightRows(
+      referrers as InsightListEntry[],
+      (referrer) =>
+        normalizeReferrerLabel(
+          referrer.name?.trim() || referrer.referrer?.trim(),
+        ),
+    ),
+    siteFirstPartyReferrers,
   );
   const topPage = normalizedTopPages[0];
   const topReferrer = normalizedReferrers[0];
@@ -238,7 +434,7 @@ export default async function AdminOverviewPage() {
   const trafficHeaderChips = [
     {
       label: "Window",
-      value: "Last 30d",
+      value: analyticsRangeConfig.label,
     },
     {
       label: "Live",
@@ -446,13 +642,16 @@ export default async function AdminOverviewPage() {
         countries={countryBreakdown}
         pages={normalizedTopPages}
         referrers={normalizedReferrers}
+        activeRange={analyticsRange}
+        rangeLabel={analyticsRangeConfig.label}
       />
 
       <OpenPanelAffiliateOverview
         openPanelConfigured={openPanelConfigured}
         openPanelMissingConfig={openPanelMissingConfig}
-        telemetry={affiliateTelemetry}
+        telemetry={mergedAffiliateTelemetry}
         affiliateNames={affiliateNames}
+        rangeLabel={analyticsRangeConfig.label}
       />
 
       <AdminPanel className="p-0">

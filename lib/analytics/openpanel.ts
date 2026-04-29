@@ -470,10 +470,22 @@ function normalizeReferrerLabel(
 ) {
   if (!value) return fallback;
 
+  const normalizeKnownPlatform = (label: string) => {
+    const normalized = label.trim();
+    const lower = normalized.toLowerCase();
+
+    if (lower.includes("tiktok") || lower === "tt") return "TikTok";
+    if (lower.includes("instagram")) return "Instagram";
+    if (lower.includes("facebook") || lower === "fb") return "Facebook";
+    if (lower.includes("twitter") || lower === "x.com") return "X / Twitter";
+
+    return normalized;
+  };
+
   try {
-    return new URL(value).host.replace(/^www\./, "");
+    return normalizeKnownPlatform(new URL(value).host.replace(/^www\./, ""));
   } catch {
-    return value;
+    return normalizeKnownPlatform(value);
   }
 }
 
@@ -495,6 +507,42 @@ function getStringProperty(
   }
 
   return null;
+}
+
+function getEventReferrerLabel(
+  event: OpenPanelEventRecord,
+  properties: Record<string, unknown>,
+  fallback = "Direct / unknown",
+) {
+  const topLevelReferrer =
+    typeof event.referrerName === "string" && event.referrerName.trim()
+      ? event.referrerName.trim()
+      : typeof event.referrer === "string" && event.referrer.trim()
+        ? event.referrer.trim()
+        : "";
+  const propertyReferrer = getStringProperty(properties, "referrer", "referer");
+  const sourceFallback = getStringProperty(
+    properties,
+    "utm_source",
+    "source",
+    "channel",
+    "referral_source",
+  );
+  const referralPath = getStringProperty(
+    properties,
+    "referral_path",
+    "path",
+    "pathname",
+    "url",
+    "page",
+  );
+  const tiktokClickId =
+    referralPath && /(?:^|[?&])ttclid=/i.test(referralPath) ? "tiktok" : "";
+
+  return normalizeReferrerLabel(
+    topLevelReferrer || propertyReferrer || sourceFallback || tiktokClickId,
+    fallback,
+  );
 }
 
 function normalizePathLabel(
@@ -809,12 +857,7 @@ export async function getAffiliateOpenPanelTelemetry(
         ? event.country.trim()
         : getStringProperty(properties, "country", "country_name") ||
           "Unknown country";
-    const referrer =
-      typeof event.referrerName === "string" && event.referrerName.trim()
-        ? event.referrerName.trim()
-        : normalizeReferrerLabel(
-            typeof event.referrer === "string" ? event.referrer : null,
-          );
+    const referrer = getEventReferrerLabel(event, properties);
     const utmSource = getStringProperty(properties, "utm_source");
     const utmMedium = getStringProperty(properties, "utm_medium");
     const utmCampaign = getStringProperty(properties, "utm_campaign");
@@ -1121,12 +1164,8 @@ export async function getAdminAffiliateTelemetry(
 
   for (const event of visitEvents) {
     const device = typeof event.device === "string" ? event.device.trim() : "";
-    const referrer =
-      typeof event.referrerName === "string"
-        ? event.referrerName.trim()
-        : typeof event.referrer === "string"
-          ? normalizeReferrerLabel(event.referrer)
-          : "";
+    const properties = getEventProperties(event);
+    const referrer = getEventReferrerLabel(event, properties, "");
     const country =
       typeof event.country === "string" ? event.country.trim() : "";
 
@@ -1327,12 +1366,7 @@ export async function getPromoterOpenPanelTelemetry(
         ? event.country.trim()
         : getStringProperty(properties, "country", "country_name") ||
           "Unknown country";
-    const referrer =
-      typeof event.referrerName === "string" && event.referrerName.trim()
-        ? event.referrerName.trim()
-        : normalizeReferrerLabel(
-            typeof event.referrer === "string" ? event.referrer : null,
-          );
+    const referrer = getEventReferrerLabel(event, properties);
     const utmSource = getStringProperty(properties, "utm_source");
     const utmMedium = getStringProperty(properties, "utm_medium");
     const utmCampaign = getStringProperty(properties, "utm_campaign");

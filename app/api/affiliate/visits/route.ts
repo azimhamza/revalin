@@ -19,7 +19,33 @@ const visitSchema = z.object({
   discountCode: z.string().trim().min(1).nullable().optional(),
   referralPath: z.string().trim().max(512).nullable().optional(),
   referrer: z.string().trim().max(2048).nullable().optional(),
+  trafficSource: z.string().trim().max(128).nullable().optional(),
+  utmCampaign: z.string().trim().max(512).nullable().optional(),
+  utmMedium: z.string().trim().max(128).nullable().optional(),
+  utmSource: z.string().trim().max(128).nullable().optional(),
 });
+
+function getTrafficSourceFromUserAgent(userAgent: string | null) {
+  const normalized = userAgent?.toLowerCase() ?? "";
+  if (
+    normalized.includes("tiktok") ||
+    normalized.includes("musical_ly") ||
+    normalized.includes("bytedancewebview") ||
+    normalized.includes("aweme")
+  ) {
+    return "tiktok";
+  }
+
+  if (normalized.includes("instagram")) {
+    return "instagram";
+  }
+
+  if (normalized.includes("fbav") || normalized.includes("fban")) {
+    return "facebook";
+  }
+
+  return null;
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -39,6 +65,11 @@ export const POST = createApiRoute({
       .get(AFFILIATE_VISITOR_COOKIE_NAME)
       ?.value?.trim();
     const visitorId = existingVisitorId || randomUUID();
+    const userAgent = request.headers.get('user-agent');
+    const detectedTrafficSource =
+      body.trafficSource ??
+      body.utmSource ??
+      getTrafficSourceFromUserAgent(userAgent);
 
     try {
       await createAffiliateVisit({
@@ -47,7 +78,7 @@ export const POST = createApiRoute({
         visitorId,
         referralPath: body.referralPath,
         referrer: body.referrer,
-        userAgent: request.headers.get('user-agent'),
+        userAgent,
       });
     } catch (error) {
       console.error('[affiliate-visits] write failed', {
@@ -81,8 +112,12 @@ export const POST = createApiRoute({
         discount_code: body.discountCode ?? null,
         referral_path: body.referralPath ?? null,
         referrer: body.referrer ?? null,
+        source: detectedTrafficSource,
+        utm_campaign: body.utmCampaign ?? null,
+        utm_medium: body.utmMedium ?? null,
+        utm_source: body.utmSource ?? null,
         device: /mobile|android|iphone|ipad/i.test(
-          request.headers.get('user-agent') ?? '',
+          userAgent ?? '',
         )
           ? 'Mobile'
           : 'Desktop',

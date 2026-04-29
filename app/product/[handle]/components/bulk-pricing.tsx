@@ -4,12 +4,16 @@ import { useSelectedVariant } from '@/components/products/variant-selector';
 import { Product } from '@/lib/swell/types';
 import { formatPrice } from '@/lib/swell/utils';
 import { useProductQuantity } from './product-quantity-context';
+import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
 
 export function BulkPricing({ product }: { product: Product }) {
   const { quantity } = useProductQuantity();
   const selectedVariant = useSelectedVariant(product);
-  const displayPrice = selectedVariant?.price || product.priceRange.minVariantPrice;
-  const tiers = selectedVariant?.bulkPriceTiers?.length ? selectedVariant.bulkPriceTiers : product.bulkPriceTiers || [];
+  const dosageSubstitution = resolveDosageSubstitution(product, selectedVariant);
+  const displayVariant = dosageSubstitution.cartVariant;
+  const displayQuantity = quantity * dosageSubstitution.quantityMultiplier;
+  const displayPrice = displayVariant?.price || product.priceRange.minVariantPrice;
+  const tiers = displayVariant?.bulkPriceTiers?.length ? displayVariant.bulkPriceTiers : product.bulkPriceTiers || [];
 
   if (tiers.length === 0) return null;
 
@@ -22,7 +26,7 @@ export function BulkPricing({ product }: { product: Product }) {
   if (normalizedTiers.length === 0) return null;
 
   const activeTier = tiers
-    .filter(tier => quantity >= tier.minQuantity && (!tier.maxQuantity || quantity <= tier.maxQuantity))
+    .filter(tier => displayQuantity >= tier.minQuantity && (!tier.maxQuantity || displayQuantity <= tier.maxQuantity))
     .sort((left, right) => right.minQuantity - left.minQuantity)[0];
   const activeRowId = activeTier ? `${activeTier.minQuantity}-${activeTier.maxQuantity ?? 'plus'}` : 'single';
 

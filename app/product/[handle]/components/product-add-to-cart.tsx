@@ -12,6 +12,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { getSwellProductId } from '@/lib/swell/utils';
 import { useProductQuantity } from './product-quantity-context';
 import { getInventoryState } from '@/lib/inventory';
+import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
 
 export function ProductAddToCart({
   product,
@@ -50,15 +51,21 @@ export function ProductAddToCart({
     if (!isTargetingProduct && !defaultVariantId) return undefined;
     return variants.find(v => v.id === selectedVariantId);
   }, [variants, product, isTargetingProduct, defaultVariantId, selectedVariantId]);
-  const inventory = useMemo(() => getInventoryState(product, resolvedVariant), [product, resolvedVariant]);
+  const dosageSubstitution = useMemo(
+    () => resolveDosageSubstitution(product, resolvedVariant),
+    [product, resolvedVariant]
+  );
+  const cartVariant = dosageSubstitution.cartVariant;
+  const quantityMultiplier = dosageSubstitution.quantityMultiplier;
+  const inventory = useMemo(() => getInventoryState(product, cartVariant), [product, cartVariant]);
   const existingCartQuantity = useMemo(() => {
-    if (!resolvedVariant) return 0;
-    return cart?.lines.find(line => line.merchandise.id === resolvedVariant.id)?.quantity || 0;
-  }, [cart, resolvedVariant]);
+    if (!cartVariant) return 0;
+    return cart?.lines.find(line => line.merchandise.id === cartVariant.id)?.quantity || 0;
+  }, [cart, cartVariant]);
   const remainingAvailableQuantity = useMemo(() => {
     if (inventory.availableQuantity === null) return null;
-    return Math.max(0, inventory.availableQuantity - existingCartQuantity);
-  }, [inventory.availableQuantity, existingCartQuantity]);
+    return Math.floor(Math.max(0, inventory.availableQuantity - existingCartQuantity) / quantityMultiplier);
+  }, [inventory.availableQuantity, existingCartQuantity, quantityMultiplier]);
   const maxSelectableQuantity = remainingAvailableQuantity === null ? null : Math.max(1, remainingAvailableQuantity);
   const hasReachedAvailableLimit = remainingAvailableQuantity !== null && remainingAvailableQuantity <= 0;
 
@@ -66,14 +73,14 @@ export function ProductAddToCart({
     if (maxSelectableQuantity === null) return;
 
     setQuantity(currentQuantity => Math.min(currentQuantity, maxSelectableQuantity));
-  }, [maxSelectableQuantity, resolvedVariant?.id, setQuantity]);
+  }, [maxSelectableQuantity, cartVariant?.id, setQuantity]);
 
-  const isDisabled = inventory.isBackorder || hasReachedAvailableLimit || !resolvedVariant || isLoading;
-  const isSelectOneState = !inventory.isBackorder && !resolvedVariant;
+  const isDisabled = inventory.isBackorder || hasReachedAvailableLimit || !cartVariant || isLoading;
+  const isSelectOneState = !inventory.isBackorder && !cartVariant;
 
   const buttonText = inventory.isBackorder
     ? 'Get Notified'
-    : !resolvedVariant
+    : !cartVariant
       ? 'Select one'
       : hasReachedAvailableLimit
         ? 'Max quantity added'
@@ -81,10 +88,10 @@ export function ProductAddToCart({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!resolvedVariant || hasReachedAvailableLimit) return;
+    if (!cartVariant || hasReachedAvailableLimit) return;
 
     startTransition(async () => {
-      await addItem(resolvedVariant, product, quantity);
+      await addItem(cartVariant, product, quantity * quantityMultiplier);
       setQuantity(1);
     });
   };
@@ -95,7 +102,7 @@ export function ProductAddToCart({
         <div className="flex items-stretch gap-2">
           {/* Quantity selector — only visible after dosage is selected */}
           <AnimatePresence>
-            {resolvedVariant && !inventory.isBackorder && (
+            {cartVariant && !inventory.isBackorder && (
               <motion.div
                 initial={{ width: 0, opacity: 0, scale: 0.8 }}
                 animate={{ width: 'auto', opacity: 1, scale: 1 }}

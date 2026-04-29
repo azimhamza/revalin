@@ -1,6 +1,11 @@
 import { HomeSidebar } from '@/components/layout/sidebar/home-sidebar';
 import { PageLayout } from '@/components/layout/page-layout';
 import { ValidationSection } from '@/components/home/validation-section';
+import { TrustStrip } from '@/components/home/trust-strip';
+import { FeatureCardsSection } from '@/components/home/feature-cards-section';
+import { WhyChooseSection } from '@/components/home/why-choose-section';
+import { NewsletterSection } from '@/components/home/newsletter-section';
+import { FinalCtaSection } from '@/components/home/final-cta-section';
 import { LatestProductCard } from '@/components/products/latest-product-card';
 import { MobileShopAllTile } from '@/components/home/mobile-shop-all-tile';
 import { Badge } from '@/components/ui/badge';
@@ -141,6 +146,11 @@ export default async function Home() {
           )}
         </div>
       </div>
+      <TrustStrip className="mt-10 md:mt-14" />
+      <FeatureCardsSection />
+      <WhyChooseSection />
+      <NewsletterSection />
+      <FinalCtaSection />
       <ValidationSection />
     </PageLayout>
   );

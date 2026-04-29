@@ -14,6 +14,17 @@ const SHIPENGINE_SHIP_DATE_TIME_ZONE = (
   process.env.SHIPENGINE_SHIP_DATE_TIME_ZONE || 'America/Toronto'
 )
   .trim() || 'America/Toronto';
+const SHIPENGINE_CUSTOMS_DESCRIPTION = (
+  process.env.SHIPENGINE_CUSTOMS_DESCRIPTION || 'Research compound'
+).trim();
+const SHIPENGINE_CUSTOMS_COUNTRY_OF_ORIGIN = (
+  process.env.SHIPENGINE_CUSTOMS_COUNTRY_OF_ORIGIN || process.env.SHIPENGINE_ORIGIN_COUNTRY || 'CA'
+)
+  .trim()
+  .toUpperCase();
+const SHIPENGINE_CUSTOMS_HARMONIZED_TARIFF_CODE = (
+  process.env.SHIPENGINE_CUSTOMS_HARMONIZED_TARIFF_CODE || ''
+).trim();
 
 const SHIPENGINE_ORIGIN = {
   name: (process.env.SHIPENGINE_ORIGIN_NAME || 'Revalin Fulfillment').trim(),
@@ -63,6 +74,14 @@ type ShipEngineRateApiResponse = {
       };
       delivery_days?: number | null;
       error_messages?: string[];
+    }>;
+    invalid_rates?: Array<{
+      carrier_code?: string;
+      carrier_friendly_name?: string;
+      service_code?: string;
+      service_type?: string;
+      error_messages?: string[];
+      errors?: string[];
     }>;
     errors?: ShipEngineApiError[];
   };
@@ -118,6 +137,175 @@ function normalizeShipEngineValue(value?: string | null) {
   return normalized || undefined;
 }
 
+function normalizeShipEngineCountryCode(value?: string | null) {
+  return value?.trim().toUpperCase() || '';
+}
+
+const US_STATE_PROVINCE_CODES: Record<string, string> = {
+  ALABAMA: 'AL',
+  ALASKA: 'AK',
+  ARIZONA: 'AZ',
+  ARKANSAS: 'AR',
+  CALIFORNIA: 'CA',
+  COLORADO: 'CO',
+  CONNECTICUT: 'CT',
+  DELAWARE: 'DE',
+  'DISTRICT OF COLUMBIA': 'DC',
+  'WASHINGTON DC': 'DC',
+  'WASHINGTON D C': 'DC',
+  FLORIDA: 'FL',
+  GEORGIA: 'GA',
+  HAWAII: 'HI',
+  IDAHO: 'ID',
+  ILLINOIS: 'IL',
+  INDIANA: 'IN',
+  IOWA: 'IA',
+  KANSAS: 'KS',
+  KENTUCKY: 'KY',
+  LOUISIANA: 'LA',
+  MAINE: 'ME',
+  MARYLAND: 'MD',
+  MASSACHUSETTS: 'MA',
+  MICHIGAN: 'MI',
+  MINNESOTA: 'MN',
+  MISSISSIPPI: 'MS',
+  MISSOURI: 'MO',
+  MONTANA: 'MT',
+  NEBRASKA: 'NE',
+  NEVADA: 'NV',
+  'NEW HAMPSHIRE': 'NH',
+  'NEW JERSEY': 'NJ',
+  'NEW MEXICO': 'NM',
+  'NEW YORK': 'NY',
+  'NORTH CAROLINA': 'NC',
+  'NORTH DAKOTA': 'ND',
+  OHIO: 'OH',
+  OKLAHOMA: 'OK',
+  OREGON: 'OR',
+  PENNSYLVANIA: 'PA',
+  'RHODE ISLAND': 'RI',
+  'SOUTH CAROLINA': 'SC',
+  'SOUTH DAKOTA': 'SD',
+  TENNESSEE: 'TN',
+  TEXAS: 'TX',
+  UTAH: 'UT',
+  VERMONT: 'VT',
+  VIRGINIA: 'VA',
+  WASHINGTON: 'WA',
+  'WEST VIRGINIA': 'WV',
+  WISCONSIN: 'WI',
+  WYOMING: 'WY',
+  'AMERICAN SAMOA': 'AS',
+  GUAM: 'GU',
+  'NORTHERN MARIANA ISLANDS': 'MP',
+  'PUERTO RICO': 'PR',
+  'US VIRGIN ISLANDS': 'VI',
+  'U S VIRGIN ISLANDS': 'VI',
+  'VIRGIN ISLANDS': 'VI',
+  'ARMED FORCES AMERICAS': 'AA',
+  'ARMED FORCES EUROPE': 'AE',
+  'ARMED FORCES PACIFIC': 'AP',
+};
+
+const CANADA_STATE_PROVINCE_CODES: Record<string, string> = {
+  ALBERTA: 'AB',
+  'BRITISH COLUMBIA': 'BC',
+  MANITOBA: 'MB',
+  'NEW BRUNSWICK': 'NB',
+  NEWFOUNDLAND: 'NL',
+  'NEWFOUNDLAND AND LABRADOR': 'NL',
+  'NORTHWEST TERRITORIES': 'NT',
+  'NOVA SCOTIA': 'NS',
+  NUNAVUT: 'NU',
+  ONTARIO: 'ON',
+  'PRINCE EDWARD ISLAND': 'PE',
+  QUEBEC: 'QC',
+  SASKATCHEWAN: 'SK',
+  YUKON: 'YT',
+  'YUKON TERRITORY': 'YT',
+};
+
+function normalizeRegionLookupKey(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+function normalizeShipEngineStateProvince(args: {
+  countryCode?: string | null;
+  stateProvince?: string | null;
+}) {
+  const normalized = normalizeShipEngineValue(args.stateProvince);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const countryCode = args.countryCode?.trim().toUpperCase();
+  if (normalized.length === 2 && /^[a-z]{2}$/i.test(normalized)) {
+    return normalized.toUpperCase();
+  }
+
+  const lookupKey = normalizeRegionLookupKey(normalized);
+  if (countryCode === 'US') {
+    return US_STATE_PROVINCE_CODES[lookupKey] || normalized;
+  }
+  if (countryCode === 'CA') {
+    return CANADA_STATE_PROVINCE_CODES[lookupKey] || normalized;
+  }
+
+  return normalized;
+}
+
+function isInternationalShipEngineShipment(destinationCountryCode: string) {
+  const originCountryCode = normalizeShipEngineCountryCode(SHIPENGINE_ORIGIN.country);
+  return Boolean(
+    originCountryCode &&
+      destinationCountryCode &&
+      originCountryCode !== destinationCountryCode
+  );
+}
+
+function buildShipEngineCustoms(args: {
+  destinationCountryCode: string;
+  itemCount: number;
+  customsValueAmount?: number;
+  customsCurrencyCode?: string;
+}) {
+  if (!isInternationalShipEngineShipment(args.destinationCountryCode)) {
+    return undefined;
+  }
+
+  const quantity = Math.max(1, Math.round(args.itemCount || 1));
+  const totalValue = Number(args.customsValueAmount);
+  const itemValue =
+    Number.isFinite(totalValue) && totalValue > 0
+      ? Math.max(0.01, totalValue / quantity)
+      : 1;
+  const customsItem: Record<string, unknown> = {
+    description: SHIPENGINE_CUSTOMS_DESCRIPTION || 'Merchandise',
+    quantity,
+    value: {
+      currency: (args.customsCurrencyCode || 'USD').trim().toUpperCase(),
+      amount: Number(itemValue.toFixed(2)),
+    },
+    country_of_origin: SHIPENGINE_CUSTOMS_COUNTRY_OF_ORIGIN || 'CA',
+  };
+
+  if (SHIPENGINE_CUSTOMS_HARMONIZED_TARIFF_CODE) {
+    customsItem.harmonized_tariff_code = SHIPENGINE_CUSTOMS_HARMONIZED_TARIFF_CODE;
+  }
+
+  return {
+    contents: 'merchandise',
+    non_delivery: 'return_to_sender',
+    customs_items: [customsItem],
+  };
+}
+
 function getShipEngineShipDate(date = new Date()) {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: SHIPENGINE_SHIP_DATE_TIME_ZONE,
@@ -151,6 +339,17 @@ function buildShipEngineErrorMessage(errors: ShipEngineApiError[] | undefined, f
     .filter((message): message is string => Boolean(message));
 
   return messages[0] || fallback;
+}
+
+function buildShipEngineInvalidRateMessage(
+  invalidRates: NonNullable<NonNullable<ShipEngineRateApiResponse['rate_response']>['invalid_rates']> | undefined,
+) {
+  const messages = (invalidRates || [])
+    .flatMap(rate => rate.error_messages || rate.errors || [])
+    .map(message => message.trim())
+    .filter(Boolean);
+
+  return messages[0] || null;
 }
 
 function selectLowestPricedRate<
@@ -209,9 +408,18 @@ export function selectShipEngineRateForService(args: {
 function buildShipmentPayload(args: {
   shippingAddress: CheckoutShippingAddress;
   itemCount: number;
+  customsValueAmount?: number;
+  customsCurrencyCode?: string;
 }) {
   const parcel = resolveConfiguredParcel(args.itemCount);
   const originPhone = SHIPENGINE_ORIGIN.phone || args.shippingAddress.phone;
+  const shipToCountryCode = normalizeShipEngineCountryCode(args.shippingAddress.country);
+  const customs = buildShipEngineCustoms({
+    destinationCountryCode: shipToCountryCode,
+    itemCount: args.itemCount,
+    customsValueAmount: args.customsValueAmount,
+    customsCurrencyCode: args.customsCurrencyCode,
+  });
 
   return {
     validate_address: 'validate_and_clean',
@@ -222,9 +430,12 @@ function buildShipmentPayload(args: {
       address_line1: args.shippingAddress.address1,
       address_line2: args.shippingAddress.address2 || undefined,
       city_locality: args.shippingAddress.city,
-      state_province: args.shippingAddress.province || undefined,
+      state_province: normalizeShipEngineStateProvince({
+        countryCode: shipToCountryCode,
+        stateProvince: args.shippingAddress.province,
+      }),
       postal_code: args.shippingAddress.postalCode,
-      country_code: args.shippingAddress.country,
+      country_code: shipToCountryCode,
       address_residential_indicator: 'no',
     },
     ship_from: {
@@ -235,7 +446,10 @@ function buildShipmentPayload(args: {
       address_line1: SHIPENGINE_ORIGIN.street1,
       address_line2: SHIPENGINE_ORIGIN.street2 || undefined,
       city_locality: SHIPENGINE_ORIGIN.city,
-      state_province: SHIPENGINE_ORIGIN.state,
+      state_province: normalizeShipEngineStateProvince({
+        countryCode: SHIPENGINE_ORIGIN.country,
+        stateProvince: SHIPENGINE_ORIGIN.state,
+      }),
       postal_code: SHIPENGINE_ORIGIN.zip,
       country_code: SHIPENGINE_ORIGIN.country,
       address_residential_indicator: 'no',
@@ -255,6 +469,7 @@ function buildShipmentPayload(args: {
         },
       },
     ],
+    ...(customs ? { customs } : {}),
   };
 }
 
@@ -391,6 +606,7 @@ export async function quoteShipEngineRates(args: {
   shippingAddress: CheckoutShippingAddress;
   itemCount: number;
   currencyCode: string;
+  customsValueAmount?: number;
 }) {
   if (!isShipEngineConfigured()) {
     return null;
@@ -410,11 +626,23 @@ export async function quoteShipEngineRates(args: {
       shipment: buildShipmentPayload({
         shippingAddress: args.shippingAddress,
         itemCount: args.itemCount,
+        customsValueAmount: args.customsValueAmount,
+        customsCurrencyCode: args.currencyCode,
       }),
     }),
   });
 
   const allRates = result.rate_response?.rates || [];
+
+  if (allRates.length === 0) {
+    const errorMessage =
+      buildShipEngineErrorMessage(result.rate_response?.errors, '') ||
+      buildShipEngineInvalidRateMessage(result.rate_response?.invalid_rates);
+
+    if (errorMessage) {
+      throw new Error(errorMessage);
+    }
+  }
 
   const rates: ShipEngineCheckoutRate[] = allRates
     .map((rate): ShipEngineCheckoutRate | null => {
@@ -483,6 +711,8 @@ function isShipEngineTimeoutError(error: unknown) {
 export async function purchaseShipEngineLabel(args: {
   shippingAddress: CheckoutShippingAddress;
   itemCount: number;
+  customsValueAmount?: number;
+  customsCurrencyCode?: string;
   selectedShippingService: CheckoutShippingService;
   orderCreatedAt?: string;
 }) {
@@ -573,6 +803,8 @@ export async function purchaseShipEngineLabel(args: {
       shipment: buildShipmentPayload({
         shippingAddress: args.shippingAddress,
         itemCount: args.itemCount,
+        customsValueAmount: args.customsValueAmount,
+        customsCurrencyCode: args.customsCurrencyCode,
       }),
     }),
   });

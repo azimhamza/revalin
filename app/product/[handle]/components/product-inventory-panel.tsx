@@ -8,10 +8,16 @@ import { getInventoryState } from '@/lib/inventory';
 import { cn } from '@/lib/utils';
 import { Loader } from '@/components/ui/loader';
 import { getApiData, getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
+import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
 
 export function ProductInventoryPanel({ product }: { product: Product }) {
   const selectedVariant = useSelectedVariant(product);
-  const inventory = useMemo(() => getInventoryState(product, selectedVariant), [product, selectedVariant]);
+  const dosageSubstitution = useMemo(
+    () => resolveDosageSubstitution(product, selectedVariant),
+    [product, selectedVariant]
+  );
+  const displayVariant = dosageSubstitution.cartVariant;
+  const inventory = useMemo(() => getInventoryState(product, displayVariant), [product, displayVariant]);
   const [email, setEmail] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -44,7 +50,7 @@ export function ProductInventoryPanel({ product }: { product: Product }) {
         body: JSON.stringify({
           email,
           productHandle: product.handle,
-          variantId: selectedVariant?.id,
+          variantId: displayVariant?.id,
         }),
       });
 

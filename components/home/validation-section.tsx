@@ -1,60 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { motion, type Variants } from 'motion/react';
+import { motion } from 'motion/react';
 import { ArrowUpRight, BadgeCheck, ClipboardCheck, Truck } from 'lucide-react';
-
-const EASE = [0.22, 1, 0.36, 1] as const;
-
-const fadeUp: Variants = {
-  hidden: { opacity: 0, y: 24 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.8, ease: EASE },
-  },
-};
-
-const staggerContainer: Variants = {
-  hidden: {},
-  visible: {
-    transition: { staggerChildren: 0.14, delayChildren: 0.05 },
-  },
-};
-
-const staggerContainerFast: Variants = {
-  hidden: {},
-  visible: {
-    transition: { staggerChildren: 0.08, delayChildren: 0.1 },
-  },
-};
-
-const wordReveal: Variants = {
-  hidden: { opacity: 0, y: 40 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 1, ease: EASE },
-  },
-};
-
-const ruleDraw: Variants = {
-  hidden: { scaleX: 0 },
-  visible: {
-    scaleX: 1,
-    transition: { duration: 1.1, ease: EASE },
-  },
-};
-
-const chipPop: Variants = {
-  hidden: { opacity: 0, scale: 0.94, y: 14 },
-  visible: {
-    opacity: 1,
-    scale: 1,
-    y: 0,
-    transition: { duration: 0.7, ease: EASE },
-  },
-};
+import {
+  EASE,
+  fadeUp,
+  staggerContainer,
+  staggerContainerFast,
+  wordReveal,
+  chipPop,
+} from '@/lib/animations';
+import { SectionMarker } from '@/components/home/section-marker';
 
 const VALIDATION_PANELS = [
   {
@@ -140,30 +97,6 @@ const faqJsonLd = {
 };
 
 const HEADING_WORDS = ['Proof,', 'not', 'promises.'];
-
-function SectionMarker({ label }: { label: string }) {
-  return (
-    <motion.div
-      className="flex items-center gap-5"
-      initial="hidden"
-      whileInView="visible"
-      viewport={{ once: true, amount: 0.6 }}
-      variants={staggerContainerFast}
-    >
-      <motion.span
-        variants={fadeUp}
-        className="font-mono text-[11px] font-medium uppercase tracking-[0.2em] text-[#0B2E2F]/55"
-      >
-        {label}
-      </motion.span>
-      <motion.div
-        variants={ruleDraw}
-        style={{ originX: 0 }}
-        className="h-px flex-1 bg-[#0B2E2F]/20"
-      />
-    </motion.div>
-  );
-}
 
 export function ValidationSection() {
   return (

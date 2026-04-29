@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   Area,
   AreaChart,
@@ -50,6 +51,7 @@ function BreakdownChart({
   title,
   items,
   emptyMessage,
+  rangeLabel,
   metricLabel = "Count",
   barColor = "#0B2E2F",
   labelWidth = 104,
@@ -57,6 +59,7 @@ function BreakdownChart({
   title: string;
   items: OpenPanelNamedValue[];
   emptyMessage: string;
+  rangeLabel: string;
   metricLabel?: string;
   barColor?: string;
   labelWidth?: number;
@@ -71,7 +74,7 @@ function BreakdownChart({
             {title}
           </h3>
           <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Last 30d
+            {rangeLabel}
           </p>
         </div>
       </div>
@@ -144,6 +147,8 @@ export function OpenPanelOverviewVisuals({
   countries,
   pages,
   referrers,
+  activeRange,
+  rangeLabel,
 }: {
   trend: OpenPanelSiteMetricPoint[];
   liveVisitors: number | null;
@@ -151,12 +156,41 @@ export function OpenPanelOverviewVisuals({
   countries: OpenPanelNamedValue[];
   pages: OpenPanelNamedValue[];
   referrers: OpenPanelNamedValue[];
+  activeRange: "daily" | "monthly";
+  rangeLabel: string;
 }) {
+  const rangeOptions = [
+    { key: "daily", label: "Daily", href: "/admin?analyticsRange=daily" },
+    { key: "monthly", label: "Monthly", href: "/admin?analyticsRange=monthly" },
+  ] as const;
+
   return (
     <section className="space-y-3">
       <AdminSectionHeader
         eyebrow="OpenPanel"
         title="Traffic trend"
+        action={
+          <div className="inline-flex overflow-hidden border border-border bg-background shadow-sm">
+            {rangeOptions.map((option) => {
+              const active = activeRange === option.key;
+
+              return (
+                <Link
+                  key={option.key}
+                  href={option.href}
+                  aria-current={active ? "page" : undefined}
+                  className={`inline-flex h-7 items-center px-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                    active
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  }`}
+                >
+                  {option.label}
+                </Link>
+              );
+            })}
+          </div>
+        }
       />
 
       <div className="grid gap-3">
@@ -167,7 +201,7 @@ export function OpenPanelOverviewVisuals({
                 Visitors, sessions, and page views
               </h3>
               <p className="mt-0.5 text-[11px] text-muted-foreground">
-                Daily OpenPanel metrics from the Insights API.
+                OpenPanel metrics from the Insights API for {rangeLabel.toLowerCase()}.
               </p>
             </div>
             <div className="min-w-[80px] rounded-none border border-border bg-muted/60 px-2.5 py-2">
@@ -270,6 +304,7 @@ export function OpenPanelOverviewVisuals({
             title="Devices"
             items={devices}
             emptyMessage="No device data returned yet."
+            rangeLabel={rangeLabel}
             metricLabel="Sessions"
             barColor="#0B2E2F"
             labelWidth={92}
@@ -278,6 +313,7 @@ export function OpenPanelOverviewVisuals({
             title="Countries"
             items={countries}
             emptyMessage="No country data returned yet."
+            rangeLabel={rangeLabel}
             metricLabel="Sessions"
             barColor="#58706B"
             labelWidth={92}
@@ -286,6 +322,7 @@ export function OpenPanelOverviewVisuals({
             title="Top pages"
             items={pages}
             emptyMessage="No page analytics available yet."
+            rangeLabel={rangeLabel}
             metricLabel="Views"
             barColor="#D3A34F"
             labelWidth={126}
@@ -294,6 +331,7 @@ export function OpenPanelOverviewVisuals({
             title="Referrers"
             items={referrers}
             emptyMessage="No referrer data available yet."
+            rangeLabel={rangeLabel}
             metricLabel="Sessions"
             barColor="#826B44"
             labelWidth={126}

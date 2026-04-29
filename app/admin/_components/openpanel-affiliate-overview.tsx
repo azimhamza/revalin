@@ -29,10 +29,12 @@ function CompactBreakdownCard({
   title,
   items,
   emptyMessage,
+  rangeLabel,
 }: {
   title: string;
   items: OpenPanelNamedValue[];
   emptyMessage: string;
+  rangeLabel: string;
 }) {
   const chartItems = items.slice(0, 4);
   const max = Math.max(1, ...chartItems.map((item) => item.value));
@@ -45,7 +47,7 @@ function CompactBreakdownCard({
             {title}
           </h3>
           <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Last 30d
+            {rangeLabel}
           </p>
         </div>
       </div>
@@ -84,9 +86,11 @@ function CompactBreakdownCard({
 function TopAffiliatesCard({
   affiliateNames,
   telemetry,
+  rangeLabel,
 }: {
   affiliateNames: Record<string, string>;
   telemetry: AdminAffiliateTelemetry;
+  rangeLabel: string;
 }) {
   const leaderboard = telemetry.leaderboard.slice(0, 4).map((entry) => ({
     ...entry,
@@ -109,7 +113,7 @@ function TopAffiliatesCard({
             Top affiliates
           </h3>
           <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Last 30d
+            {rangeLabel}
           </p>
         </div>
       </div>
@@ -162,11 +166,13 @@ export function OpenPanelAffiliateOverview({
   openPanelMissingConfig,
   telemetry,
   affiliateNames,
+  rangeLabel,
 }: {
   openPanelConfigured: boolean;
   openPanelMissingConfig: string[];
   telemetry: AdminAffiliateTelemetry | null;
   affiliateNames: Record<string, string>;
+  rangeLabel: string;
 }) {
   const leaderboard = telemetry?.leaderboard ?? [];
   const totalVisits = leaderboard.reduce((sum, entry) => sum + entry.visits, 0);
@@ -207,18 +213,18 @@ export function OpenPanelAffiliateOverview({
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <AdminStatCard
-              label="Visits (30d)"
+              label={`Visits (${rangeLabel})`}
               value={formatCompact(totalVisits)}
               size="compact"
             />
             <AdminStatCard
-              label="Purchases (30d)"
+              label={`Purchases (${rangeLabel})`}
               value={formatCompact(totalPurchases)}
               tone="inverse"
               size="compact"
             />
             <AdminStatCard
-              label="Revenue (30d)"
+              label={`Revenue (${rangeLabel})`}
               value={formatCurrency(totalRevenue)}
               size="compact"
             />
@@ -233,21 +239,25 @@ export function OpenPanelAffiliateOverview({
             <TopAffiliatesCard
               affiliateNames={affiliateNames}
               telemetry={telemetry}
+              rangeLabel={rangeLabel}
             />
             <CompactBreakdownCard
               title="Device mix"
               items={telemetry.devices}
               emptyMessage="No device data."
+              rangeLabel={rangeLabel}
             />
             <CompactBreakdownCard
               title="Referrer mix"
               items={telemetry.referrers}
               emptyMessage="No referrer data."
+              rangeLabel={rangeLabel}
             />
             <CompactBreakdownCard
               title="Country mix"
               items={telemetry.countries}
               emptyMessage="No country data."
+              rangeLabel={rangeLabel}
             />
           </div>
         </>

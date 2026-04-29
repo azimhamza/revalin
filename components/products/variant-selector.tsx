@@ -8,6 +8,7 @@ import { ColorSwatch } from '@/components/ui/color-picker';
 import { Button } from '@/components/ui/button';
 import { cn, getColorHex } from '@/lib/utils';
 import { getSwellProductId } from '@/lib/swell/utils';
+import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
 
 type Combination = {
   id: string;
@@ -153,6 +154,15 @@ export function VariantOptionSelectorComponent({
           const isAvailableForSale = combinations.find(combination =>
             filtered.every(([key, value]) => combination[key] === value && combination.availableForSale)
           );
+          const matchingVariant = variants.find(variant =>
+            filtered.every(([key, value]) =>
+              variant.selectedOptions.some(
+                option => option.name.toLowerCase() === key && option.value === value
+              )
+            )
+          );
+          const hasAvailableSubstitution =
+            !isAvailableForSale && resolveDosageSubstitution(product, matchingVariant).isSubstitution;
 
           const isActive = isTargetingProduct && selectedValue === value.name;
 
@@ -186,7 +196,7 @@ export function VariantOptionSelectorComponent({
             );
           }
 
-          const isBackordered = !isAvailableForSale;
+          const isBackordered = !isAvailableForSale && !hasAvailableSubstitution;
 
           return (
             <VariantValueButton
@@ -237,7 +247,28 @@ export function VariantOptionSelector({
   const handleSelect = (valueName: string) => {
     startTransition(() => {
       const nextParams = new URLSearchParams(searchParams.toString());
-      nextParams.set(optionNameLowerCase, valueName);
+      const selectedOptionParams = {
+        ...selectedOptions,
+        [optionNameLowerCase]: valueName,
+      };
+      const matchingVariant = product.variants.find(variant =>
+        variant.selectedOptions.every(
+          option => selectedOptionParams[option.name.toLowerCase()] === option.value
+        )
+      );
+      const substitution = resolveDosageSubstitution(product, matchingVariant);
+
+      if (substitution.isSubstitution && substitution.cartVariant) {
+        substitution.cartVariant.selectedOptions.forEach(option => {
+          nextParams.set(option.name.toLowerCase(), option.value);
+        });
+        nextParams.set('qty', String(substitution.quantityMultiplier));
+        nextParams.set('substitute_dosage', valueName);
+      } else {
+        nextParams.set(optionNameLowerCase, valueName);
+        nextParams.delete('qty');
+        nextParams.delete('substitute_dosage');
+      }
 
       if (!isProductPage) {
         nextParams.set('pid', getSwellProductId(product.id));
