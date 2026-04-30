@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { and, count, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { checkoutOrders } from '@/lib/db/schema';
@@ -51,8 +52,25 @@ export type FulfillmentOrderListItem = {
   handedToCarrierAt: string | null;
   packedAt: string | null;
   labelError: string | null;
+  supportsLabelPurchase: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ManualFulfillmentOrderInput = {
+  orderNumber?: string;
+  customerName: string;
+  email?: string;
+  totalAmount: string;
+  currencyCode: string;
+  itemCount: number;
+  carrier?: string;
+  service?: string;
+  trackingCode?: string;
+  labelUrl?: string;
+  publicTrackingUrl?: string;
+  fulfillmentStatus: FulfillmentStatus;
+  notes?: string;
 };
 
 function rowToListItem(row: FulfillmentOrderRow): FulfillmentOrderListItem {
@@ -83,9 +101,169 @@ function rowToListItem(row: FulfillmentOrderRow): FulfillmentOrderListItem {
     handedToCarrierAt: shipengine?.handedToCarrierAt || null,
     packedAt: shipengine?.packedAt || null,
     labelError: shipengine?.labelError || null,
+    supportsLabelPurchase: shippingService?.source === 'shipengine',
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function splitManualCustomerName(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const firstName = parts.shift() || 'Manual';
+  const lastName = parts.join(' ');
+
+  return {
+    firstName,
+    lastName,
+  };
+}
+
+function normalizeManualOrderNumber(value?: string | null) {
+  const normalized = value?.trim();
+  if (normalized) return normalized;
+
+  return `MAN-${Date.now().toString(36).toUpperCase()}`;
+}
+
+function normalizeMoneyString(value: string) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error('Total amount must be a valid non-negative number.');
+  }
+
+  return amount.toFixed(2);
+}
+
+export async function createManualFulfillmentOrder(
+  input: ManualFulfillmentOrderInput,
+) {
+  const orderNumber = normalizeManualOrderNumber(input.orderNumber);
+  const orderId = orderNumber.replace(/[^A-Za-z0-9_-]+/g, '-').slice(0, 64);
+  const currencyCode = input.currencyCode.trim().toUpperCase() || 'USD';
+  const totalAmount = normalizeMoneyString(input.totalAmount);
+  const itemCount = Math.max(1, Math.floor(input.itemCount || 1));
+  const customer = splitManualCustomerName(input.customerName);
+  const now = new Date();
+  const status = input.fulfillmentStatus;
+  const carrier = input.carrier?.trim() || undefined;
+  const service = input.service?.trim() || undefined;
+  const trackingCode = input.trackingCode?.trim() || undefined;
+  const labelUrl = input.labelUrl?.trim() || undefined;
+  const publicTrackingUrl = input.publicTrackingUrl?.trim() || undefined;
+
+  const existing = await getCheckoutOrder(orderId);
+  if (existing) {
+    throw new Error(`Order ${orderId} already exists.`);
+  }
+
+  const [created] = await db
+    .insert(checkoutOrders)
+    .values({
+      orderId,
+      accessKey: randomUUID(),
+      cartId: `manual-fulfillment-${orderId.toLowerCase()}`,
+      userId: null,
+      email: input.email?.trim().toLowerCase() || null,
+      paymentStatus: 'paid',
+      currencyCode,
+      shippingAddress: {
+        firstName: customer.firstName,
+        lastName: customer.lastName,
+        email: input.email?.trim() || '',
+        phone: '',
+        address1: input.notes?.trim() || 'Manual fulfillment',
+        city: '',
+        province: '',
+        postalCode: '',
+        country: 'US',
+        notes: input.notes?.trim() || undefined,
+      },
+      shippingService:
+        carrier || service
+          ? {
+              id: `manual:${orderId}`,
+              name: service || 'Manual service',
+              source: 'swell',
+              carrier,
+              price: {
+                amount: '0.00',
+                currencyCode,
+              },
+            }
+          : null,
+      lines: [
+        {
+          id: `${orderId}-manual-line`,
+          merchandiseId: 'manual-fulfillment',
+          productHandle: 'manual-fulfillment',
+          productTitle: 'Manual fulfillment',
+          variantTitle: `${itemCount} item${itemCount === 1 ? '' : 's'}`,
+          skuNumber: undefined,
+          imageUrl: '',
+          selectedOptions: [],
+          quantity: itemCount,
+          unitPrice: {
+            amount: (Number(totalAmount) / itemCount).toFixed(2),
+            currencyCode,
+          },
+          lineTotal: {
+            amount: totalAmount,
+            currencyCode,
+          },
+        },
+      ],
+      totals: {
+        subtotalAmount: { amount: totalAmount, currencyCode },
+        totalAmount: { amount: totalAmount, currencyCode },
+        shippingAmount: { amount: '0.00', currencyCode },
+        shippingThresholdAmount: { amount: '0.00', currencyCode },
+        shippingStatus: 'pending_quote',
+      },
+      payment: {
+        provider: 'manual_fulfillment',
+        status: 'paid',
+        updatedAt: now.toISOString(),
+      },
+      swell: {
+        accountId: '',
+        orderId,
+        orderNumber,
+      },
+      shipengine:
+        carrier || service || trackingCode || labelUrl || publicTrackingUrl
+          ? {
+              carrier,
+              service,
+              trackingCode,
+              labelUrl,
+              publicTrackingUrl,
+              labelPurchasedAt:
+                status === 'label_ready' || status === 'packed' || status === 'handed_to_carrier'
+                  ? now.toISOString()
+                  : undefined,
+              packedAt:
+                status === 'packed' || status === 'handed_to_carrier'
+                  ? now.toISOString()
+                  : undefined,
+              handedToCarrierAt:
+                status === 'handed_to_carrier' ? now.toISOString() : undefined,
+            }
+          : null,
+      affiliate: null,
+      promoter: null,
+      ipnEvents: null,
+      fulfillmentStatus: status,
+      latestError: null,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+
+  if (!created) {
+    throw new Error('Failed to create manual fulfillment order.');
+  }
+
+  return rowToListItem(created);
 }
 
 export async function listFulfillmentOrders(args: {

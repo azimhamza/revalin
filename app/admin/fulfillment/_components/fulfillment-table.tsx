@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import {
   Check,
   Copy,
+  Loader2,
+  Plus,
   RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -93,6 +95,24 @@ export function FulfillmentTable({
   const [total, setTotal] = useState(initialTotal);
   const [isPending, startTransition] = useTransition();
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualLoading, setManualLoading] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [manualForm, setManualForm] = useState({
+    orderNumber: '',
+    customerName: '',
+    email: '',
+    totalAmount: '',
+    currencyCode: 'USD',
+    itemCount: '1',
+    carrier: '',
+    service: '',
+    trackingCode: '',
+    labelUrl: '',
+    publicTrackingUrl: '',
+    fulfillmentStatus: 'pending',
+    notes: '',
+  });
 
   useEffect(() => {
     setActiveTab(initialStatus);
@@ -118,6 +138,66 @@ export function FulfillmentTable({
       router.refresh();
     });
   }, [router]);
+
+  const updateManualField = useCallback(
+    (field: keyof typeof manualForm, value: string) => {
+      setManualForm((current) => ({
+        ...current,
+        [field]: value,
+      }));
+    },
+    [],
+  );
+
+  const submitManualOrder = useCallback(async () => {
+    setManualLoading(true);
+    setManualError(null);
+
+    try {
+      const response = await fetch('/api/admin/fulfillment/manual-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...manualForm,
+          itemCount: Number(manualForm.itemCount || 1),
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error?.message ||
+            `Failed to create manual fulfillment (${response.status}).`,
+        );
+      }
+
+      setManualForm({
+        orderNumber: '',
+        customerName: '',
+        email: '',
+        totalAmount: '',
+        currencyCode: 'USD',
+        itemCount: '1',
+        carrier: '',
+        service: '',
+        trackingCode: '',
+        labelUrl: '',
+        publicTrackingUrl: '',
+        fulfillmentStatus: 'pending',
+        notes: '',
+      });
+      setManualOpen(false);
+      refreshList();
+    } catch (error) {
+      setManualError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to create manual fulfillment.',
+      );
+    } finally {
+      setManualLoading(false);
+    }
+  }, [manualForm, refreshList]);
 
   const copyTracking = useCallback(
     (trackingCode: string, orderId: string) => {
@@ -159,6 +239,119 @@ export function FulfillmentTable({
           />
           Refresh
         </button>
+      </div>
+
+      <div className="rounded-xl border border-[#0B2E2F]/10 bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-[#0B2E2F]">
+              Manual fulfillment
+            </h2>
+            <p className="mt-1 text-xs text-[#0B2E2F]/50">
+              Add an outside order to this queue with carrier, service,
+              tracking, and status.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setManualOpen((current) => !current)}
+            className="flex items-center gap-1.5 rounded-lg bg-[#0B2E2F] px-3 py-2 text-xs font-semibold text-[#F4F1EA] transition-colors hover:bg-[#0B2E2F]/90"
+          >
+            <Plus className="size-3.5" />
+            {manualOpen ? 'Hide form' : 'Add fulfillment'}
+          </button>
+        </div>
+
+        {manualOpen ? (
+          <div className="mt-4 space-y-3">
+            <div className="grid gap-3 md:grid-cols-4">
+              {[
+                ['orderNumber', 'Order / reference', 'RVL-1234'],
+                ['customerName', 'Customer', 'Jane Doe'],
+                ['email', 'Email', 'customer@example.com'],
+                ['totalAmount', 'Total', '125.00'],
+                ['currencyCode', 'Currency', 'USD'],
+                ['itemCount', 'Items', '1'],
+                ['carrier', 'Carrier', 'Canada Post'],
+                ['service', 'Service', 'Tracked Packet'],
+                ['trackingCode', 'Tracking', 'Tracking number'],
+                ['labelUrl', 'Label URL', 'https://...'],
+                ['publicTrackingUrl', 'Tracking URL', 'https://...'],
+                ['notes', 'Notes', 'Optional note'],
+              ].map(([field, label, placeholder]) => (
+                <label
+                  key={field}
+                  className={
+                    field === 'notes'
+                      ? 'space-y-1.5 md:col-span-2'
+                      : 'space-y-1.5'
+                  }
+                >
+                  <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                    {label}
+                  </span>
+                  <input
+                    value={manualForm[field as keyof typeof manualForm]}
+                    onChange={(event) =>
+                      updateManualField(
+                        field as keyof typeof manualForm,
+                        event.target.value,
+                      )
+                    }
+                    placeholder={placeholder}
+                    className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none transition-colors focus:border-[#0B2E2F]"
+                  />
+                </label>
+              ))}
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Status
+                </span>
+                <select
+                  value={manualForm.fulfillmentStatus}
+                  onChange={(event) =>
+                    updateManualField(
+                      'fulfillmentStatus',
+                      event.target.value,
+                    )
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none transition-colors focus:border-[#0B2E2F]"
+                >
+                  <option value="pending">Pending</option>
+                  <option value="label_ready">Label ready</option>
+                  <option value="packed">Packed</option>
+                  <option value="handed_to_carrier">Shipped</option>
+                  <option value="error">Error</option>
+                </select>
+              </label>
+            </div>
+
+            {manualError ? (
+              <p className="text-xs text-red-600">{manualError}</p>
+            ) : null}
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={submitManualOrder}
+                disabled={
+                  manualLoading ||
+                  !manualForm.customerName.trim() ||
+                  !manualForm.totalAmount.trim()
+                }
+                className="flex items-center gap-1.5 rounded-lg bg-[#0B2E2F] px-3 py-2 text-xs font-semibold text-[#F4F1EA] transition-colors hover:bg-[#0B2E2F]/90 disabled:opacity-40"
+              >
+                {manualLoading ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Plus className="size-3.5" />
+                )}
+                Add manual order
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* Table */}

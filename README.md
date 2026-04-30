@@ -33,6 +33,8 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `SHIPENGINE_ORIGIN_STREET1`, `SHIPENGINE_ORIGIN_ZIP` (required to activate ShipEngine live rates / labels)
 - `SHIPENGINE_ORIGIN_CITY`, `SHIPENGINE_ORIGIN_STATE`, `SHIPENGINE_ORIGIN_COUNTRY`, `SHIPENGINE_ORIGIN_NAME`, `SHIPENGINE_ORIGIN_COMPANY_NAME`, `SHIPENGINE_ORIGIN_PHONE` (optional origin fields used for rating and labels; company name falls back to `SHIPENGINE_ORIGIN_NAME`)
 - `SHIPENGINE_CARRIER_IDS` (optional comma-separated carrier IDs; otherwise carriers are auto-discovered)
+- `SHIPENGINE_US_PREFERRED_CARRIERS` (optional comma-separated carrier name/code matchers for US ShipEngine quotes; defaults to `fedex,dhl`)
+- `SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS=true` (optional; if enabled, US ShipEngine quotes return no rates unless a preferred carrier is available)
 - `SHIPENGINE_PARCEL_LENGTH_IN`, `SHIPENGINE_PARCEL_WIDTH_IN`, `SHIPENGINE_PARCEL_HEIGHT_IN`, `SHIPENGINE_DEFAULT_ITEM_WEIGHT_OZ` (optional parcel defaults for small-vial shipments)
 - `SHIPPO_API_TOKEN` (optional; enables live Shippo rate quotes before order creation)
 - `SHIPPO_ORIGIN_STREET1`, `SHIPPO_ORIGIN_ZIP` (required to activate Shippo live rates)

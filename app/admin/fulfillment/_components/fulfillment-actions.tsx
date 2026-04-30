@@ -354,6 +354,7 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
     !order.labelUrl &&
     (order.paymentStatus === 'finished' || order.paymentStatus === 'paid');
   const canManualLabel =
+    order.supportsLabelPurchase &&
     !order.labelUrl &&
     (order.paymentStatus === 'finished' || order.paymentStatus === 'paid');
   const canResendLabel = Boolean(order.labelUrl);

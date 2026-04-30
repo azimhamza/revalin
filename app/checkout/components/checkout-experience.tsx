@@ -1604,11 +1604,12 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
   useEffect(() => {
     if (!orderId || !accessKey) {
+      if (activeOrder) return;
       setCheckoutSession(null);
       return;
     }
 
-    if (cart === undefined) {
+    if (cartSignature === 'loading') {
       return;
     }
 
@@ -1620,6 +1621,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     })
       .then(async response => {
         const payload = await readJsonSafely(response);
+        if (response.status === 429) {
+          return;
+        }
         if (!response.ok) {
           throw new Error(getApiErrorMessage(payload, 'Unable to restore checkout session.'));
         }
@@ -1657,20 +1661,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
           return;
         }
 
-        const liveCartSignature = buildComparableCheckoutLinesSignature(
-          cart && cart.lines.length > 0
-            ? {
-                currencyCode: cart.cost.totalAmount.currencyCode,
-                lines: cart.lines.map((line) => ({
-                  merchandiseId: line.merchandise.id,
-                  quantity: line.quantity,
-                  lineTotal: {
-                    amount: line.cost.totalAmount.amount,
-                  },
-                })),
-              }
-            : null,
-        );
+        const liveCartSignature = cartSignature === 'empty' ? 'empty' : cartSignature;
         const restoredOrderSignature = buildComparableCheckoutLinesSignature({
           currencyCode: data.order.currencyCode,
           lines: data.order.lines.map((line) => ({
@@ -1683,8 +1674,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         });
 
         if (
-          cart &&
-          cart.lines.length > 0 &&
+          cartSignature !== 'empty' &&
+          !isInteracOrder(data.order.payment) &&
           liveCartSignature !== restoredOrderSignature &&
           normalizedPaymentStatus !== 'finished' &&
           normalizedPaymentStatus !== 'paid'
@@ -1699,7 +1690,18 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
           return;
         }
 
-        setCheckoutSession({ accessKey, order: data.order });
+        setCheckoutSession(current => {
+          if (
+            current?.accessKey === accessKey &&
+            current.order.orderId === data.order.orderId &&
+            current.order.updatedAt === data.order.updatedAt &&
+            current.order.payment.status === data.order.payment.status
+          ) {
+            return current;
+          }
+
+          return { accessKey, order: data.order };
+        });
         setShippingAddress(data.order.shippingAddress);
         if (isNowPaymentsOrder(data.order.payment)) {
           setPaymentMethod('crypto');
@@ -1734,7 +1736,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     return () => {
       cancelled = true;
     };
-  }, [accessKey, cart, clearStoredCheckoutResume, followCheckoutOrder, orderId]);
+  }, [accessKey, cartSignature, clearStoredCheckoutResume, followCheckoutOrder, orderId]);
 
   useEffect(() => {
     if (!isDraftHydrated) return;
@@ -2081,6 +2083,12 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       return;
     }
 
+    if (isLoadingQuote) {
+      setDiscountError(null);
+      setShouldAutoApplyDiscount(true);
+      return;
+    }
+
     setIsValidatingDiscount(true);
     setDiscountError(null);
     setShouldAutoApplyDiscount(false);
@@ -2120,6 +2128,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     buildCheckoutSessionPayload,
     cartSnapshot,
     ensureCheckoutApiSession,
+    isLoadingQuote,
     repriceCheckoutApiSession,
     shippingAddress,
   ]);
@@ -2305,24 +2314,42 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
     try {
       const session = await ensureCheckoutApiSession();
-      const response = await fetch(
-        `/api/checkout/v2/sessions/${encodeURIComponent(session.sessionId)}/finalize`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            ...buildCheckoutSessionPayload({
-              selectedShippingServiceId,
+      const finalizePayload = buildCheckoutSessionPayload({
+        selectedShippingServiceId,
+      });
+      const postFinalize = async (targetSession: CheckoutApiSession) => {
+        const response = await fetch(
+          `/api/checkout/v2/sessions/${encodeURIComponent(targetSession.sessionId)}/finalize`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              ...finalizePayload,
+              sessionKey: targetSession.sessionKey,
+              version: targetSession.version,
             }),
-            sessionKey: session.sessionKey,
-            version: session.version,
-          }),
-        },
-      );
+          },
+        );
 
-      const payload = await readJsonSafely(response);
+        return {
+          response,
+          payload: await readJsonSafely(response),
+        };
+      };
+
+      let result = await postFinalize(session);
+
+      if (isDraftOutOfDateResponse(result.payload)) {
+        const currentSession = await refreshCheckoutApiSession(session);
+        result = await postFinalize(currentSession);
+      } else if (isExpiredCheckoutSessionResponse(result.payload)) {
+        const freshSession = await createCheckoutApiSession(finalizePayload);
+        result = await postFinalize(freshSession);
+      }
+
+      const { response, payload } = result;
 
       if (!response.ok) {
         console.error('[CHECKOUT] create-payment failed:', response.status, payload);
@@ -2411,6 +2438,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     buildCheckoutSessionPayload,
     cardCheckoutMinimumMessage,
     ensureCheckoutApiSession,
+    createCheckoutApiSession,
+    refreshCheckoutApiSession,
     isCardCheckoutDisabled,
     interacSenderEmail,
     interacSenderName,

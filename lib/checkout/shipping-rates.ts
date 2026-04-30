@@ -35,6 +35,16 @@ function toFixedAmount(amount: number) {
   return Number(amount || 0).toFixed(2);
 }
 
+const US_SHIPENGINE_PREFERRED_CARRIER_PATTERNS = (
+  process.env.SHIPENGINE_US_PREFERRED_CARRIERS || 'fedex,dhl'
+)
+  .split(',')
+  .map(value => value.trim().toLowerCase())
+  .filter(Boolean);
+
+const SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS =
+  process.env.SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS === 'true';
+
 function sortServicesByPrice<T extends CheckoutRatedService>(services: T[]) {
   return [...services].sort((left, right) => Number(left.price.amount) - Number(right.price.amount));
 }
@@ -153,6 +163,54 @@ export function findCheckoutShippingService(services: CheckoutRatedService[], se
   );
 }
 
+function isUsShippingAddress(shippingAddress: CheckoutShippingAddress) {
+  return shippingAddress.country.trim().toUpperCase() === 'US';
+}
+
+function isPreferredUsShipEngineCarrier(service: ShipEngineCheckoutRate) {
+  const carrierIdentity = [
+    service.carrier,
+    service.carrierCode,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return US_SHIPENGINE_PREFERRED_CARRIER_PATTERNS.some(pattern =>
+    carrierIdentity.includes(pattern)
+  );
+}
+
+function applyUsShipEngineCarrierPreference(args: {
+  shippingAddress: CheckoutShippingAddress;
+  services: ShipEngineCheckoutRate[];
+}) {
+  if (!isUsShippingAddress(args.shippingAddress)) {
+    return args.services;
+  }
+
+  const preferredServices = args.services.filter(isPreferredUsShipEngineCarrier);
+  if (preferredServices.length > 0) {
+    return preferredServices;
+  }
+
+  if (SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS) {
+    return [];
+  }
+
+  console.warn(
+    'ShipEngine returned no preferred US carrier rates. Falling back to all ShipEngine US rates.',
+    {
+      preferredCarriers: US_SHIPENGINE_PREFERRED_CARRIER_PATTERNS,
+      returnedCarriers: Array.from(
+        new Set(args.services.map(service => service.carrier || service.carrierCode || 'unknown'))
+      ),
+    },
+  );
+
+  return args.services;
+}
+
 export function buildQuoteResponse(args: {
   currencyCode: string;
   subtotalAmount: number;
@@ -267,5 +325,10 @@ export async function getShipEngineCheckoutServices(args: {
     return [];
   }
 
-  return mapShipEngineRatedServices(result.rates);
+  const preferredRates = applyUsShipEngineCarrierPreference({
+    shippingAddress: args.shippingAddress,
+    services: result.rates,
+  });
+
+  return mapShipEngineRatedServices(preferredRates);
 }

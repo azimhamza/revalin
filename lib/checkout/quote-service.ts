@@ -67,7 +67,9 @@ async function estimateTaxForSelectedService(args: {
     (service) => service.id === args.selectedServiceId,
   );
   if (!selectedService) {
-    return args.services;
+    return {
+      services: args.services,
+    };
   }
 
   try {
@@ -83,7 +85,7 @@ async function estimateTaxForSelectedService(args: {
       coupon_code: args.couponCode ?? undefined,
     });
 
-    return args.services.map((service) => {
+    const services = args.services.map((service) => {
       if (service.id !== selectedService.id) {
         return service;
       }
@@ -96,8 +98,19 @@ async function estimateTaxForSelectedService(args: {
         },
       } satisfies CheckoutRatedService;
     });
+
+    return {
+      services,
+      couponDiscountAmount: Number(
+        ratedCart.discount_total ?? ratedCart.item_discount ?? 0,
+      ),
+      couponCode: ratedCart.coupon_code,
+      currencyCode: ratedCart.currency,
+    };
   } catch {
-    return args.services;
+    return {
+      services: args.services,
+    };
   }
 }
 
@@ -168,9 +181,6 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
     const couponDiscountAmount = Number(
       swellCart.discount_total ?? swellCart.item_discount ?? 0,
     );
-    if (args.discountCode && couponDiscountAmount <= 0) {
-      throw apiError.badRequest('That discount code is invalid or has expired.');
-    }
     const pricing = calculateCheckoutPricing({
       currencyCode: swellCart.currency || currencyCode,
       subtotalAmount,
@@ -212,7 +222,7 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       quote.selectedServiceId = preservedSelection.id;
     }
 
-    quote.services = await estimateTaxForSelectedService({
+    const selectedRating = await estimateTaxForSelectedService({
       cartId: swellCart.id,
       services: quote.services,
       selectedServiceId: quote.selectedServiceId,
@@ -220,6 +230,36 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       billing: swellBilling,
       couponCode: args.discountCode || swellCart.coupon_code,
     });
+    quote.services = selectedRating.services;
+
+    const resolvedCouponDiscountAmount =
+      selectedRating.couponDiscountAmount ?? couponDiscountAmount;
+    const resolvedCouponCode =
+      args.discountCode || selectedRating.couponCode || swellCart.coupon_code;
+
+    if (args.discountCode && resolvedCouponDiscountAmount <= 0) {
+      throw apiError.badRequest('That discount code is invalid or has expired.');
+    }
+
+    const resolvedPricing = calculateCheckoutPricing({
+      currencyCode: selectedRating.currencyCode || swellCart.currency || currencyCode,
+      subtotalAmount,
+      couponDiscountAmount: resolvedCouponDiscountAmount,
+      couponCode: resolvedCouponCode,
+      paymentMethod:
+        args.paymentMethod === 'crypto'
+          ? 'crypto'
+          : args.paymentMethod === 'interac'
+            ? 'interac'
+            : 'card',
+    });
+
+    quote.discountAmount = {
+      amount: resolvedPricing.discountTotalValue.toFixed(2),
+      currencyCode: selectedRating.currencyCode || swellCart.currency || currencyCode,
+    };
+    quote.discountCode = resolvedCouponCode;
+    quote.discounts = resolvedPricing.discounts;
 
     if (quote.services.length === 0) {
       const rawRatingErrors = swellCart.shipment_rating?.errors;
