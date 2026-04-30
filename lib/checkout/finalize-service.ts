@@ -7,7 +7,7 @@ import {
 } from '@/lib/checkout/affiliate-service';
 import { getSuccessfulPromoterForAffiliate } from '@/lib/checkout/promoter-service';
 import {
-  FREE_SHIPPING_THRESHOLD,
+  getFreeShippingThresholdForCurrency,
   isTerminalPaymentStatus,
 } from '@/lib/checkout/constants';
 import {
@@ -39,6 +39,12 @@ import {
   buildCheckoutPricingMetadata,
   calculateCheckoutPricing,
 } from '@/lib/checkout/pricing';
+import {
+  createInteracMessageCode,
+  findInteracOrderByMessageCode,
+  getInteracExpiresAt,
+  getInteracRecipientEmail,
+} from '@/lib/checkout/interac';
 import {
   getCardCheckoutMinimumMessage,
   isCardCheckoutMinimumMet,
@@ -80,10 +86,12 @@ import type {
   CheckoutOrderRecord,
   CheckoutShippingAddress,
   CheckoutShippingService,
+  InteracPaymentData,
   NowPaymentsPaymentData,
   ShieldClimbPaymentData,
 } from '@/lib/checkout/types';
 import {
+  isInteracPayment,
   isNowPaymentsPayment,
   isShieldClimbPayment,
   toPublicCheckoutOrder,
@@ -109,9 +117,11 @@ type FinalizeCheckoutInput = {
     }>;
   };
   shippingAddress: CheckoutShippingAddress;
-  paymentMethod: 'card' | 'crypto';
-  paymentCurrency: string;
+  paymentMethod: 'card' | 'crypto' | 'interac';
+  paymentCurrency?: string | null;
   sourceWalletAddress?: string | null;
+  interacSenderEmail?: string | null;
+  interacSenderName?: string | null;
   selectedShippingServiceId: string;
   discountCode?: string | null;
   requestUrl: URL;
@@ -124,6 +134,8 @@ export type FinalizeCheckoutDependencies = {
   createOrderId: () => string;
   createAccessKey: () => string;
   createShieldClimbCallbackToken: () => string;
+  createInteracMessageCode: () => string;
+  findInteracOrderByMessageCode: typeof findInteracOrderByMessageCode;
   optionalSession: typeof optionalSession;
   getApprovedAffiliateByDiscountCode: typeof getApprovedAffiliateByDiscountCode;
   getApprovedAffiliateByCode: typeof getApprovedAffiliateByCode;
@@ -242,7 +254,11 @@ function doesExistingOrderMatchCheckoutAttempt(args: {
   }
 
   const orderPaymentMethod =
-    args.existingOrder.payment.provider === 'shieldclimb' ? 'card' : 'crypto';
+    args.existingOrder.payment.provider === 'shieldclimb'
+      ? 'card'
+      : args.existingOrder.payment.provider === 'interac'
+        ? 'interac'
+        : 'crypto';
 
   if (orderPaymentMethod !== args.input.paymentMethod) {
     return false;
@@ -306,6 +322,26 @@ function doesExistingOrderMatchCheckoutAttempt(args: {
     }
   }
 
+  if (args.input.paymentMethod === 'interac') {
+    if (!isInteracPayment(args.existingOrder.payment)) {
+      return false;
+    }
+
+    if (
+      normalizeComparableEmail(args.existingOrder.payment.expectedSenderEmail) !==
+      normalizeComparableEmail(args.input.interacSenderEmail)
+    ) {
+      return false;
+    }
+
+    if (
+      normalizeComparableValue(args.existingOrder.payment.expectedSenderName) !==
+      normalizeComparableValue(args.input.interacSenderName)
+    ) {
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -362,6 +398,19 @@ async function supersedeCarryoverChainOrders(args: {
         .updateCheckoutOrder(chainOrder.orderId, (current) => {
           if (isTerminalPaymentStatus(current.payment.status)) {
             return current;
+          }
+
+          if (isInteracPayment(current.payment)) {
+            return {
+              ...current,
+              payment: {
+                ...current.payment,
+                status: 'replaced',
+                supersededByOrderId: args.checkoutOrder.orderId,
+                updatedAt: supersededAt,
+              },
+              latestError: reason,
+            };
           }
 
           const normalizedStatus = current.payment.status.trim().toLowerCase();
@@ -423,6 +472,19 @@ async function replaceSupersededOpenOrders(args: {
         .updateCheckoutOrder(openOrder.orderId, (current) => {
           if (isTerminalPaymentStatus(current.payment.status)) {
             return current;
+          }
+
+          if (isInteracPayment(current.payment)) {
+            return {
+              ...current,
+              payment: {
+                ...current.payment,
+                status: 'replaced',
+                supersededByOrderId: args.checkoutOrder.orderId,
+                updatedAt: replacedAt,
+              },
+              latestError: reason,
+            };
           }
 
           return {
@@ -516,6 +578,23 @@ function mapShippingService(
         }
       : undefined,
   };
+}
+
+function resolveOrderShipmentTotal(args: {
+  selectedService: CheckoutRatedService;
+  swellShipmentTotal?: unknown;
+}) {
+  const selectedShipmentTotal = Number(args.selectedService.price.amount || 0);
+  if (Number.isFinite(selectedShipmentTotal) && selectedShipmentTotal <= 0.009) {
+    return 0;
+  }
+
+  const swellShipmentTotal = Number(args.swellShipmentTotal);
+  if (Number.isFinite(swellShipmentTotal) && swellShipmentTotal > 0.009) {
+    return swellShipmentTotal;
+  }
+
+  return Number.isFinite(selectedShipmentTotal) ? selectedShipmentTotal : 0;
 }
 
 function toStorefrontCartSnapshot(
@@ -686,7 +765,7 @@ function buildNowPaymentsOrderRecord(args: {
         currencyCode: args.currencyCode,
       },
       shippingThresholdAmount: {
-        amount: FREE_SHIPPING_THRESHOLD.toFixed(2),
+        amount: getFreeShippingThresholdForCurrency(args.currencyCode).toFixed(2),
         currencyCode: args.currencyCode,
       },
       shippingStatus,
@@ -795,7 +874,7 @@ function buildShieldClimbOrderRecord(args: {
         currencyCode: args.currencyCode,
       },
       shippingThresholdAmount: {
-        amount: FREE_SHIPPING_THRESHOLD.toFixed(2),
+        amount: getFreeShippingThresholdForCurrency(args.currencyCode).toFixed(2),
         currencyCode: args.currencyCode,
       },
       shippingStatus,
@@ -810,6 +889,126 @@ function buildShieldClimbOrderRecord(args: {
     processing: buildInitialCheckoutOrderProcessing(),
     latestError: null,
   };
+}
+
+function buildInteracOrderRecord(args: {
+  orderId: string;
+  accessKey: string;
+  cartId: string;
+  userId?: string | null;
+  swellAccountId: string;
+  swellCartId: string;
+  swellOrderId: string;
+  swellOrderNumber?: string;
+  currencyCode: string;
+  lines: CheckoutOrderLine[];
+  shippingAddress: CheckoutShippingAddress;
+  shippingService: CheckoutShippingService;
+  orderSubtotal: number;
+  orderDiscountTotal: number;
+  discountCode?: string;
+  discounts?: CheckoutOrderRecord['totals']['discounts'];
+  orderTaxTotal: number;
+  orderGrandTotal: number;
+  orderShipmentTotal: number;
+  recipientEmail: string;
+  messageCode: string;
+  cadAmount: string;
+  expectedSenderEmail: string;
+  expectedSenderName: string;
+  expiresAt: string;
+  amountPaidToDate?: string;
+  attemptAmount?: string;
+  carryoverRootOrderId?: string;
+  nowIso?: string;
+}): CheckoutOrderRecord {
+  const now = args.nowIso ?? new Date().toISOString();
+  const shippingStatus = args.orderShipmentTotal <= 0.009 ? 'free' : 'quoted';
+
+  const paymentData: InteracPaymentData = {
+    provider: 'interac',
+    status: 'awaiting_transfer',
+    recipientEmail: args.recipientEmail,
+    messageCode: args.messageCode,
+    cadAmount: args.cadAmount,
+    expectedSenderEmail: args.expectedSenderEmail,
+    expectedSenderName: args.expectedSenderName,
+    expiresAt: args.expiresAt,
+    screenshotUrls: [],
+    createdAt: now,
+    updatedAt: now,
+    amountPaidToDate: args.amountPaidToDate,
+    attemptAmount: args.attemptAmount,
+    carryoverRootOrderId: args.carryoverRootOrderId,
+  };
+
+  return {
+    orderId: args.orderId,
+    accessKey: args.accessKey,
+    cartId: args.cartId,
+    userId: args.userId ?? null,
+    createdAt: now,
+    updatedAt: now,
+    currencyCode: args.currencyCode,
+    shippingAddress: args.shippingAddress,
+    shippingService: args.shippingService,
+    lines: args.lines,
+    totals: {
+      subtotalAmount: {
+        amount: args.orderSubtotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      discountAmount: {
+        amount: args.orderDiscountTotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      discountCode: args.discountCode,
+      discounts: args.discounts?.length ? args.discounts : undefined,
+      taxAmount: {
+        amount: args.orderTaxTotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      totalAmount: {
+        amount: args.orderGrandTotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      shippingAmount: {
+        amount: args.orderShipmentTotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      shippingThresholdAmount: {
+        amount: getFreeShippingThresholdForCurrency(args.currencyCode).toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      shippingStatus,
+    },
+    payment: paymentData,
+    swell: {
+      accountId: args.swellAccountId,
+      cartId: args.swellCartId,
+      orderId: args.swellOrderId,
+      orderNumber: args.swellOrderNumber,
+    },
+    processing: buildInitialCheckoutOrderProcessing(),
+    latestError: null,
+  };
+}
+
+async function createUniqueInteracMessageCode(
+  dependencies: Pick<
+    FinalizeCheckoutDependencies,
+    'createInteracMessageCode' | 'findInteracOrderByMessageCode'
+  >,
+) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const messageCode = dependencies.createInteracMessageCode();
+    const existingOrder = await dependencies.findInteracOrderByMessageCode(messageCode);
+    if (!existingOrder) {
+      return messageCode;
+    }
+  }
+
+  throw apiError.internal('Unable to generate a unique Interac message code.');
 }
 
 function normalizeFinalizeError(error: unknown) {
@@ -921,9 +1120,10 @@ export function createFinalizeCheckoutSession(
         skuNumber: line.skuNumber || undefined,
       })) satisfies CheckoutOrderLine[];
       const currencyCode = args.cartSnapshot.currencyCode;
+      const checkoutCurrencyCode = args.paymentMethod === 'interac' ? 'CAD' : currencyCode;
       const subtotalAmount = getCartSnapshotSubtotal(args.cartSnapshot);
       const itemCount = getCartSnapshotItemCount(args.cartSnapshot);
-      const paymentCurrency = args.paymentCurrency.toLowerCase();
+      const paymentCurrency = (args.paymentCurrency || '').toLowerCase();
       const ipnCallbackEnabled = shouldEnableIpnCallback(requestUrl);
       const manualMethod = dependencies.getSwellManualPaymentMethod();
       const swellShipping = toSwellAddress({
@@ -949,13 +1149,16 @@ export function createFinalizeCheckoutSession(
         accountId: account.id,
         storefrontCartId: args.cartId ?? undefined,
         storefrontCartSnapshot: toStorefrontCartSnapshot(args.cartSnapshot),
-        currencyCode,
+        currencyCode: checkoutCurrencyCode,
         shipping: swellShipping,
         billing: swellBilling,
         comments: args.shippingAddress.notes,
         couponCode: args.discountCode ?? undefined,
       });
       temporaryCartId = swellCart.id;
+      const checkoutSubtotalAmount = Number.isFinite(Number(swellCart.sub_total))
+        ? Number(swellCart.sub_total)
+        : subtotalAmount;
 
       let availableServices: CheckoutRatedService[] = [];
       let shipEngineErrorMessage: string | null = null;
@@ -963,8 +1166,8 @@ export function createFinalizeCheckoutSession(
       try {
         availableServices = await dependencies.getShipEngineCheckoutServices({
           shippingAddress: args.shippingAddress,
-          currencyCode,
-          subtotalAmount,
+          currencyCode: checkoutCurrencyCode,
+          subtotalAmount: checkoutSubtotalAmount,
           itemCount,
         });
       } catch (shipEngineError) {
@@ -981,7 +1184,7 @@ export function createFinalizeCheckoutSession(
       if (availableServices.length === 0) {
         availableServices = mapSwellRatedServices(
           swellCart.shipment_rating?.services || [],
-          swellCart.currency || currencyCode,
+          swellCart.currency || checkoutCurrencyCode,
         );
       }
 
@@ -993,8 +1196,8 @@ export function createFinalizeCheckoutSession(
 
       availableServices = applyFreeShipping(
         availableServices,
-        subtotalAmount,
-        currencyCode,
+        checkoutSubtotalAmount,
+        checkoutCurrencyCode,
       );
 
       const selectedService = findCheckoutShippingService(
@@ -1047,13 +1250,17 @@ export function createFinalizeCheckoutSession(
         );
       }
       const orderTaxTotal = Number(swellOrder.tax_total || 0);
-      const orderShipmentTotal = Number(
-        swellOrder.shipment_total || selectedService.price.amount || 0,
-      );
+      const orderShipmentTotal = resolveOrderShipmentTotal({
+        selectedService,
+        swellShipmentTotal: swellOrder.shipment_total,
+      });
+      const orderSubtotalAmount = Number.isFinite(Number(swellOrder.sub_total))
+        ? Number(swellOrder.sub_total)
+        : subtotalAmount;
       const appliedDiscountCode = args.discountCode || swellOrder.coupon_code;
       const pricing = calculateCheckoutPricing({
         currencyCode: swellOrder.currency || currencyCode,
-        subtotalAmount,
+        subtotalAmount: orderSubtotalAmount,
         couponDiscountAmount: couponDiscountTotal,
         couponCode: appliedDiscountCode,
         shippingAmount: orderShipmentTotal,
@@ -1065,7 +1272,7 @@ export function createFinalizeCheckoutSession(
       const fiatCurrency = (swellOrder.currency || currencyCode).toLowerCase();
       const pricingMetadata = buildCheckoutPricingMetadata({
         currencyCode: swellOrder.currency || currencyCode,
-        subtotalAmount,
+        subtotalAmount: orderSubtotalAmount,
         shippingAmount: orderShipmentTotal,
         taxAmount: orderTaxTotal,
         totalAmount: orderTotal,
@@ -1158,7 +1365,7 @@ export function createFinalizeCheckoutSession(
               selectedService,
               swellOrder.currency || currencyCode,
             ),
-            orderSubtotal: subtotalAmount,
+            orderSubtotal: orderSubtotalAmount,
             orderDiscountTotal,
             discountCode: appliedDiscountCode,
             discounts: pricing.discounts,
@@ -1284,7 +1491,7 @@ export function createFinalizeCheckoutSession(
               selectedService,
               swellOrder.currency || currencyCode,
             ),
-            orderSubtotal: subtotalAmount,
+            orderSubtotal: orderSubtotalAmount,
             orderDiscountTotal,
             discountCode: appliedDiscountCode,
             discounts: pricing.discounts,
@@ -1363,6 +1570,168 @@ export function createFinalizeCheckoutSession(
             publicRelatedOrders,
           ) satisfies CheckoutOrderPublic,
         };
+      }
+
+      if (args.paymentMethod === 'interac') {
+        const expectedSenderEmail = args.interacSenderEmail?.trim();
+        const expectedSenderName = args.interacSenderName?.trim();
+        if (!expectedSenderEmail || !expectedSenderName) {
+          throw apiError.badRequest('Enter the Interac sender email and name before creating the payment.');
+        }
+
+        const recipientEmail = getInteracRecipientEmail();
+        const messageCode = await createUniqueInteracMessageCode(dependencies);
+        const cadCurrency = (swellOrder.currency || checkoutCurrencyCode).trim().toUpperCase();
+        if (cadCurrency !== 'CAD') {
+          throw apiError.providerUnavailable(
+            'Swell did not return a CAD Interac checkout amount.',
+            {
+              provider: 'swell',
+              expectedCurrency: 'CAD',
+              receivedCurrency: cadCurrency,
+            },
+            false,
+          );
+        }
+
+        const cadAmount = remainderPaymentAmount.toFixed(2);
+        const expiresAt = getInteracExpiresAt(dependencies.nowDate());
+
+        await dependencies.updateSwellOrder(swellOrder.id, {
+          billing: {
+            ...(swellOrder.billing || {}),
+            method: manualMethod,
+            intent: {
+              provider: 'interac',
+              message_code: messageCode,
+              status: 'awaiting_transfer',
+            },
+          },
+          metadata: {
+            ...(swellOrder.metadata || {}),
+            checkout_reference: orderId,
+            coupon_code: appliedDiscountCode || null,
+            pricing: pricingMetadata,
+            interac: {
+              message_code: messageCode,
+              recipient_email: recipientEmail,
+              expected_sender_email: expectedSenderEmail,
+              expected_sender_name: expectedSenderName,
+              cad_amount: cadAmount,
+              expires_at: expiresAt,
+              status: 'awaiting_transfer',
+            },
+            affiliate: resolvedAffiliate
+              ? {
+                  ...affiliateData,
+                  paymentProvider: 'interac',
+                  status: 'pending',
+                }
+              : null,
+            promoter: promoterData
+              ? {
+                  ...promoterData,
+                  paymentProvider: 'interac',
+                  status: 'pending',
+                }
+              : null,
+          },
+        });
+
+        const interacOrderRecord = buildInteracOrderRecord({
+          orderId,
+          accessKey,
+          cartId: fallbackCartId,
+          userId,
+          swellAccountId: account.id,
+          swellCartId: ratedCart.id,
+          swellOrderId: swellOrder.id,
+          swellOrderNumber: swellOrder.number,
+          currencyCode: swellOrder.currency || currencyCode,
+          lines,
+          shippingAddress: args.shippingAddress,
+          shippingService: mapShippingService(
+            selectedService,
+            swellOrder.currency || currencyCode,
+          ),
+          orderSubtotal: orderSubtotalAmount,
+          orderDiscountTotal,
+          discountCode: appliedDiscountCode,
+          discounts: pricing.discounts,
+          orderTaxTotal,
+          orderGrandTotal: orderTotal,
+          orderShipmentTotal,
+          recipientEmail,
+          messageCode,
+          cadAmount,
+          expectedSenderEmail,
+          expectedSenderName,
+          expiresAt,
+          amountPaidToDate,
+          attemptAmount: remainderPaymentAmount.toFixed(2),
+          carryoverRootOrderId,
+          nowIso: dependencies.nowIso(),
+        });
+
+        const checkoutOrder = await dependencies.saveCheckoutOrder({
+          ...interacOrderRecord,
+          affiliate: affiliateData,
+          promoter: promoterData,
+        });
+        checkoutOrderId = checkoutOrder.orderId;
+
+        await supersedeCarryoverChainOrders({
+          checkoutOrder,
+          chainOrders: carryoverContext.chainOrders,
+          dependencies,
+        });
+
+        await replaceSupersededOpenOrders({
+          checkoutOrder,
+          customerEmail: args.shippingAddress.email,
+          excludedOrderIds: new Set(
+            carryoverContext.chainOrders.map((order) => order.orderId),
+          ),
+          dependencies,
+        });
+
+        const publicRelatedOrders = await dependencies.findCheckoutOrdersByCartId(
+          fallbackCartId,
+        );
+
+        const initiationTelemetry = {
+          orderId,
+          userId,
+          currencyCode,
+          orderTotal: orderTotal.toFixed(2),
+          itemCount,
+          paymentProvider: 'interac' as const,
+          paymentMethod: 'interac' as const,
+          affiliateCode: resolvedAffiliate?.code ?? null,
+          affiliateSource,
+        };
+
+        dependencies
+          .sendCheckoutPaymentInitiatedEvent({
+            ...initiationTelemetry,
+            customerEmail: args.shippingAddress.email,
+          })
+          .catch(() => {});
+        dependencies
+          .trackCheckoutPaymentInitiated(initiationTelemetry)
+          .catch(() => {});
+
+        return {
+          accessKey,
+          order: toPublicCheckoutOrderWithCarryover(
+            checkoutOrder,
+            publicRelatedOrders,
+          ) satisfies CheckoutOrderPublic,
+        };
+      }
+
+      if (!paymentCurrency) {
+        throw apiError.badRequest('Select a payment currency before creating the payment.');
       }
 
       const [estimate, minimum] = await Promise.all([
@@ -1472,7 +1841,7 @@ export function createFinalizeCheckoutSession(
             selectedService,
             swellOrder.currency || currencyCode,
           ),
-          orderSubtotal: subtotalAmount,
+          orderSubtotal: orderSubtotalAmount,
           orderDiscountTotal,
           discountCode: appliedDiscountCode,
           discounts: pricing.discounts,
@@ -1594,6 +1963,8 @@ export const finalizeCheckoutSession = createFinalizeCheckoutSession({
   createOrderId,
   createAccessKey,
   createShieldClimbCallbackToken,
+  createInteracMessageCode,
+  findInteracOrderByMessageCode,
   optionalSession,
   getApprovedAffiliateByDiscountCode,
   getApprovedAffiliateByCode,

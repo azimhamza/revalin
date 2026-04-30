@@ -40,7 +40,7 @@ type CheckoutQuoteInput = {
   cartSnapshot: CheckoutSessionCartSnapshot;
   shippingAddress: CheckoutShippingAddress;
   discountCode?: string | null;
-  paymentMethod?: 'card' | 'crypto' | null;
+  paymentMethod?: 'card' | 'crypto' | 'interac' | null;
   selectedShippingServiceId?: string | null;
 };
 
@@ -176,7 +176,12 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       subtotalAmount,
       couponDiscountAmount,
       couponCode: args.discountCode || swellCart.coupon_code,
-      paymentMethod: args.paymentMethod === 'crypto' ? 'crypto' : 'card',
+      paymentMethod:
+        args.paymentMethod === 'crypto'
+          ? 'crypto'
+          : args.paymentMethod === 'interac'
+            ? 'interac'
+            : 'card',
     });
 
     const fallbackServices = mapSwellRatedServices(
@@ -190,7 +195,12 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       discountAmount: pricing.discountTotalValue,
       discountCode: args.discountCode || swellCart.coupon_code,
       discounts: pricing.discounts,
-      paymentMethod: args.paymentMethod === 'crypto' ? 'crypto' : 'card',
+      paymentMethod:
+        args.paymentMethod === 'crypto'
+          ? 'crypto'
+          : args.paymentMethod === 'interac'
+            ? 'interac'
+            : 'card',
       services:
         preferredServices.length > 0 ? preferredServices : fallbackServices,
     });

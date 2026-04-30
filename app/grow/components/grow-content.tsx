@@ -543,7 +543,7 @@ export function GrowContent() {
             viewport={{ once: true, amount: 0.6 }}
             transition={{ duration: 0.9, ease: EASE }}
           >
-            From Waterloo, Canada. Built for people who take this seriously.
+            Proudly Canadian. Built for people who take this seriously.
           </motion.p>
         </div>
       </section>

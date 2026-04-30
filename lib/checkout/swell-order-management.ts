@@ -73,6 +73,8 @@ export type SwellBackendOrderItem = {
   product_id: string;
   variant_id?: string;
   quantity: number;
+  quantity_cancelable?: number;
+  quantity_canceled?: number;
 };
 
 export type SwellBackendOrder = {
@@ -706,7 +708,7 @@ export async function buildSwellCheckoutDraft(args: {
   comments?: string;
   couponCode?: string;
 }) {
-  let currencyCode = args.storefrontCartSnapshot?.currencyCode;
+  let currencyCode = args.currencyCode || args.storefrontCartSnapshot?.currencyCode;
   let items: SwellBackendCartItem[] = [];
 
   if (args.storefrontCartSnapshot?.lines.length) {
@@ -723,7 +725,7 @@ export async function buildSwellCheckoutDraft(args: {
       throw new Error("Cart is empty.");
     }
 
-    currencyCode = storefrontCart.cost.totalAmount.currencyCode;
+    currencyCode = args.currencyCode || storefrontCart.cost.totalAmount.currencyCode;
     items = await resolveSwellItemsFromStorefrontCart(storefrontCart);
   } else {
     throw new Error("Cart is empty.");
@@ -842,10 +844,30 @@ export async function updateSwellOrder(
 
 export async function cancelSwellOrder(orderId: string, reason?: string) {
   try {
+    const order = await getSwellOrder(orderId);
+    const cancellationItems = (order.items || [])
+      .map((item) => ({
+        id: item.id,
+        quantity_canceled: Number(item.quantity_cancelable ?? 0),
+        cancel_reason: reason || "Payment provider setup failed.",
+      }))
+      .filter((item) => item.quantity_canceled > 0);
+
     await swellBackendRequest<SwellBackendOrder>("PUT", `/orders/${orderId}`, {
       body: {
+        ...(cancellationItems.length > 0 ? { items: cancellationItems } : {}),
         canceled: true,
-        status: "canceled",
+        cancel_reason: reason || "Payment provider setup failed.",
+        coupon_code: null,
+        coupon_id: null,
+        discounts: [],
+        discount_total: 0,
+        item_discount: 0,
+        shipping: {
+          ...(order.shipping || {}),
+          price: 0,
+        },
+        shipment_total: 0,
         // Suppress Swell's built-in emails — all emails sent via Loops.
         $notify: false,
         metadata: {
@@ -855,6 +877,7 @@ export async function cancelSwellOrder(orderId: string, reason?: string) {
     });
   } catch (error) {
     console.error(`Failed to cancel Swell order ${orderId}:`, error);
+    throw error;
   }
 }
 

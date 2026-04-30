@@ -9,7 +9,7 @@ const TRUST_ITEMS = [
   { icon: BadgeCheck, label: 'Independently Verified', accent: '#2D6A4F' },
   { icon: Droplets, label: '>99% Purity', accent: '#1B4332' },
   { icon: Truck, label: 'Same-Day Dispatch', accent: '#40916C' },
-  { icon: Package, label: 'Free Shipping $250+', accent: '#2D6A4F' },
+  { icon: Package, label: 'Free Shipping $250 USD / $350 CAD+', accent: '#2D6A4F' },
 ] as const;
 
 export function TrustStrip({ className }: { className?: string }) {

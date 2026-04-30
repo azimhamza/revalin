@@ -28,6 +28,12 @@ const SHIPENGINE_CUSTOMS_HARMONIZED_TARIFF_CODE = (
 
 const SHIPENGINE_ORIGIN = {
   name: (process.env.SHIPENGINE_ORIGIN_NAME || 'Revalin Fulfillment').trim(),
+  companyName: (
+    process.env.SHIPENGINE_ORIGIN_COMPANY_NAME ||
+    process.env.SHIPENGINE_ORIGIN_COMPANY ||
+    process.env.SHIPENGINE_ORIGIN_NAME ||
+    'Revalin Fulfillment'
+  ).trim(),
   phone: (process.env.SHIPENGINE_ORIGIN_PHONE || '').trim(),
   street1: (process.env.SHIPENGINE_ORIGIN_STREET1 || '').trim(),
   street2: (process.env.SHIPENGINE_ORIGIN_STREET2 || '').trim(),
@@ -440,6 +446,7 @@ function buildShipmentPayload(args: {
     },
     ship_from: {
       name: SHIPENGINE_ORIGIN.name,
+      company_name: SHIPENGINE_ORIGIN.companyName,
       // ShipStation requires a non-empty sender phone for rate requests.
       // Fall back to the checkout phone in sandbox/local setups until a dedicated origin phone is configured.
       phone: originPhone,

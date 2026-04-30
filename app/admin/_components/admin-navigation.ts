@@ -4,6 +4,7 @@ import {
   BookOpen,
   Handshake,
   LayoutDashboard,
+  Landmark,
   Megaphone,
   Package,
   Users,
@@ -47,6 +48,12 @@ export const ADMIN_NAVIGATION_ITEMS: AdminNavigationItem[] = [
     href: "/admin/fulfillment",
     description: "Pack orders, print labels, and mark shipments.",
     icon: Package,
+  },
+  {
+    title: "Interac",
+    href: "/admin/interac",
+    description: "Review e-Transfer matches, screenshots, and exceptions.",
+    icon: Landmark,
   },
   {
     title: "Growth Partners",

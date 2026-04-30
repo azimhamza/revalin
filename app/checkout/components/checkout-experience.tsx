@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
-import { AlertTriangle, ArrowRight, BadgeCheck, CheckCircle2, Copy, CreditCard, FlaskConical, Landmark, Lock, Loader2, RefreshCw, ShieldCheck, Tag, Truck, UserCheck, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BadgeCheck, CheckCircle2, Copy, CreditCard, FlaskConical, Landmark, Lock, Loader2, RefreshCw, Send, ShieldCheck, Tag, Truck, Upload, UserCheck, Wallet, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type Ref } from 'react';
 import type { ReactNode } from 'react';
 import { toast } from 'sonner';
@@ -43,6 +43,7 @@ import type {
   CheckoutOrderPublic,
   CheckoutShippingAddress,
   CheckoutShippingService,
+  InteracPaymentData,
   ShieldClimbPublicPaymentData,
   NowPaymentsPublicPaymentData,
 } from '@/lib/checkout/types';
@@ -89,7 +90,7 @@ type CheckoutQuote = {
   };
   discountCode?: string;
   discounts?: CheckoutAppliedDiscount[];
-  paymentMethod?: 'card' | 'crypto';
+  paymentMethod?: 'card' | 'crypto' | 'interac';
   services: CheckoutShippingService[];
   selectedServiceId: string;
 };
@@ -107,9 +108,11 @@ type AppliedDiscount = {
 
 type CheckoutDraft = {
   shippingAddress: CheckoutShippingAddress;
-  paymentMethod: 'crypto' | 'card';
+  paymentMethod: 'crypto' | 'card' | 'interac';
   paymentCurrency: string;
   sourceWalletAddress: string;
+  interacSenderEmail: string;
+  interacSenderName: string;
   discountCode: string;
   appliedDiscount: AppliedDiscount | null;
   apiSession: CheckoutApiSession | null;
@@ -351,13 +354,22 @@ function parseCheckoutDraft(rawDraft: string | null): CheckoutDraft | null {
 
     return {
       shippingAddress: normalizeShippingAddressDraft(parsed.shippingAddress),
-      paymentMethod: parsed.paymentMethod === 'card' ? 'card' : 'crypto',
+      paymentMethod:
+        parsed.paymentMethod === 'card'
+          ? 'card'
+          : parsed.paymentMethod === 'interac'
+            ? 'interac'
+            : 'crypto',
       paymentCurrency:
         typeof parsed.paymentCurrency === 'string' && QUICK_PAYMENT_CURRENCIES.includes(parsed.paymentCurrency)
           ? parsed.paymentCurrency
           : QUICK_PAYMENT_CURRENCIES[0],
       sourceWalletAddress:
         typeof parsed.sourceWalletAddress === 'string' ? parsed.sourceWalletAddress : '',
+      interacSenderEmail:
+        typeof parsed.interacSenderEmail === 'string' ? parsed.interacSenderEmail : '',
+      interacSenderName:
+        typeof parsed.interacSenderName === 'string' ? parsed.interacSenderName : '',
       discountCode: typeof parsed.discountCode === 'string' ? parsed.discountCode : '',
       appliedDiscount:
         parsed.appliedDiscount &&
@@ -521,9 +533,14 @@ function isNowPaymentsOrder(payment: CheckoutOrderPublic['payment']): payment is
   return payment.provider === 'nowpayments';
 }
 
+function isInteracOrder(payment: CheckoutOrderPublic['payment']): payment is InteracPaymentData {
+  return payment.provider === 'interac';
+}
+
 function getPollingId(payment: CheckoutOrderPublic['payment']): string | undefined {
   if (isShieldClimbOrder(payment)) return SHIELDCLIMB_PUBLIC_POLLING_ID;
   if (isNowPaymentsOrder(payment)) return payment.paymentId;
+  if (isInteracOrder(payment)) return payment.messageCode || 'interac';
   return undefined;
 }
 
@@ -947,9 +964,13 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const initialDiscountCode = (searchParams.get('discount') || '').toUpperCase();
 
   const [shippingAddress, setShippingAddress] = useState<CheckoutShippingAddress>(DEFAULT_SHIPPING_ADDRESS);
-  const [paymentMethod, setPaymentMethod] = useState<'crypto' | 'card'>('crypto');
+  const [paymentMethod, setPaymentMethod] = useState<'crypto' | 'card' | 'interac'>('crypto');
   const [paymentCurrency, setPaymentCurrency] = useState(QUICK_PAYMENT_CURRENCIES[0]);
   const [sourceWalletAddress, setSourceWalletAddress] = useState('');
+  const [interacSenderEmail, setInteracSenderEmail] = useState('');
+  const [interacSenderName, setInteracSenderName] = useState('');
+  const [isSubmittingInterac, setIsSubmittingInterac] = useState(false);
+  const [isUploadingInteracScreenshot, setIsUploadingInteracScreenshot] = useState(false);
   const [discountCode, setDiscountCode] = useState(initialDiscountCode);
   const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
   const [ageVerified, setAgeVerified] = useState(false);
@@ -1339,6 +1360,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         setPaymentMethod(checkoutDraft.paymentMethod);
         setPaymentCurrency(checkoutDraft.paymentCurrency);
         setSourceWalletAddress(checkoutDraft.sourceWalletAddress);
+        setInteracSenderEmail(checkoutDraft.interacSenderEmail);
+        setInteracSenderName(checkoutDraft.interacSenderName);
         setCheckoutApiSession(hydratedApiSession);
         const hydratedDiscountCode = initialDiscountCode || checkoutDraft.discountCode;
         const hydratedAppliedDiscount =
@@ -1451,6 +1474,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         paymentMethod,
         paymentCurrency,
         sourceWalletAddress,
+        interacSenderEmail,
+        interacSenderName,
         discountCode,
         appliedDiscount,
         apiSession: checkoutApiSession,
@@ -1469,6 +1494,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     isDraftHydrated,
     paymentCurrency,
     paymentMethod,
+    interacSenderEmail,
+    interacSenderName,
     shippingAddress,
     sourceWalletAddress,
     cartSignature,
@@ -1678,6 +1705,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
           setPaymentMethod('crypto');
           setPaymentCurrency(data.order.payment.paymentCurrency);
           setSourceWalletAddress(data.order.payment.sourceWalletAddress || '');
+        } else if (isInteracOrder(data.order.payment)) {
+          setPaymentMethod('interac');
+          setInteracSenderEmail(data.order.payment.expectedSenderEmail || '');
+          setInteracSenderName(data.order.payment.expectedSenderName || '');
+          setSourceWalletAddress('');
         } else {
           setPaymentMethod('card');
           setSourceWalletAddress('');
@@ -1865,6 +1897,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       paymentMethod,
       paymentCurrency,
       sourceWalletAddress: sourceWalletAddress.trim() || undefined,
+      interacSenderEmail: interacSenderEmail.trim() || undefined,
+      interacSenderName: interacSenderName.trim() || undefined,
       discountCode:
         overrides?.discountCode !== undefined
           ? overrides.discountCode || undefined
@@ -1875,6 +1909,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     [
       appliedDiscount?.code,
       cartSnapshot,
+      interacSenderEmail,
+      interacSenderName,
       paymentCurrency,
       paymentMethod,
       selectedShippingServiceId,
@@ -2259,6 +2295,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       return;
     }
 
+    if (paymentMethod === 'interac' && (!interacSenderEmail.trim() || !interacSenderName.trim())) {
+      setError('Enter the email and name you will use for the Interac e-Transfer.');
+      return;
+    }
+
     setIsCreatingPayment(true);
     setError(null);
 
@@ -2310,6 +2351,10 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       if (isNowPaymentsOrder(data.order.payment)) {
         setPaymentCurrency(data.order.payment.paymentCurrency);
         setSourceWalletAddress(data.order.payment.sourceWalletAddress || '');
+      } else if (isInteracOrder(data.order.payment)) {
+        setInteracSenderEmail(data.order.payment.expectedSenderEmail || '');
+        setInteracSenderName(data.order.payment.expectedSenderName || '');
+        setSourceWalletAddress('');
       } else {
         setSourceWalletAddress('');
       }
@@ -2367,6 +2412,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     cardCheckoutMinimumMessage,
     ensureCheckoutApiSession,
     isCardCheckoutDisabled,
+    interacSenderEmail,
+    interacSenderName,
     paymentMethod,
     selectedShippingServiceId,
     syncCheckoutUrlImmediately,
@@ -2445,6 +2492,70 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     }
   };
 
+  const submitInteracTransfer = async () => {
+    if (!checkoutSession || !activeOrder || !interacPayment) return;
+
+    setIsSubmittingInterac(true);
+    setError(null);
+
+    try {
+      const response = await fetch(
+        `/api/checkout/v2/orders/${encodeURIComponent(activeOrder.orderId)}/interac-submission`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accessKey: checkoutSession.accessKey }),
+        },
+      );
+      const payload = await readJsonSafely(response);
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, 'Unable to update Interac status.'));
+      }
+      const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
+      if (data?.order) {
+        setCheckoutSession(current => (current ? { ...current, order: data.order } : current));
+      }
+      await refreshStatus();
+    } catch (submitError: unknown) {
+      setError(submitError instanceof Error ? submitError.message : 'Unable to update Interac status.');
+    } finally {
+      setIsSubmittingInterac(false);
+    }
+  };
+
+  const uploadInteracScreenshot = async (file: File | null | undefined) => {
+    if (!file || !checkoutSession || !activeOrder || !interacPayment) return;
+
+    setIsUploadingInteracScreenshot(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.set('accessKey', checkoutSession.accessKey);
+      formData.set('file', file);
+      const response = await fetch(
+        `/api/checkout/v2/orders/${encodeURIComponent(activeOrder.orderId)}/interac-screenshot`,
+        {
+          method: 'POST',
+          body: formData,
+        },
+      );
+      const payload = await readJsonSafely(response);
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, 'Unable to upload screenshot.'));
+      }
+      const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
+      if (data?.order) {
+        setCheckoutSession(current => (current ? { ...current, order: data.order } : current));
+      }
+      toast.success('Screenshot uploaded for review');
+    } catch (uploadError: unknown) {
+      setError(uploadError instanceof Error ? uploadError.message : 'Unable to upload screenshot.');
+    } finally {
+      setIsUploadingInteracScreenshot(false);
+    }
+  };
+
   useEffect(() => {
     if (!activeOrder) {
       previousPaymentSnapshot.current = null;
@@ -2513,7 +2624,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   };
 
   const releaseActiveOrder = useCallback(
-    async (nextPaymentMethod: 'card' | 'crypto') => {
+    async (nextPaymentMethod: 'card' | 'crypto' | 'interac') => {
       if (!checkoutSession || !activeOrder) return;
 
       setIsReleasingOrder(true);
@@ -2573,6 +2684,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const paymentStatus = activeOrder?.payment.status || 'waiting';
   const nowPayment = activeOrder?.payment && isNowPaymentsOrder(activeOrder.payment) ? activeOrder.payment : null;
   const shieldClimbPayment = activeOrder?.payment && isShieldClimbOrder(activeOrder.payment) ? activeOrder.payment : null;
+  const interacPayment = activeOrder?.payment && isInteracOrder(activeOrder.payment) ? activeOrder.payment : null;
   const paymentExpiresAt = nowPayment ? formatDateTime(nowPayment.validUntil || nowPayment.expirationEstimateDate) : null;
   const isPartiallyPaid = paymentStatus === 'partially_paid';
 
@@ -2631,7 +2743,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     updateCheckoutUrl,
   ]);
 
-  const activeOrderTotalAmount = activeOrder ? Number(activeOrder.totals.totalAmount.amount || 0) : 0;
+  const activeOrderTotalAmount = activeOrder
+    ? Number(interacPayment?.cadAmount || activeOrder.totals.totalAmount.amount || 0)
+    : 0;
   const remainingBalanceAmount = (() => {
     if (!activeOrder) return 0;
     const parsed = Number(activeOrder.payment.remainingBalanceAmount);
@@ -2659,7 +2773,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       return Math.max(activeOrderTotalAmount - remainingBalanceAmount, 0);
     }
 
-    const fallback = Number(activeOrder.payment.amountPaidToDate || 0);
+    const fallback = Number(
+      interacPayment?.receivedAmount ||
+      activeOrder.payment.amountPaidToDate ||
+      0,
+    );
     return Number.isFinite(fallback) ? Math.max(fallback, 0) : 0;
   })();
 
@@ -2673,11 +2791,14 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const partialPaymentPaidDisplay = (() => {
     if (!isPartiallyPaid || !activeOrder) return null;
     return {
-      received: formatPrice(cumulativePaidAmount.toFixed(2), activeOrder.currencyCode),
-      total: formatPrice(activeOrderTotalAmount.toFixed(2), activeOrder.currencyCode),
-      remaining: formatPrice(remainingBalanceAmount.toFixed(2), activeOrder.currencyCode),
+      received: formatPrice(cumulativePaidAmount.toFixed(2), interacPayment ? 'CAD' : activeOrder.currencyCode),
+      total: formatPrice(activeOrderTotalAmount.toFixed(2), interacPayment ? 'CAD' : activeOrder.currencyCode),
+      remaining: formatPrice(remainingBalanceAmount.toFixed(2), interacPayment ? 'CAD' : activeOrder.currencyCode),
     };
   })();
+  const interacAmountToSend = interacPayment && isPartiallyPaid && remainingBalanceAmount > 0
+    ? remainingBalanceAmount.toFixed(2)
+    : interacPayment?.cadAmount;
 
   const canPayRemainderWithCard =
     !isPartiallyPaid ||
@@ -2697,7 +2818,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     selectedShippingServiceId &&
     !isCreatingPayment &&
     ageVerified &&
-    !(paymentMethod === 'card' && isCardCheckoutDisabled);
+    !(paymentMethod === 'card' && isCardCheckoutDisabled) &&
+    !(
+      paymentMethod === 'interac' &&
+      (!interacSenderEmail.trim() || !interacSenderName.trim())
+    );
 
   return (
     <div className="px-sides pb-16 pt-[5.75rem] md:pt-top-spacing">
@@ -2977,7 +3102,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                       <p className="text-base font-semibold">Payment</p>
                     </div>
 
-                    <div className="mt-3 grid gap-2.5 md:grid-cols-2">
+                    <div className="mt-3 grid gap-2.5 md:grid-cols-3">
                       <button
                         type="button"
                         onClick={() => {
@@ -3044,18 +3169,30 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                         </div>
                       </button>
 
-                      <div className="flex items-center gap-3 rounded-xl border border-dashed border-border/70 bg-background/40 px-3.5 py-3 opacity-55">
-                        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground/5 text-foreground/40">
+                      <button
+                        type="button"
+                        onClick={() => setPaymentMethod('interac')}
+                        className={cn(
+                          'flex items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition-all',
+                          paymentMethod === 'interac'
+                            ? 'border-[#0B2E2F] bg-[#0B2E2F]/5 ring-1 ring-[#0B2E2F]'
+                            : 'border-border bg-background hover:border-[#0B2E2F]/30'
+                        )}
+                      >
+                        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F]/8 text-[#0B2E2F]">
                           <Landmark className="size-4" />
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <p className="text-sm font-semibold text-foreground/50">ACH Bank Transfer</p>
-                            <span className="rounded-full border border-foreground/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-foreground/40">Coming soon</span>
+                            <p className="text-sm font-semibold">Interac e-Transfer</p>
+                            <span className="rounded-full border border-[#0B2E2F]/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#0B2E2F]">CAD</span>
                           </div>
-                          <p className="text-xs text-foreground/35">Direct bank-to-bank payments</p>
+                          <p className="text-xs text-foreground/55">Auto-deposit confirmation</p>
                         </div>
-                      </div>
+                        <div className={cn('flex size-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors', paymentMethod === 'interac' ? 'border-[#0B2E2F]' : 'border-foreground/20')}>
+                          {paymentMethod === 'interac' && <div className="size-2.5 rounded-full bg-[#0B2E2F]" />}
+                        </div>
+                      </button>
                     </div>
 
                     {paymentMethod === 'crypto' ? (
@@ -3103,6 +3240,42 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                             Optional. Used only as a reminder and for support context. We still
                             generate a fresh deposit address for every order.
                           </p>
+                        </div>
+                      </div>
+                    ) : paymentMethod === 'interac' ? (
+                      <div className="mt-3 rounded-2xl border border-border/70 bg-background/60 px-4 py-4">
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F]/8 text-[#0B2E2F]">
+                            <Send className="size-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold">Interac sender details</p>
+                            <p className="mt-1 text-xs leading-5 text-foreground/50">
+                              Use the email and name your Canadian bank will show on the e-Transfer. Wise and third-party Interac processors are not supported.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+                          <label className="flex flex-col gap-1.5">
+                            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">Email used for your e-Transfer</span>
+                            <Input
+                              type="email"
+                              value={interacSenderEmail}
+                              onChange={event => setInteracSenderEmail(event.target.value)}
+                              placeholder={shippingAddress.email || 'name@example.com'}
+                              className="h-11 rounded-xl border-border bg-white"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1.5">
+                            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">Name shown by your bank</span>
+                            <Input
+                              type="text"
+                              value={interacSenderName}
+                              onChange={event => setInteracSenderName(event.target.value)}
+                              placeholder={`${shippingAddress.firstName} ${shippingAddress.lastName}`.trim() || 'Your full name'}
+                              className="h-11 rounded-xl border-border bg-white"
+                            />
+                          </label>
                         </div>
                       </div>
                     ) : (
@@ -3233,6 +3406,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                         <Lock className="size-3" />
                         Your information is protected with 256-bit SSL encryption
                       </p>
+                    ) : paymentMethod === 'interac' ? (
+                      <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-foreground/45">
+                        <Lock className="size-3" />
+                        You&apos;ll receive a copyable Interac message code and exact CAD amount after placing the order.
+                      </p>
                     ) : (
                       <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-foreground/45">
                         <Lock className="size-3" />
@@ -3337,7 +3515,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                           <div className="mt-3 grid grid-cols-2 gap-2">
                             <div className="rounded-lg bg-[#0B2E2F]/5 px-2.5 py-1.5 text-xs">
                               <p className="text-foreground/45">Method</p>
-                              <p className="font-semibold">{shieldClimbPayment ? 'Card' : 'Crypto'}</p>
+                              <p className="font-semibold">{shieldClimbPayment ? 'Card' : interacPayment ? 'Interac' : 'Crypto'}</p>
                             </div>
                             <div className="rounded-lg bg-[#0B2E2F]/5 px-2.5 py-1.5 text-xs">
                               <p className="text-foreground/45">Status</p>
@@ -3542,6 +3720,133 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                               <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
                                 <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Method</p>
                                 <p className="mt-1 text-sm font-semibold">Debit / Credit Card</p>
+                              </div>
+                            </div>
+                          </>
+                        ) : null}
+
+                        {/* ── Interac e-Transfer payment view ── */}
+                        {interacPayment ? (
+                          <>
+                            {isPartiallyPaid && partialPaymentPaidDisplay ? (
+                              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+                                <div className="flex items-start gap-3">
+                                  <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600" />
+                                  <div>
+                                    <p className="font-semibold">Partial payment received</p>
+                                    <p className="mt-1 text-amber-800">
+                                      We received {partialPaymentPaidDisplay.received} of {partialPaymentPaidDisplay.total}. <span className="font-semibold">{partialPaymentPaidDisplay.remaining} remaining.</span> Send the remaining amount with the same Message code.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {['submitted', 'under_review', 'review_required'].includes(paymentStatus) ? (
+                              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+                                <div className="flex items-start gap-3">
+                                  <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600" />
+                                  <div>
+                                    <p className="font-semibold">Payment submitted</p>
+                                    <p className="mt-1 text-amber-800">
+                                      We&apos;ll keep checking automatically. If we can&apos;t match it, we&apos;ll review it within 2 working hours. Review hours are 7:00 AM-12:00 AM ET.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="rounded-2xl border border-border/60 bg-white p-4">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">
+                                  {isPartiallyPaid ? 'Send remaining' : 'Send exactly'}
+                                </p>
+                                <div className="mt-2 flex items-center justify-between gap-3">
+                                  <p className="text-xl font-semibold tracking-tight">
+                                    {formatPrice(interacAmountToSend || interacPayment.cadAmount, 'CAD')}
+                                  </p>
+                                  <button type="button" onClick={() => copyText('Amount', interacAmountToSend || interacPayment.cadAmount)} className="rounded-full border border-border bg-background p-1.5 text-foreground/70 transition-colors hover:text-foreground" aria-label="Copy Interac amount">
+                                    <Copy className="size-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="rounded-2xl border border-border/60 bg-white p-4">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Expires</p>
+                                <p className="mt-2 text-xl font-semibold tracking-tight">
+                                  {formatDateTime(interacPayment.expiresAt) || '15 minutes'}
+                                </p>
+                              </div>
+                            </div>
+
+	                            <div className="rounded-2xl border border-border/60 bg-white p-4">
+	                              <div className="flex items-start justify-between gap-3">
+	                                <div>
+	                                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Send to</p>
+	                                  <p className="mt-2 break-all text-sm leading-6">{interacPayment.recipientEmail}</p>
+	                                  <p className="mt-2 text-xs leading-5 text-foreground/45">
+	                                    Send from a Canadian bank account using Interac Autodeposit. Wise and third-party processors are not supported.
+	                                  </p>
+	                                </div>
+                                <button type="button" onClick={() => copyText('Email', interacPayment.recipientEmail)} className="rounded-full border border-border bg-background p-1.5 text-foreground/70 transition-colors hover:text-foreground" aria-label="Copy Interac email">
+                                  <Copy className="size-3.5" />
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="rounded-2xl border border-[#0B2E2F]/20 bg-[#0B2E2F]/5 p-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+	                                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/60">Message code required</p>
+	                                  <p className="mt-2 font-mono text-2xl font-semibold tracking-tight text-[#0B2E2F]">
+	                                    {interacPayment.messageCode}
+	                                  </p>
+	                                  <p className="mt-2 text-xs leading-5 text-[#0B2E2F]/70">
+	                                    Paste this exact code into your bank&apos;s Interac Message field. Missing or changed codes require manual review and can delay the order.
+	                                  </p>
+                                </div>
+                                <button type="button" onClick={() => copyText('Message code', interacPayment.messageCode)} className="rounded-full border border-[#0B2E2F]/15 bg-white p-1.5 text-[#0B2E2F] transition-colors hover:bg-[#F4F1EA]" aria-label="Copy Interac message code">
+                                  <Copy className="size-3.5" />
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="rounded-2xl border border-border/60 bg-white p-4">
+                              <p className="text-sm font-semibold">After sending</p>
+                              <p className="mt-1 text-xs leading-5 text-foreground/50">
+                                This page checks automatically. Use the button below if you&apos;ve sent it, or upload a screenshot if support needs to review it.
+                              </p>
+                              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                <Button type="button" onClick={submitInteracTransfer} disabled={isSubmittingInterac || paymentStatus === 'paid'} className="w-full">
+                                  {isSubmittingInterac ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                                  I sent the e-Transfer
+                                </Button>
+                                <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-xl border border-border bg-background px-4 text-sm font-semibold text-foreground/75 transition-colors hover:bg-muted">
+                                  {isUploadingInteracScreenshot ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                                  Upload screenshot
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="sr-only"
+                                    disabled={isUploadingInteracScreenshot}
+                                    onChange={(event) => {
+                                      const file = event.target.files?.[0];
+                                      void uploadInteracScreenshot(file);
+                                      event.currentTarget.value = '';
+                                    }}
+                                  />
+                                </label>
+                              </div>
+                            </div>
+
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Expected sender</p>
+                                <p className="mt-1 text-sm font-semibold">{interacPayment.expectedSenderName}</p>
+                                <p className="mt-0.5 break-all text-xs text-foreground/50">{interacPayment.expectedSenderEmail}</p>
+                              </div>
+                              <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Status</p>
+                                <p className="mt-1 text-sm font-semibold capitalize">{formatPaymentStatus(paymentStatus)}</p>
                               </div>
                             </div>
                           </>

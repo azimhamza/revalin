@@ -12,7 +12,7 @@ import { formatPrice } from '@/lib/swell/utils';
 import { useBodyScrollLock } from '@/lib/hooks/use-body-scroll-lock';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
-import { FREE_SHIPPING_THRESHOLD } from '@/lib/checkout/constants';
+import { getFreeShippingThresholdForCurrency } from '@/lib/checkout/constants';
 import { useAuthSession } from '@/components/auth/session-provider';
 import { CheckoutAuthPopup } from './checkout-auth-popup';
 
@@ -25,10 +25,11 @@ function CartShippingProgress() {
 
   if (!cart) return null;
 
-  const total = Number(cart.cost.totalAmount.amount || 0);
-  const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - total);
-  const progress = Math.max(0, Math.min(100, (total / FREE_SHIPPING_THRESHOLD) * 100));
   const currencyCode = cart.cost.totalAmount.currencyCode;
+  const freeShippingThreshold = getFreeShippingThresholdForCurrency(currencyCode);
+  const total = Number(cart.cost.totalAmount.amount || 0);
+  const remaining = Math.max(0, freeShippingThreshold - total);
+  const progress = Math.max(0, Math.min(100, (total / freeShippingThreshold) * 100));
 
   return (
     <div className="pb-3">
@@ -56,7 +57,7 @@ function CartShippingProgress() {
             </div>
 
             <p className="mt-2 text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
-              Free shipping over {formatPrice(FREE_SHIPPING_THRESHOLD.toString(), currencyCode)}
+              Free shipping over {formatPrice(freeShippingThreshold.toString(), currencyCode)}
             </p>
           </div>
         </div>

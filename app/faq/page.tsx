@@ -15,7 +15,7 @@ const KEY_POINTS = [
   'Products are for in-vitro and pre-clinical research only.',
   'Every batch is independently tested with published COAs.',
   'Ships same-day from Canada to CA & US.',
-  'Free shipping on orders over $250.',
+  'Free shipping on orders over $250 USD or $350 CAD.',
 ];
 
 const FAQ_ITEMS = [

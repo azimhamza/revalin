@@ -31,7 +31,7 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `CHECKOUT_ORDER_STORAGE_PATH` (optional path for persisting checkout order snapshots outside the default local store)
 - `SHIPENGINE_API_KEY` (optional; enables live ShipEngine rates and automatic label purchase after payment)
 - `SHIPENGINE_ORIGIN_STREET1`, `SHIPENGINE_ORIGIN_ZIP` (required to activate ShipEngine live rates / labels)
-- `SHIPENGINE_ORIGIN_CITY`, `SHIPENGINE_ORIGIN_STATE`, `SHIPENGINE_ORIGIN_COUNTRY`, `SHIPENGINE_ORIGIN_NAME`, `SHIPENGINE_ORIGIN_PHONE` (optional origin fields used for rating and labels)
+- `SHIPENGINE_ORIGIN_CITY`, `SHIPENGINE_ORIGIN_STATE`, `SHIPENGINE_ORIGIN_COUNTRY`, `SHIPENGINE_ORIGIN_NAME`, `SHIPENGINE_ORIGIN_COMPANY_NAME`, `SHIPENGINE_ORIGIN_PHONE` (optional origin fields used for rating and labels; company name falls back to `SHIPENGINE_ORIGIN_NAME`)
 - `SHIPENGINE_CARRIER_IDS` (optional comma-separated carrier IDs; otherwise carriers are auto-discovered)
 - `SHIPENGINE_PARCEL_LENGTH_IN`, `SHIPENGINE_PARCEL_WIDTH_IN`, `SHIPENGINE_PARCEL_HEIGHT_IN`, `SHIPENGINE_DEFAULT_ITEM_WEIGHT_OZ` (optional parcel defaults for small-vial shipments)
 - `SHIPPO_API_TOKEN` (optional; enables live Shippo rate quotes before order creation)

@@ -1,4 +1,7 @@
-import { COMPLIMENTARY_SHIPPING_ENABLED, FREE_SHIPPING_THRESHOLD } from '@/lib/checkout/constants';
+import {
+  COMPLIMENTARY_SHIPPING_ENABLED,
+  getFreeShippingThresholdForCurrency,
+} from '@/lib/checkout/constants';
 import { quoteShipEngineRates, type ShipEngineCheckoutRate } from '@/lib/checkout/shipengine';
 import type { CheckoutAppliedDiscount, CheckoutShippingAddress } from '@/lib/checkout/types';
 import type { StorefrontCartSnapshot, SwellShipmentService } from '@/lib/checkout/swell-order-management';
@@ -115,8 +118,7 @@ function curateCheckoutServices(services: CheckoutRatedService[]) {
 function isEligibleForComplimentaryShipping(subtotalAmount: number, currencyCode: string) {
   return (
     COMPLIMENTARY_SHIPPING_ENABLED &&
-    currencyCode.trim().toUpperCase() === 'USD' &&
-    subtotalAmount >= FREE_SHIPPING_THRESHOLD
+    subtotalAmount >= getFreeShippingThresholdForCurrency(currencyCode)
   );
 }
 
@@ -157,7 +159,7 @@ export function buildQuoteResponse(args: {
   discountAmount?: number;
   discountCode?: string;
   discounts?: CheckoutAppliedDiscount[];
-  paymentMethod?: 'card' | 'crypto';
+  paymentMethod?: 'card' | 'crypto' | 'interac';
   services: CheckoutRatedService[];
 }) {
   const services = applyFreeShipping(

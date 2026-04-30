@@ -35,9 +35,9 @@ const VALIDATION_PANELS = [
   {
     icon: Truck,
     eyebrow: 'Fulfillment',
-    headline: 'Same-day dispatch from Waterloo, Ontario.',
+    headline: 'Same-day dispatch. Proudly Canadian.',
     detail:
-      'Tracked from Waterloo to your lab. Free shipping over $250 across Canada and the US.',
+      'Tracked from our facility to your lab. Free shipping over $250 USD or $350 CAD across Canada and the US.',
     href: '/shipping',
     cta: 'How We Ship',
   },
@@ -47,14 +47,14 @@ const STATS = [
   { label: 'Avg Purity', value: '>99%' },
   { label: 'Testing', value: 'Janoshik' },
   { label: 'Dispatch', value: 'Same day' },
-  { label: 'Origin', value: 'Waterloo, CA' },
+  { label: 'Origin', value: 'Canada' },
 ] as const;
 
 const QUICK_FAQ = [
   {
     question: 'What is Revalin?',
     answer:
-      'Revalin is a Canadian research peptide supplier based in Waterloo, Ontario, providing independently tested, lab-grade peptides for qualified research institutions and professionals conducting in-vitro and pre-clinical research.',
+      'Revalin is a proudly Canadian research peptide supplier providing independently tested, lab-grade peptides for qualified research institutions and professionals conducting in-vitro and pre-clinical research.',
   },
   {
     question: 'Are Revalin peptides for human use?',
@@ -79,7 +79,7 @@ const QUICK_FAQ = [
   {
     question: 'Where does Revalin ship?',
     answer:
-      'Revalin ships research peptides across Canada and the United States. Orders placed before the daily cutoff are dispatched same-day with full tracking, and free shipping is available on orders over $250.',
+      'Revalin ships research peptides across Canada and the United States. Orders placed before the daily cutoff are dispatched same-day with full tracking, and free shipping is available on orders over $250 USD or $350 CAD.',
   },
 ] as const;
 
@@ -153,7 +153,7 @@ export function ValidationSection() {
               variants={fadeUp}
               className="text-base leading-[1.7] text-[#0B2E2F]/78 md:text-[1.0625rem]"
             >
-              Revalin is a Canadian research peptide supplier based in Waterloo, Ontario. Every
+              Revalin is a proudly Canadian research peptide supplier. Every
               compound we ship is independently tested by Janoshik Analytical, published with an
               open Certificate of Analysis, and dispatched same-day to qualified researchers
               across Canada and the United States. Lab-grade material for in-vitro and pre-clinical

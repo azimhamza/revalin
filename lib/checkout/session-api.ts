@@ -14,8 +14,8 @@ export type QuoteReadyCheckoutSession = CheckoutSessionRecord & {
 
 export type FinalizeReadyCheckoutSession = QuoteReadyCheckoutSession & {
   selectedShippingServiceId: string;
-  paymentMethod: 'card' | 'crypto';
-  paymentCurrency: string;
+  paymentMethod: 'card' | 'crypto' | 'interac';
+  paymentCurrency: string | null;
 };
 
 export function toCheckoutSessionState(session: CheckoutSessionRecord) {
@@ -33,6 +33,8 @@ export function toCheckoutSessionState(session: CheckoutSessionRecord) {
       paymentMethod: session.paymentMethod,
       paymentCurrency: session.paymentCurrency,
       sourceWalletAddress: session.sourceWalletAddress,
+      interacSenderEmail: session.interacSenderEmail,
+      interacSenderName: session.interacSenderName,
       discountCode: session.discountCode,
       pricingSnapshot: session.pricingSnapshot,
       providerQuoteCache: session.providerQuoteCache,
@@ -48,9 +50,11 @@ export function buildSessionChanges(body: {
   cartSnapshot?: Record<string, unknown>;
   shippingAddress?: CheckoutShippingAddress;
   selectedShippingServiceId?: string;
-  paymentMethod?: 'card' | 'crypto';
+  paymentMethod?: 'card' | 'crypto' | 'interac';
   paymentCurrency?: string;
   sourceWalletAddress?: string;
+  interacSenderEmail?: string;
+  interacSenderName?: string;
   discountCode?: string;
 }) {
   return {
@@ -61,6 +65,8 @@ export function buildSessionChanges(body: {
     paymentMethod: body.paymentMethod,
     paymentCurrency: body.paymentCurrency?.trim() || null,
     sourceWalletAddress: body.sourceWalletAddress?.trim() || null,
+    interacSenderEmail: body.interacSenderEmail?.trim() || null,
+    interacSenderName: body.interacSenderName?.trim() || null,
     discountCode: body.discountCode
       ? normalizeSwellCouponCode(body.discountCode) || null
       : null,
@@ -89,6 +95,13 @@ export function assertSessionReadyForFinalize(
   if (!session.paymentMethod) {
     throw apiError.badRequest('Select a payment method before creating the payment.');
   }
+  if (session.paymentMethod === 'interac') {
+    if (!session.interacSenderEmail || !session.interacSenderName) {
+      throw apiError.badRequest('Enter the Interac sender email and name before creating the payment.');
+    }
+    return;
+  }
+
   if (!session.paymentCurrency) {
     throw apiError.badRequest('Select a payment currency before creating the payment.');
   }

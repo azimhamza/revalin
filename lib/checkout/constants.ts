@@ -1,5 +1,20 @@
 export const FREE_SHIPPING_THRESHOLD = 250;
+export const FREE_SHIPPING_THRESHOLDS_BY_CURRENCY: Record<string, number> = {
+  USD: FREE_SHIPPING_THRESHOLD,
+  CAD: 350,
+};
 export const COMPLIMENTARY_SHIPPING_ENABLED = true;
+
+export function getFreeShippingThresholdForCurrency(currencyCode?: string | null) {
+  const normalizedCurrency = String(currencyCode || '')
+    .trim()
+    .toUpperCase();
+
+  return (
+    FREE_SHIPPING_THRESHOLDS_BY_CURRENCY[normalizedCurrency] ??
+    FREE_SHIPPING_THRESHOLD
+  );
+}
 
 export const NOWPAYMENTS_BASE_URL = 'https://api.nowpayments.io/v1/';
 

@@ -45,6 +45,7 @@ export const ACCOUNT_ADMIN_ROUTE: NavItem = {
 export const ADMIN_NAV_ROUTES: NavItem[] = [
   { href: "/admin", label: "Overview" },
   { href: "/admin/product-notifications", label: "Restock Alerts" },
+  { href: "/admin/interac", label: "Interac" },
   { href: "/admin/users", label: "Users" },
   { href: "/admin/affiliates", label: "Growth Partners" },
   { href: "/admin/promoters", label: "Promoters" },

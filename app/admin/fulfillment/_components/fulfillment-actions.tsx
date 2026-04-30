@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { type FormEvent, useCallback, useRef, useState } from 'react';
 import {
   ChevronDown,
   ExternalLink,
   FileText,
   Loader2,
   Mail,
+  MapPin,
   Package,
   Play,
   RefreshCw,
@@ -29,9 +30,21 @@ type ActionResponse = {
 };
 
 async function postAction(orderId: string, action: string) {
+  return postActionBody(orderId, action);
+}
+
+async function postActionBody(
+  orderId: string,
+  action: string,
+  body?: unknown,
+) {
   const response = await fetch(
     `/api/admin/fulfillment/${encodeURIComponent(orderId)}/${action}`,
-    { method: 'POST' },
+    {
+      method: 'POST',
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    },
   );
 
   if (!response.ok) {
@@ -42,6 +55,135 @@ async function postAction(orderId: string, action: string) {
   }
 
   return response.json() as Promise<ActionResponse>;
+}
+
+type ManualLabelForm = FulfillmentOrderListItem['shippingAddress'];
+
+function ManualLabelModal({
+  order,
+  onSubmit,
+  onCancel,
+  loading,
+}: {
+  order: FulfillmentOrderListItem;
+  onSubmit: (shippingAddress: ManualLabelForm) => Promise<void>;
+  onCancel: () => void;
+  loading: boolean;
+}) {
+  const [form, setForm] = useState<ManualLabelForm>({
+    firstName: order.shippingAddress.firstName || '',
+    lastName: order.shippingAddress.lastName || '',
+    email: order.shippingAddress.email || order.email || '',
+    phone: order.shippingAddress.phone || '',
+    address1: order.shippingAddress.address1 || '',
+    address2: order.shippingAddress.address2 || '',
+    city: order.shippingAddress.city || '',
+    province: order.shippingAddress.province || '',
+    postalCode: order.shippingAddress.postalCode || '',
+    country: order.shippingAddress.country || 'CA',
+    notes: order.shippingAddress.notes || '',
+  });
+
+  const updateField = (field: keyof ManualLabelForm, value: string) => {
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  };
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void onSubmit({
+      ...form,
+      country: form.country.trim().toUpperCase(),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <form
+        onSubmit={handleSubmit}
+        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+      >
+        <h3 className="text-lg font-semibold text-[#0B2E2F]">
+          Address + Label
+        </h3>
+        <p className="mt-2 text-sm text-[#0B2E2F]/60">
+          Update the destination address and purchase a ShipEngine label for
+          {` ${order.orderNumber}`}.
+        </p>
+
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {[
+            ['firstName', 'First name', true],
+            ['lastName', 'Last name', true],
+            ['email', 'Email', true],
+            ['phone', 'Phone', true],
+            ['address1', 'Address line 1', true],
+            ['address2', 'Address line 2', false],
+            ['city', 'City', true],
+            ['province', 'State / province', true],
+            ['postalCode', 'Postal code', true],
+            ['country', 'Country', true],
+          ].map(([field, label, required]) => (
+            <label
+              key={field as string}
+              className={`space-y-1.5 text-sm font-medium text-[#0B2E2F] ${
+                field === 'address1' || field === 'address2'
+                  ? 'sm:col-span-2'
+                  : ''
+              }`}
+            >
+              {label}
+              <input
+                type={field === 'email' ? 'email' : 'text'}
+                value={String(form[field as keyof ManualLabelForm] || '')}
+                onChange={(e) =>
+                  updateField(field as keyof ManualLabelForm, e.target.value)
+                }
+                required={Boolean(required)}
+                minLength={field === 'country' ? 2 : undefined}
+                maxLength={field === 'country' ? 2 : undefined}
+                className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+              />
+            </label>
+          ))}
+          <label className="space-y-1.5 text-sm font-medium text-[#0B2E2F] sm:col-span-2">
+            Notes
+            <textarea
+              value={form.notes || ''}
+              onChange={(e) => updateField('notes', e.target.value)}
+              rows={3}
+              className="w-full resize-none rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+            />
+          </label>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-[#0B2E2F]/60 transition-colors hover:bg-[#0B2E2F]/5"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={loading}
+            className="flex items-center gap-2 rounded-lg bg-[#0B2E2F] px-4 py-2 text-sm font-semibold text-[#F4F1EA] transition-colors hover:bg-[#0B2E2F]/90 disabled:opacity-40"
+          >
+            {loading ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <MapPin className="size-4" />
+            )}
+            Buy Label
+          </button>
+        </div>
+      </form>
+    </div>
+  );
 }
 
 function ShipConfirmModal({
@@ -135,6 +277,7 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showShipModal, setShowShipModal] = useState(false);
+  const [showManualLabelModal, setShowManualLabelModal] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -164,6 +307,27 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
     [order.orderId, onActionComplete],
   );
 
+  const handleManualLabel = useCallback(
+    async (shippingAddress: ManualLabelForm) => {
+      setLoading('manual-label');
+      setError(null);
+      try {
+        await postActionBody(order.orderId, 'manual-label', {
+          shippingAddress,
+        });
+        setShowManualLabelModal(false);
+        onActionComplete();
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : 'Action failed',
+        );
+      } finally {
+        setLoading(null);
+      }
+    },
+    [order.orderId, onActionComplete],
+  );
+
   const handleShipConfirm = useCallback(async () => {
     setLoading('mark-shipped');
     setError(null);
@@ -187,6 +351,9 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
     order.fulfillmentStatus === 'packed';
   const canRetryLabel =
     order.fulfillmentStatus === 'error' &&
+    !order.labelUrl &&
+    (order.paymentStatus === 'finished' || order.paymentStatus === 'paid');
+  const canManualLabel =
     !order.labelUrl &&
     (order.paymentStatus === 'finished' || order.paymentStatus === 'paid');
   const canResendLabel = Boolean(order.labelUrl);
@@ -237,6 +404,23 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
               <Play className="size-3.5" />
             )}
             Rerun
+          </button>
+        ) : null}
+
+        {/* Manual Address + Label */}
+        {canManualLabel ? (
+          <button
+            onClick={() => setShowManualLabelModal(true)}
+            disabled={loading !== null}
+            className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 transition-colors hover:bg-emerald-100 disabled:opacity-40"
+            title="Edit destination address and purchase a label"
+          >
+            {loading === 'manual-label' ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <MapPin className="size-3.5" />
+            )}
+            Address + Label
           </button>
         ) : null}
 
@@ -377,6 +561,15 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
           onConfirm={handleShipConfirm}
           onCancel={() => setShowShipModal(false)}
           loading={loading === 'mark-shipped'}
+        />
+      ) : null}
+
+      {showManualLabelModal ? (
+        <ManualLabelModal
+          order={order}
+          onSubmit={handleManualLabel}
+          onCancel={() => setShowManualLabelModal(false)}
+          loading={loading === 'manual-label'}
         />
       ) : null}
     </>

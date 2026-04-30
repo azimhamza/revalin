@@ -94,7 +94,7 @@ export function ResearchDisclaimerPopup() {
                 id="age-gate-description"
                 className="mt-5 text-center text-[12px] leading-relaxed text-[#0B2E2F]/50"
               >
-                All products are for research purposes only. These products have not been evaluated or approved by the FDA.
+                All products are strictly for research purposes only and are not intended for human consumption. These products have not been evaluated or approved by the FDA or Health Canada.
               </p>
 
               {/* Age gate */}

@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 
 const KEY_POINTS = [
   'Ships same-day from Canada.',
-  'Free shipping on orders over $250.',
+  'Free shipping on orders over $250 USD or $350 CAD.',
   'Delivery to Canada and the United States.',
   'Damaged items replaced within 48 hours of report.',
 ];
@@ -78,7 +78,7 @@ export default function ShippingPage() {
                 Free Shipping
               </h2>
               <p>
-                Orders totaling $250 or more qualify for free standard shipping. This applies to all eligible
+                Orders totaling $250 USD or $350 CAD qualify for free standard shipping. This applies to all eligible
                 destinations within Canada and the United States. No coupon code is required — the discount is applied
                 automatically at checkout.
               </p>

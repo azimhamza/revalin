@@ -110,12 +110,55 @@ export type ShieldClimbPaymentData = {
   createdAt?: string;
   updatedAt?: string;
   amountPaidToDate?: string;
+  cumulativePaidAmount?: string;
+  remainingBalanceAmount?: string;
   attemptAmount?: string;
   carryoverRootOrderId?: string;
   supersededByOrderId?: string;
 };
 
-export type CheckoutOrderPayment = NowPaymentsPaymentData | ShieldClimbPaymentData;
+export type InteracPaymentData = {
+  provider: 'interac';
+  status:
+    | 'awaiting_transfer'
+    | 'submitted'
+    | 'under_review'
+    | 'partially_paid'
+    | 'paid'
+    | 'expired'
+    | 'review_required'
+    | 'replaced'
+    | 'cancelled';
+  recipientEmail: string;
+  messageCode: string;
+  cadAmount: string;
+  expectedSenderEmail: string;
+  expectedSenderName: string;
+  expiresAt: string;
+  submittedAt?: string;
+  screenshotUrls?: string[];
+  swellPaymentId?: string;
+  confirmedAt?: string;
+  receivedAmount?: string;
+  senderName?: string | null;
+  replyToEmail?: string | null;
+  bankReference?: string | null;
+  gmailMessageId?: string | null;
+  senderMismatch?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  amountPaidToDate?: string;
+  cumulativePaidAmount?: string;
+  remainingBalanceAmount?: string;
+  attemptAmount?: string;
+  carryoverRootOrderId?: string;
+  supersededByOrderId?: string;
+};
+
+export type CheckoutOrderPayment =
+  | NowPaymentsPaymentData
+  | ShieldClimbPaymentData
+  | InteracPaymentData;
 
 export type CheckoutPaymentCarryoverPublicData = {
   amountPaidToDate?: string;
@@ -152,7 +195,8 @@ export type ShieldClimbPublicPaymentData = {
 
 export type CheckoutOrderPublicPayment =
   | NowPaymentsPublicPaymentData
-  | ShieldClimbPublicPaymentData;
+  | ShieldClimbPublicPaymentData
+  | (InteracPaymentData & CheckoutPaymentCarryoverPublicData);
 
 export function isShieldClimbPayment(payment: CheckoutOrderPayment): payment is ShieldClimbPaymentData {
   return payment.provider === 'shieldclimb';
@@ -160,6 +204,10 @@ export function isShieldClimbPayment(payment: CheckoutOrderPayment): payment is 
 
 export function isNowPaymentsPayment(payment: CheckoutOrderPayment): payment is NowPaymentsPaymentData {
   return payment.provider === 'nowpayments';
+}
+
+export function isInteracPayment(payment: CheckoutOrderPayment): payment is InteracPaymentData {
+  return payment.provider === 'interac';
 }
 
 export type CheckoutOrderSwell = {

@@ -23,9 +23,11 @@ export type CheckoutSessionRecord = {
   cartSnapshot: Record<string, unknown> | null;
   shippingAddress: CheckoutShippingAddress | null;
   selectedShippingServiceId: string | null;
-  paymentMethod: 'card' | 'crypto' | null;
+  paymentMethod: 'card' | 'crypto' | 'interac' | null;
   paymentCurrency: string | null;
   sourceWalletAddress: string | null;
+  interacSenderEmail: string | null;
+  interacSenderName: string | null;
   discountCode: string | null;
   pricingSnapshot: Record<string, unknown> | null;
   providerQuoteCache: Record<string, unknown> | null;
@@ -44,9 +46,11 @@ type UpsertSessionInput = {
   cartSnapshot?: Record<string, unknown> | null;
   shippingAddress?: CheckoutShippingAddress | null;
   selectedShippingServiceId?: string | null;
-  paymentMethod?: 'card' | 'crypto' | null;
+  paymentMethod?: 'card' | 'crypto' | 'interac' | null;
   paymentCurrency?: string | null;
   sourceWalletAddress?: string | null;
+  interacSenderEmail?: string | null;
+  interacSenderName?: string | null;
   discountCode?: string | null;
   pricingSnapshot?: Record<string, unknown> | null;
   providerQuoteCache?: Record<string, unknown> | null;
@@ -86,6 +90,8 @@ function rowToSession(row: typeof checkoutDrafts.$inferSelect): CheckoutSessionR
     paymentMethod: (row.paymentMethod as CheckoutSessionRecord['paymentMethod']) ?? null,
     paymentCurrency: row.paymentCurrency ?? null,
     sourceWalletAddress: row.sourceWalletAddress ?? null,
+    interacSenderEmail: row.interacSenderEmail ?? null,
+    interacSenderName: row.interacSenderName ?? null,
     discountCode: row.discountCode ?? null,
     pricingSnapshot: asNullableRecord(row.pricingSnapshot),
     providerQuoteCache: asNullableRecord(row.providerQuoteCache),
@@ -129,6 +135,8 @@ export async function createCheckoutSession(input: UpsertSessionInput = {}) {
       paymentMethod: input.paymentMethod ?? null,
       paymentCurrency: input.paymentCurrency ?? null,
       sourceWalletAddress: input.sourceWalletAddress ?? null,
+      interacSenderEmail: input.interacSenderEmail ?? null,
+      interacSenderName: input.interacSenderName ?? null,
       discountCode: input.discountCode ?? null,
       pricingSnapshot: input.pricingSnapshot ?? null,
       providerQuoteCache: input.providerQuoteCache ?? null,
@@ -235,6 +243,14 @@ export async function updateCheckoutSession(args: {
         args.changes.sourceWalletAddress === undefined
           ? current.sourceWalletAddress
           : args.changes.sourceWalletAddress,
+      interacSenderEmail:
+        args.changes.interacSenderEmail === undefined
+          ? current.interacSenderEmail
+          : args.changes.interacSenderEmail,
+      interacSenderName:
+        args.changes.interacSenderName === undefined
+          ? current.interacSenderName
+          : args.changes.interacSenderName,
       discountCode:
         args.changes.discountCode === undefined
           ? current.discountCode

@@ -1,7 +1,7 @@
 import type { CheckoutOrderRecord } from './types.ts';
 
-export type CheckoutPaymentMethod = 'card' | 'crypto';
-export type CheckoutTelemetryProvider = 'shieldclimb' | 'nowpayments';
+export type CheckoutPaymentMethod = 'card' | 'crypto' | 'interac';
+export type CheckoutTelemetryProvider = 'shieldclimb' | 'nowpayments' | 'interac';
 
 export type CheckoutTelemetryContext = {
   orderId: string;
@@ -22,7 +22,9 @@ export function getCheckoutItemCount(order: CheckoutOrderRecord) {
 export function getCheckoutPaymentMethod(
   provider: CheckoutTelemetryProvider
 ): CheckoutPaymentMethod {
-  return provider === 'shieldclimb' ? 'card' : 'crypto';
+  if (provider === 'shieldclimb') return 'card';
+  if (provider === 'interac') return 'interac';
+  return 'crypto';
 }
 
 export function buildOpenPanelAuthProperties(userId?: string | null) {

@@ -146,7 +146,7 @@ export default function MobileMenu({ collections }: MobileMenuProps) {
                   <p className="italic">Research-grade peptides. &gt;99% purity.</p>
                   <div className="mt-3">
                     <p>Third-party batch testing. COAs included.</p>
-                    <p>Ships same day. Free Shipping over $250.</p>
+                    <p>Ships same day. Free Shipping over $250 USD / $350 CAD.</p>
                   </div>
                   <div className="mt-3">
                     <p>Peptides that don&apos;t need promises, just proof.</p>

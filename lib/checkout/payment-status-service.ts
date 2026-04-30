@@ -6,6 +6,7 @@ import { buildPublicCheckoutOrder } from '@/lib/checkout/public-order';
 import { applyVerifiedPaymentStatus } from '@/lib/checkout/payment-lifecycle';
 import {
   isNowPaymentsPayment,
+  isInteracPayment,
   isShieldClimbPayment,
 } from '@/lib/checkout/types';
 import { verifyAndFinalizeShieldClimbPayment } from '@/lib/checkout/shieldclimb-payment-verification';
@@ -89,6 +90,14 @@ export async function refreshCheckoutPaymentStatus(args: {
       }
 
       return buildPublicCheckoutOrder(result.order || order);
+    }
+
+    if (isInteracPayment(order.payment)) {
+      if (args.paymentId !== 'interac' && args.paymentId !== order.payment.messageCode) {
+        throw apiError.notFound('Checkout session not found.');
+      }
+
+      return buildPublicCheckoutOrder(order);
     }
 
     throw apiError.badRequest('Unknown payment provider.');

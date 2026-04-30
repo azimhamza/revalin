@@ -31,7 +31,11 @@ export function parseCheckoutResume(rawResume: string | null): CheckoutResume | 
     if (parsed.version !== 1) return null;
     if (typeof parsed.orderId !== 'string' || !parsed.orderId.trim()) return null;
     if (typeof parsed.accessKey !== 'string' || !parsed.accessKey.trim()) return null;
-    if (parsed.provider !== 'shieldclimb' && parsed.provider !== 'nowpayments') return null;
+    if (
+      parsed.provider !== 'shieldclimb' &&
+      parsed.provider !== 'nowpayments' &&
+      parsed.provider !== 'interac'
+    ) return null;
     if (typeof parsed.status !== 'string' || !parsed.status.trim()) return null;
     if (typeof parsed.savedAt !== 'string' || !parsed.savedAt.trim()) return null;
 

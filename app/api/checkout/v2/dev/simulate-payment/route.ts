@@ -5,7 +5,7 @@ import { apiError } from '@/lib/api/errors';
 import { getCheckoutOrder } from '@/lib/checkout/order-store';
 import { buildPublicCheckoutOrder } from '@/lib/checkout/public-order';
 import { applyVerifiedPaymentStatus } from '@/lib/checkout/payment-lifecycle';
-import { isNowPaymentsPayment, isShieldClimbPayment } from '@/lib/checkout/types';
+import { isInteracPayment, isNowPaymentsPayment, isShieldClimbPayment } from '@/lib/checkout/types';
 import { sendPaymentFailedEvent } from '@/lib/email/marketing-events';
 
 const bodySchema = z.object({
@@ -25,26 +25,36 @@ const handler = createApiRoute({
 
     const isNowPayments = isNowPaymentsPayment(order.payment);
     const isShieldClimb = isShieldClimbPayment(order.payment);
+    const isInterac = isInteracPayment(order.payment);
 
-    if (!isNowPayments && !isShieldClimb) {
+    if (!isNowPayments && !isShieldClimb && !isInterac) {
       throw apiError.badRequest('Order has an unknown payment provider.');
     }
 
-    const provider = isNowPayments ? 'nowpayments' : 'shieldclimb';
+    const provider = isNowPayments ? 'nowpayments' : isInterac ? 'interac' : 'shieldclimb';
 
     if (body.action === 'complete') {
       const targetStatus = isNowPayments ? 'finished' : 'paid';
-      const source = isNowPayments ? 'nowpayments_poll' : 'shieldclimb_poll';
+      const source = isNowPayments ? 'nowpayments_poll' : isInterac ? 'interac_admin' : 'shieldclimb_poll';
 
       const result = await applyVerifiedPaymentStatus({
         orderId: body.orderId,
         provider,
         targetStatus,
         source,
-        paymentUpdater: (current) => ({
-          ...current.payment,
-          status: targetStatus,
-        }),
+        paymentUpdater: (current) => {
+          if (isInteracPayment(current.payment)) {
+            return {
+              ...current.payment,
+              status: 'paid',
+            };
+          }
+
+          return {
+            ...current.payment,
+            status: targetStatus,
+          };
+        },
       });
 
       if (!result.order) {
@@ -56,17 +66,26 @@ const handler = createApiRoute({
 
     // action === 'fail'
     const targetStatus = 'failed';
-    const source = isNowPayments ? 'nowpayments_poll' : 'shieldclimb_poll';
+    const source = isNowPayments ? 'nowpayments_poll' : isInterac ? 'interac_admin' : 'shieldclimb_poll';
 
     const result = await applyVerifiedPaymentStatus({
       orderId: body.orderId,
       provider,
       targetStatus,
       source,
-      paymentUpdater: (current) => ({
-        ...current.payment,
-        status: targetStatus,
-      }),
+      paymentUpdater: (current) => {
+        if (isInteracPayment(current.payment)) {
+          return {
+            ...current.payment,
+            status: 'review_required',
+          };
+        }
+
+        return {
+          ...current.payment,
+          status: targetStatus,
+        };
+      },
     });
 
     if (result.order) {

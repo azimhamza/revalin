@@ -3,12 +3,13 @@ import { db } from '@/lib/db';
 import { checkoutOrders } from '@/lib/db/schema';
 import { getCheckoutOrder, updateCheckoutOrder } from './order-store';
 import { retryFailedLabelPurchase } from './payment-lifecycle';
+import { purchaseShipEngineLabel } from './shipengine';
 import { sendOrderShippedEmail, sendShippingLabelEmail } from '@/lib/email/order-emails';
 import {
   createSwellShipment,
   getSwellOrder,
 } from './swell-order-management';
-import type { CheckoutOrderRecord, FulfillmentStatus } from './types';
+import type { CheckoutOrderRecord, CheckoutShippingAddress, FulfillmentStatus } from './types';
 
 type FulfillmentOrderRow = typeof checkoutOrders.$inferSelect;
 
@@ -37,6 +38,7 @@ export type FulfillmentOrderListItem = {
   customerName: string;
   fulfillmentStatus: FulfillmentStatus | null;
   paymentStatus: string | null;
+  shippingAddress: CheckoutShippingAddress;
   currencyCode: string;
   totalAmount: string;
   itemCount: number;
@@ -68,6 +70,7 @@ function rowToListItem(row: FulfillmentOrderRow): FulfillmentOrderListItem {
     customerName: `${shippingAddress?.firstName || ''} ${shippingAddress?.lastName || ''}`.trim(),
     fulfillmentStatus: resolveFulfillmentStatus(row),
     paymentStatus: row.paymentStatus,
+    shippingAddress,
     currencyCode: row.currencyCode,
     totalAmount: totals?.totalAmount?.amount || '0',
     itemCount: lines?.reduce((sum: number, l: { quantity: number }) => sum + l.quantity, 0) || 0,
@@ -309,4 +312,131 @@ export async function retryOrderLabelPurchase(orderId: string) {
   }
 
   return order;
+}
+
+export async function updateShippingAddressAndPurchaseLabel(args: {
+  orderId: string;
+  shippingAddress: CheckoutShippingAddress;
+}) {
+  const order = await getCheckoutOrder(args.orderId);
+  if (!order) {
+    throw new Error(`Order ${args.orderId} not found.`);
+  }
+
+  if (!isSuccessfulFulfillmentPaymentStatus(order.payment.status)) {
+    throw new Error(`Order ${args.orderId} has not been paid yet.`);
+  }
+
+  if (order.shipengine?.labelUrl) {
+    throw new Error(`Order ${args.orderId} already has a shipping label.`);
+  }
+
+  if (!order.shippingService) {
+    throw new Error(
+      'Manual review required: the order is missing the selected shipping service.',
+    );
+  }
+
+  if (order.shippingService.source !== 'shipengine') {
+    throw new Error(
+      'Manual review required: the selected checkout shipping service was not sourced from ShipEngine.',
+    );
+  }
+  const selectedShippingService = {
+    ...order.shippingService,
+    shipengineRateId: undefined,
+  };
+
+  const addressUpdatedOrder = await updateCheckoutOrder(args.orderId, (current) => ({
+    ...current,
+    shippingAddress: args.shippingAddress,
+    fulfillmentStatus: current.fulfillmentStatus ?? 'pending',
+    shipengine: {
+      ...current.shipengine,
+      labelError: undefined,
+    },
+  }));
+
+  if (!addressUpdatedOrder) {
+    throw new Error(`Failed to update order ${args.orderId}.`);
+  }
+
+  const itemCount = addressUpdatedOrder.lines.reduce(
+    (total, line) => total + line.quantity,
+    0,
+  );
+  const customsValueAmount = addressUpdatedOrder.lines.reduce(
+    (total, line) => total + Number(line.lineTotal.amount || 0),
+    0,
+  );
+
+  try {
+    const labelResult = await purchaseShipEngineLabel({
+      shippingAddress: addressUpdatedOrder.shippingAddress,
+      itemCount,
+      customsValueAmount,
+      customsCurrencyCode: addressUpdatedOrder.currencyCode,
+      selectedShippingService,
+      orderCreatedAt: addressUpdatedOrder.createdAt,
+    });
+
+    if (!labelResult.labelUrl) {
+      throw new Error('ShipEngine purchased the rate but did not return a label URL.');
+    }
+
+    const updatedOrder = await updateCheckoutOrder(args.orderId, (current) => ({
+      ...current,
+      fulfillmentStatus: 'label_ready',
+      shipengine: {
+        ...current.shipengine,
+        trackingCode: labelResult.trackingCode || undefined,
+        labelUrl: labelResult.labelUrl || undefined,
+        carrier: labelResult.carrier || undefined,
+        service: labelResult.service || undefined,
+        publicTrackingUrl: labelResult.publicTrackingUrl || undefined,
+        labelPurchasedAt: new Date().toISOString(),
+        labelError: undefined,
+      },
+    }));
+
+    if (!updatedOrder) {
+      throw new Error(`Failed to update label details for order ${args.orderId}.`);
+    }
+
+    if (updatedOrder.shipengine?.labelUrl) {
+      try {
+        await sendShippingLabelEmail({
+          order: updatedOrder,
+          labelUrl: updatedOrder.shipengine.labelUrl,
+          labelResult: {
+            carrier: updatedOrder.shipengine.carrier,
+            service: updatedOrder.shipengine.service,
+            trackingCode: updatedOrder.shipengine.trackingCode,
+            publicTrackingUrl: updatedOrder.shipengine.publicTrackingUrl,
+          },
+        });
+      } catch (error) {
+        console.error(
+          `[fulfillment] Failed to send label email for ${args.orderId}:`,
+          error,
+        );
+      }
+    }
+
+    return updatedOrder;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Unknown label purchase error';
+
+    await updateCheckoutOrder(args.orderId, (current) => ({
+      ...current,
+      fulfillmentStatus: 'error',
+      shipengine: {
+        ...current.shipengine,
+        labelError: message,
+      },
+    }));
+
+    throw new Error(message);
+  }
 }

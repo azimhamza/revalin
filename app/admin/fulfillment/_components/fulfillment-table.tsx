@@ -208,6 +208,28 @@ export function FulfillmentTable({
                   <p className="text-[11px] text-[#0B2E2F]/40">
                     {order.email}
                   </p>
+                  <p
+                    className="mt-1 max-w-[220px] truncate text-[11px] text-[#0B2E2F]/45"
+                    title={[
+                      order.shippingAddress.address1,
+                      order.shippingAddress.address2,
+                      order.shippingAddress.city,
+                      order.shippingAddress.province,
+                      order.shippingAddress.postalCode,
+                      order.shippingAddress.country,
+                    ]
+                      .filter(Boolean)
+                      .join(', ')}
+                  >
+                    {[
+                      order.shippingAddress.address1,
+                      order.shippingAddress.city,
+                      order.shippingAddress.province,
+                      order.shippingAddress.postalCode,
+                    ]
+                      .filter(Boolean)
+                      .join(', ') || 'No address'}
+                  </p>
                 </td>
                 <td className="px-4 py-3 font-medium text-[#0B2E2F]">
                   {formatCurrency(order.totalAmount, order.currencyCode)}

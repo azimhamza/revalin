@@ -1,4 +1,4 @@
-import { and, desc, eq, ne, notInArray, sql } from 'drizzle-orm';
+import { and, desc, eq, lte, ne, notInArray, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { checkoutOrders } from '@/lib/db/schema';
 import type { CheckoutOrderPayment, CheckoutOrderProcessing, CheckoutOrderRecord, FulfillmentStatus } from '@/lib/checkout/types';
@@ -301,6 +301,35 @@ export async function findOpenCheckoutOrdersByEmail(args: {
     .from(checkoutOrders)
     .where(and(...conditions))
     .orderBy(desc(checkoutOrders.updatedAt));
+
+  return rows.map(rowToRecord);
+}
+
+export async function findStaleShieldClimbCheckoutOrders(args: {
+  cutoff: Date;
+  limit?: number;
+}): Promise<CheckoutOrderRecord[]> {
+  const terminalStatuses = [
+    ...TERMINAL_PAYMENT_STATUSES,
+    ...SHIELDCLIMB_TERMINAL_STATUSES,
+  ];
+
+  const rows = await db
+    .select()
+    .from(checkoutOrders)
+    .where(
+      and(
+        sql`${checkoutOrders.payment}->>'provider' = 'shieldclimb'`,
+        lte(checkoutOrders.createdAt, args.cutoff),
+        notInArray(checkoutOrders.paymentStatus, terminalStatuses),
+        sql`coalesce(${checkoutOrders.payment}->>'callbackVerifiedAt', '') = ''`,
+        sql`coalesce(${checkoutOrders.payment}->>'txidIn', '') = ''`,
+        sql`coalesce(${checkoutOrders.payment}->>'txidOut', '') = ''`,
+        sql`coalesce(${checkoutOrders.payment}->>'swellPaymentId', '') = ''`,
+      ),
+    )
+    .orderBy(desc(checkoutOrders.createdAt))
+    .limit(args.limit ?? 100);
 
   return rows.map(rowToRecord);
 }

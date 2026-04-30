@@ -10,7 +10,7 @@ import type {
   CheckoutShippingService,
   NowPaymentsPaymentData,
 } from './types.ts';
-import { isNowPaymentsPayment, isShieldClimbPayment } from './types.ts';
+import { isInteracPayment, isNowPaymentsPayment, isShieldClimbPayment } from './types.ts';
 
 const IMMUTABLE_NON_SUCCESS_STATUSES = new Set([
   'cancelled',
@@ -36,13 +36,15 @@ export const CHECKOUT_PROCESSING_STEPS = [
 export type CheckoutProcessingStepName =
   (typeof CHECKOUT_PROCESSING_STEPS)[number];
 
-export type PaymentLifecycleProvider = 'nowpayments' | 'shieldclimb';
+export type PaymentLifecycleProvider = 'nowpayments' | 'shieldclimb' | 'interac';
 
 export type PaymentLifecycleEventSource =
   | 'nowpayments_ipn'
   | 'nowpayments_poll'
   | 'shieldclimb_callback'
-  | 'shieldclimb_poll';
+  | 'shieldclimb_poll'
+  | 'interac_email'
+  | 'interac_admin';
 
 export type ApplyVerifiedPaymentStatusArgs = {
   orderId: string;
@@ -107,6 +109,7 @@ export type PaymentLifecycleDependencies = {
   syncShieldClimbOrderToSwell: (
     order: CheckoutOrderRecord
   ) => Promise<unknown>;
+  syncInteracOrderToSwell: (order: CheckoutOrderRecord) => Promise<unknown>;
   sendPaymentCompletedEvent: (order: CheckoutOrderRecord) => Promise<unknown>;
   trackPurchaseFromOrder: (order: CheckoutOrderRecord) => Promise<unknown>;
   sendOrderConfirmationEmail: (order: CheckoutOrderRecord) => Promise<unknown>;
@@ -220,9 +223,9 @@ function isProviderMatch(
   order: CheckoutOrderRecord,
   provider: PaymentLifecycleProvider
 ) {
-  return provider === 'nowpayments'
-    ? isNowPaymentsPayment(order.payment)
-    : isShieldClimbPayment(order.payment);
+  if (provider === 'nowpayments') return isNowPaymentsPayment(order.payment);
+  if (provider === 'interac') return isInteracPayment(order.payment);
+  return isShieldClimbPayment(order.payment);
 }
 
 function shouldAutoCancelOlderUnpaidOrder(args: {
@@ -489,6 +492,11 @@ export function createPaymentLifecycle(
             order,
             toNowPaymentsSyncPayload(order.payment)
           );
+          return { status: 'completed' };
+        }
+
+        if (isInteracPayment(order.payment)) {
+          await dependencies.syncInteracOrderToSwell(order);
           return { status: 'completed' };
         }
 

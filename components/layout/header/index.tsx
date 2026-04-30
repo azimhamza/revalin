@@ -15,7 +15,7 @@ const BANNER_ITEMS = [
   { icon: BadgeCheck, text: 'Independently Verified' },
   { icon: Droplets, text: '>99% Purity' },
   { icon: Truck, text: 'Same-Day Dispatch' },
-  { icon: Package, text: 'Free Shipping $250+' },
+  { icon: Package, text: 'Free Shipping $250 USD / $350 CAD+' },
   { text: 'Research Use Only' },
   { text: 'User Discretion Advised' },
 ];

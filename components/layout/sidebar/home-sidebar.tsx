@@ -21,7 +21,7 @@ export function HomeSidebar({ collections }: HomeSidebarProps) {
           <p>COAs included — no request form, no gatekeeping.</p>
         </div>
 
-        <p className="mt-5 text-sm text-muted-foreground tracking-wide">From Waterloo, Ontario.</p>
+        <p className="mt-5 text-sm text-muted-foreground tracking-wide">Proudly Canadian.</p>
       </div>
 
       <ShopLinks collections={collections} label="Shop All" showArrow shopAllHref="/shop" />

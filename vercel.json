@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/maintenance/cancel-stale-checkouts",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}

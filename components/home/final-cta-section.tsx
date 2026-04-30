@@ -28,7 +28,7 @@ export function FinalCtaSection() {
           variants={fadeUp}
           className="mx-auto mt-5 max-w-lg text-[15px] leading-relaxed text-[#0B2E2F]/55 md:text-base"
         >
-          All the research peptides you need, with independently verified quality and same-day dispatch from Waterloo, Ontario.
+          All the research peptides you need, with independently verified quality and same-day dispatch. Proudly Canadian.
         </motion.p>
         <motion.div variants={fadeUp} className="mt-10">
           <Link

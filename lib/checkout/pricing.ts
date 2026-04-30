@@ -2,7 +2,7 @@ import type { CheckoutAppliedDiscount } from '@/lib/checkout/types';
 import type { Money } from '@/lib/swell/types';
 
 type MoneyInput = string | number | null | undefined;
-type PaymentMethod = 'card' | 'crypto';
+type PaymentMethod = 'card' | 'crypto' | 'interac';
 
 export const DIRECT_CRYPTO_DISCOUNT_RATE = 0.05;
 export const DIRECT_CRYPTO_DISCOUNT_PERCENT = DIRECT_CRYPTO_DISCOUNT_RATE * 100;

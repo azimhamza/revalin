@@ -89,6 +89,10 @@ function getPollingId(payment: CheckoutOrderPublic['payment']) {
     return payment.paymentId;
   }
 
+  if (payment.provider === 'interac') {
+    return payment.messageCode || 'interac';
+  }
+
   return undefined;
 }
 

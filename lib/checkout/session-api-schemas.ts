@@ -55,9 +55,11 @@ export const checkoutSessionCreateSchema = z.object({
   cartId: z.string().trim().min(1).optional(),
   cartSnapshot: checkoutCartSnapshotSchema.optional(),
   shippingAddress: checkoutShippingAddressSchema.optional(),
-  paymentMethod: z.enum(['card', 'crypto']).optional(),
+  paymentMethod: z.enum(['card', 'crypto', 'interac']).optional(),
   paymentCurrency: z.string().trim().min(2).optional(),
   sourceWalletAddress: z.string().trim().max(255).optional(),
+  interacSenderEmail: z.string().trim().email().optional(),
+  interacSenderName: z.string().trim().min(1).max(256).optional(),
   discountCode: z.string().trim().optional(),
 });
 

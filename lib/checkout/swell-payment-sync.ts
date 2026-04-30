@@ -1,5 +1,5 @@
 import type { CheckoutOrderRecord } from '@/lib/checkout/types';
-import { isShieldClimbPayment } from '@/lib/checkout/types';
+import { isInteracPayment, isShieldClimbPayment } from '@/lib/checkout/types';
 import { createSwellOrderPayment, getSwellManualPaymentMethod, updateSwellOrder } from '@/lib/checkout/swell-order-management';
 import type { NowPaymentsPaymentResponse } from '@/lib/checkout/nowpayments';
 import { isNowPaymentsPayment } from '@/lib/checkout/types';
@@ -171,6 +171,90 @@ export async function syncShieldClimbOrderToSwell(order: CheckoutOrderRecord) {
   // Update order with swell payment ID
   await updateCheckoutOrder(order.orderId, current => {
     if (!isShieldClimbPayment(current.payment)) return current;
+    return {
+      ...current,
+      payment: {
+        ...current.payment,
+        swellPaymentId: swellPayment.id,
+      },
+    };
+  });
+
+  return swellPayment;
+}
+
+export async function syncInteracOrderToSwell(order: CheckoutOrderRecord) {
+  if (!isInteracPayment(order.payment)) {
+    return null;
+  }
+
+  const manualMethod = getSwellManualPaymentMethod();
+
+  await updateSwellOrder(order.swell.orderId, {
+    $notify: false,
+    billing: {
+      method: manualMethod,
+      intent: {
+        provider: 'interac',
+        message_code: order.payment.messageCode,
+        status: order.payment.status,
+      },
+    },
+    metadata: {
+      checkout_reference: order.orderId,
+      pricing: buildCheckoutPricingMetadata({
+        currencyCode: order.currencyCode,
+        subtotalAmount: order.totals.subtotalAmount.amount,
+        shippingAmount: order.totals.shippingAmount?.amount,
+        taxAmount: order.totals.taxAmount?.amount,
+        totalAmount: order.totals.totalAmount.amount,
+        discounts: order.totals.discounts,
+        discountAmount: order.totals.discountAmount?.amount,
+        discountCode: order.totals.discountCode,
+        paymentMethod: 'interac',
+      }),
+      interac: {
+        message_code: order.payment.messageCode,
+        recipient_email: order.payment.recipientEmail,
+        expected_sender_email: order.payment.expectedSenderEmail,
+        expected_sender_name: order.payment.expectedSenderName,
+        cad_amount: order.payment.cadAmount,
+        status: order.payment.status,
+        received_amount: order.payment.receivedAmount ?? null,
+        sender_name: order.payment.senderName ?? null,
+        reply_to_email: order.payment.replyToEmail ?? null,
+        bank_reference: order.payment.bankReference ?? null,
+        gmail_message_id: order.payment.gmailMessageId ?? null,
+        sender_mismatch: order.payment.senderMismatch ?? false,
+        confirmed_at: order.payment.confirmedAt ?? null,
+      },
+    },
+  });
+
+  if (order.payment.status !== 'paid') {
+    return null;
+  }
+
+  if (order.payment.swellPaymentId) {
+    return null;
+  }
+
+  const swellPayment = await createSwellOrderPayment({
+    account_id: order.swell.accountId,
+    order_id: order.swell.orderId,
+    amount: Number(order.totals.totalAmount.amount),
+    currency: order.currencyCode,
+    method: manualMethod,
+    transaction_id:
+      order.payment.bankReference ||
+      order.payment.gmailMessageId ||
+      order.payment.messageCode,
+    authorized: true,
+    captured: true,
+  });
+
+  await updateCheckoutOrder(order.orderId, current => {
+    if (!isInteracPayment(current.payment)) return current;
     return {
       ...current,
       payment: {

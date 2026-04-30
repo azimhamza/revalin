@@ -40,7 +40,7 @@ const FEATURES = [
   {
     icon: Zap,
     title: 'Same-Day Shipping',
-    description: 'Orders placed before cutoff ship the same day from Waterloo, Ontario with full tracking.',
+    description: 'Orders placed before cutoff ship the same day with full tracking. Proudly Canadian.',
     accent: '#1B4332',
   },
   {

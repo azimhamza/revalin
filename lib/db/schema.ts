@@ -98,6 +98,22 @@ export const productNotificationDispatchStatusEnum = pgEnum(
   ["pending", "completed", "partial_failure", "failed"],
 );
 
+export const interacEmailEventStatusEnum = pgEnum("interac_email_event_status", [
+  "received",
+  "matched_paid",
+  "matched_partial",
+  "review_required",
+  "ignored",
+  "parser_failed",
+]);
+
+export const interacReviewStatusEnum = pgEnum("interac_review_status", [
+  "open",
+  "resolved",
+  "ignored",
+  "refunded",
+]);
+
 export const researchPaperStatusEnum = pgEnum("research_paper_status", [
   "draft",
   "published",
@@ -279,6 +295,106 @@ export const wallets = pgTable("wallets", {
     .defaultNow()
     .notNull(),
 });
+
+export const gmailWatchState = pgTable(
+  "gmail_watch_state",
+  {
+    mailbox: varchar("mailbox", { length: 256 }).primaryKey(),
+    topicName: text("topic_name").notNull(),
+    lastHistoryId: varchar("last_history_id", { length: 128 }),
+    expiration: timestamp("expiration", { withTimezone: true }),
+    lastRenewedAt: timestamp("last_renewed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("gmail_watch_state_updated_at_idx").on(table.updatedAt)],
+);
+
+export const interacEmailEvents = pgTable(
+  "interac_email_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    gmailMessageId: varchar("gmail_message_id", { length: 128 }).notNull(),
+    pubsubMessageId: varchar("pubsub_message_id", { length: 128 }),
+    historyId: varchar("history_id", { length: 128 }),
+    status: interacEmailEventStatusEnum("status").default("received").notNull(),
+    matchedOrderId: varchar("matched_order_id", { length: 64 }).references(
+      () => checkoutOrders.orderId,
+      { onDelete: "set null" },
+    ),
+    reviewReason: varchar("review_reason", { length: 64 }),
+    parserError: text("parser_error"),
+    subject: text("subject"),
+    fromAddress: text("from_address"),
+    toAddress: text("to_address"),
+    replyToAddress: text("reply_to_address"),
+    authenticationResults: text("authentication_results"),
+    authenticity: jsonb("authenticity"),
+    parsed: jsonb("parsed"),
+    rawText: text("raw_text"),
+    rawHtml: text("raw_html"),
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("interac_email_events_gmail_message_unique_idx").on(
+      table.gmailMessageId,
+    ),
+    index("interac_email_events_status_idx").on(table.status),
+    index("interac_email_events_matched_order_idx").on(table.matchedOrderId),
+    index("interac_email_events_created_at_idx").on(table.createdAt),
+  ],
+);
+
+export const interacReviewItems = pgTable(
+  "interac_review_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orderId: varchar("order_id", { length: 64 }).references(
+      () => checkoutOrders.orderId,
+      { onDelete: "set null" },
+    ),
+    eventId: uuid("event_id").references(() => interacEmailEvents.id, {
+      onDelete: "set null",
+    }),
+    status: interacReviewStatusEnum("status").default("open").notNull(),
+    reason: varchar("reason", { length: 64 }).notNull(),
+    expectedAmount: varchar("expected_amount", { length: 32 }),
+    receivedAmount: varchar("received_amount", { length: 32 }),
+    messageCode: varchar("message_code", { length: 64 }),
+    senderName: text("sender_name"),
+    senderEmail: text("sender_email"),
+    bankReference: varchar("bank_reference", { length: 128 }),
+    screenshotUrls: jsonb("screenshot_urls"),
+    adminNotes: text("admin_notes"),
+    resolvedByUserId: text("resolved_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("interac_review_items_status_idx").on(table.status),
+    index("interac_review_items_order_idx").on(table.orderId),
+    index("interac_review_items_reason_idx").on(table.reason),
+    index("interac_review_items_created_at_idx").on(table.createdAt),
+  ],
+);
 
 export const affiliates = pgTable(
   "affiliates",
@@ -932,6 +1048,8 @@ export const checkoutDrafts = pgTable(
     paymentMethod: varchar("payment_method", { length: 32 }),
     paymentCurrency: varchar("payment_currency", { length: 16 }),
     sourceWalletAddress: text("source_wallet_address"),
+    interacSenderEmail: varchar("interac_sender_email", { length: 256 }),
+    interacSenderName: varchar("interac_sender_name", { length: 256 }),
     discountCode: varchar("discount_code", { length: 128 }),
     pricingSnapshot: jsonb("pricing_snapshot"),
     providerQuoteCache: jsonb("provider_quote_cache"),

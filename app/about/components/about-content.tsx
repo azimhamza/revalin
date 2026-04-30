@@ -60,7 +60,7 @@ const STATS = [
   { label: 'Avg Purity', value: '>99%' },
   { label: 'Testing', value: 'Janoshik' },
   { label: 'Dispatch', value: 'Same day' },
-  { label: 'Origin', value: 'Waterloo, CA' },
+  { label: 'Origin', value: 'Canada' },
 ] as const;
 
 function SectionMarker({ number }: { number: string }) {
@@ -112,7 +112,7 @@ export function AboutContent() {
             transition={{ duration: 0.7, ease: EASE }}
             className="font-mono text-[11px] font-medium uppercase tracking-[0.24em] text-[#0B2E2F]/55"
           >
-            Revalin — Est. Waterloo, Canada
+            Revalin — Proudly Canadian
           </motion.p>
 
           <motion.h1
@@ -282,7 +282,7 @@ export function AboutContent() {
               </Paragraph>
               <Paragraph>
                 We maintain average purity above 99% across all active compounds. Orders ship
-                same-day from Waterloo, Canada. Free shipping over $250. Full tracking on every
+                same-day from Canada. Free shipping over $250 USD or $350 CAD. Full tracking on every
                 shipment.
               </Paragraph>
             </motion.div>
@@ -359,7 +359,7 @@ export function AboutContent() {
             viewport={{ once: true, amount: 0.6 }}
             transition={{ duration: 0.9, ease: EASE }}
           >
-            From Waterloo, Canada. Built for people who take this seriously.
+            Proudly Canadian. Built for people who take this seriously.
           </motion.p>
         </div>
       </section>
