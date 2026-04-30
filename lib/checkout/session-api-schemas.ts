@@ -60,6 +60,8 @@ export const checkoutSessionCreateSchema = z.object({
   sourceWalletAddress: z.string().trim().max(255).optional(),
   interacSenderEmail: z.string().trim().email().optional(),
   interacSenderName: z.string().trim().min(1).max(256).optional(),
+  interacSecurityQuestion: z.string().trim().max(256).optional(),
+  interacSecurityAnswer: z.string().trim().max(256).optional(),
   discountCode: z.string().trim().optional(),
 });
 

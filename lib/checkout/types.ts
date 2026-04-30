@@ -134,6 +134,8 @@ export type InteracPaymentData = {
   cadAmount: string;
   expectedSenderEmail: string;
   expectedSenderName: string;
+  securityQuestion?: string | null;
+  securityAnswer?: string | null;
   expiresAt: string;
   submittedAt?: string;
   screenshotUrls?: string[];

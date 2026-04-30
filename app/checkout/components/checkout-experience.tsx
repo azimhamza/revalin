@@ -113,6 +113,9 @@ type CheckoutDraft = {
   sourceWalletAddress: string;
   interacSenderEmail: string;
   interacSenderName: string;
+  interacHasSecurityQuestion: boolean;
+  interacSecurityQuestion: string;
+  interacSecurityAnswer: string;
   discountCode: string;
   appliedDiscount: AppliedDiscount | null;
   apiSession: CheckoutApiSession | null;
@@ -370,6 +373,11 @@ function parseCheckoutDraft(rawDraft: string | null): CheckoutDraft | null {
         typeof parsed.interacSenderEmail === 'string' ? parsed.interacSenderEmail : '',
       interacSenderName:
         typeof parsed.interacSenderName === 'string' ? parsed.interacSenderName : '',
+      interacHasSecurityQuestion: parsed.interacHasSecurityQuestion === true,
+      interacSecurityQuestion:
+        typeof parsed.interacSecurityQuestion === 'string' ? parsed.interacSecurityQuestion : '',
+      interacSecurityAnswer:
+        typeof parsed.interacSecurityAnswer === 'string' ? parsed.interacSecurityAnswer : '',
       discountCode: typeof parsed.discountCode === 'string' ? parsed.discountCode : '',
       appliedDiscount:
         parsed.appliedDiscount &&
@@ -969,6 +977,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const [sourceWalletAddress, setSourceWalletAddress] = useState('');
   const [interacSenderEmail, setInteracSenderEmail] = useState('');
   const [interacSenderName, setInteracSenderName] = useState('');
+  const [interacHasSecurityQuestion, setInteracHasSecurityQuestion] = useState(false);
+  const [interacSecurityQuestion, setInteracSecurityQuestion] = useState('');
+  const [interacSecurityAnswer, setInteracSecurityAnswer] = useState('');
   const [isSubmittingInterac, setIsSubmittingInterac] = useState(false);
   const [isUploadingInteracScreenshot, setIsUploadingInteracScreenshot] = useState(false);
   const [discountCode, setDiscountCode] = useState(initialDiscountCode);
@@ -998,6 +1009,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const quoteAbortController = useRef<AbortController | null>(null);
   const previousPaymentSnapshot = useRef<{ orderId: string; status: string } | null>(null);
   const shieldClimbPaymentWindow = useRef<Window | null>(null);
+  const interacSenderDefaults = useRef({ email: '', name: '' });
 
   const orderId = searchParams.get('order');
   const accessKey = searchParams.get('key');
@@ -1010,6 +1022,16 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     quote?.services.find(service => service.id === selectedShippingServiceId) ||
     quote?.services.find(service => service.id === quote.selectedServiceId) ||
     null;
+  const defaultInteracSenderEmail = shippingAddress.email.trim();
+  const defaultInteracSenderName = `${shippingAddress.firstName} ${shippingAddress.lastName}`.trim();
+  const effectiveInteracSenderEmail = interacSenderEmail.trim() || defaultInteracSenderEmail;
+  const effectiveInteracSenderName = interacSenderName.trim() || defaultInteracSenderName;
+  const effectiveInteracSecurityQuestion = interacHasSecurityQuestion
+    ? interacSecurityQuestion.trim()
+    : '';
+  const effectiveInteracSecurityAnswer = interacHasSecurityQuestion
+    ? interacSecurityAnswer.trim()
+    : '';
 
   const summaryCurrencyCode = activeOrder?.currencyCode || quote?.currencyCode || cart?.cost.totalAmount.currencyCode || 'USD';
   const summaryItems = activeOrder
@@ -1362,6 +1384,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         setSourceWalletAddress(checkoutDraft.sourceWalletAddress);
         setInteracSenderEmail(checkoutDraft.interacSenderEmail);
         setInteracSenderName(checkoutDraft.interacSenderName);
+        setInteracHasSecurityQuestion(checkoutDraft.interacHasSecurityQuestion);
+        setInteracSecurityQuestion(checkoutDraft.interacSecurityQuestion);
+        setInteracSecurityAnswer(checkoutDraft.interacSecurityAnswer);
         setCheckoutApiSession(hydratedApiSession);
         const hydratedDiscountCode = initialDiscountCode || checkoutDraft.discountCode;
         const hydratedAppliedDiscount =
@@ -1476,6 +1501,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         sourceWalletAddress,
         interacSenderEmail,
         interacSenderName,
+        interacHasSecurityQuestion,
+        interacSecurityQuestion,
+        interacSecurityAnswer,
         discountCode,
         appliedDiscount,
         apiSession: checkoutApiSession,
@@ -1496,6 +1524,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     paymentMethod,
     interacSenderEmail,
     interacSenderName,
+    interacHasSecurityQuestion,
+    interacSecurityQuestion,
+    interacSecurityAnswer,
     shippingAddress,
     sourceWalletAddress,
     cartSignature,
@@ -1711,6 +1742,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
           setPaymentMethod('interac');
           setInteracSenderEmail(data.order.payment.expectedSenderEmail || '');
           setInteracSenderName(data.order.payment.expectedSenderName || '');
+          setInteracHasSecurityQuestion(Boolean(
+            data.order.payment.securityQuestion || data.order.payment.securityAnswer,
+          ));
+          setInteracSecurityQuestion(data.order.payment.securityQuestion || '');
+          setInteracSecurityAnswer(data.order.payment.securityAnswer || '');
           setSourceWalletAddress('');
         } else {
           setPaymentMethod('card');
@@ -1866,12 +1902,60 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     updateCheckoutUrl();
   }, [clearStoredCheckoutResume, resetQuoteState, updateCheckoutUrl]);
 
+  const fillInteracSenderDetails = useCallback((address: CheckoutShippingAddress = shippingAddress) => {
+    const nextEmail = address.email.trim();
+    const nextName = `${address.firstName} ${address.lastName}`.trim();
+    const previousDefaults = interacSenderDefaults.current;
+
+    if (nextEmail) {
+      setInteracSenderEmail(current => {
+        const normalizedCurrent = current.trim();
+        return !normalizedCurrent || normalizedCurrent === previousDefaults.email
+          ? nextEmail
+          : current;
+      });
+    }
+
+    if (nextName) {
+      setInteracSenderName(current => {
+        const normalizedCurrent = current.trim();
+        return !normalizedCurrent || normalizedCurrent === previousDefaults.name
+          ? nextName
+          : current;
+      });
+    }
+
+    interacSenderDefaults.current = {
+      email: nextEmail || previousDefaults.email,
+      name: nextName || previousDefaults.name,
+    };
+  }, [shippingAddress]);
+
+  const selectPaymentMethod = useCallback((nextPaymentMethod: 'card' | 'crypto' | 'interac') => {
+    if (nextPaymentMethod === 'interac') {
+      fillInteracSenderDetails();
+    }
+
+    setPaymentMethod(nextPaymentMethod);
+  }, [fillInteracSenderDetails]);
+
   const handleShippingChange = (name: keyof CheckoutShippingAddress, value: string) => {
     setShippingAddress(current => ({ ...current, [name]: value }));
     if (!activeOrder) {
       resetQuoteState();
     }
   };
+
+  useEffect(() => {
+    if (!isDraftHydrated || activeOrder || paymentMethod !== 'interac') return;
+    fillInteracSenderDetails(shippingAddress);
+  }, [
+    activeOrder,
+    fillInteracSenderDetails,
+    isDraftHydrated,
+    paymentMethod,
+    shippingAddress,
+  ]);
 
   const handleDiscountCodeChange = (value: string) => {
     const normalizedCode = value.trim().toUpperCase();
@@ -1899,8 +1983,22 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       paymentMethod,
       paymentCurrency,
       sourceWalletAddress: sourceWalletAddress.trim() || undefined,
-      interacSenderEmail: interacSenderEmail.trim() || undefined,
-      interacSenderName: interacSenderName.trim() || undefined,
+      interacSenderEmail:
+        paymentMethod === 'interac'
+          ? effectiveInteracSenderEmail || undefined
+          : interacSenderEmail.trim() || undefined,
+      interacSenderName:
+        paymentMethod === 'interac'
+          ? effectiveInteracSenderName || undefined
+          : interacSenderName.trim() || undefined,
+      interacSecurityQuestion:
+        paymentMethod === 'interac'
+          ? effectiveInteracSecurityQuestion || undefined
+          : undefined,
+      interacSecurityAnswer:
+        paymentMethod === 'interac'
+          ? effectiveInteracSecurityAnswer || undefined
+          : undefined,
       discountCode:
         overrides?.discountCode !== undefined
           ? overrides.discountCode || undefined
@@ -1911,6 +2009,10 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     [
       appliedDiscount?.code,
       cartSnapshot,
+      effectiveInteracSenderEmail,
+      effectiveInteracSenderName,
+      effectiveInteracSecurityQuestion,
+      effectiveInteracSecurityAnswer,
       interacSenderEmail,
       interacSenderName,
       paymentCurrency,
@@ -2304,7 +2406,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       return;
     }
 
-    if (paymentMethod === 'interac' && (!interacSenderEmail.trim() || !interacSenderName.trim())) {
+    if (paymentMethod === 'interac' && (!effectiveInteracSenderEmail || !effectiveInteracSenderName)) {
       setError('Enter the email and name you will use for the Interac e-Transfer.');
       return;
     }
@@ -2381,6 +2483,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       } else if (isInteracOrder(data.order.payment)) {
         setInteracSenderEmail(data.order.payment.expectedSenderEmail || '');
         setInteracSenderName(data.order.payment.expectedSenderName || '');
+        setInteracHasSecurityQuestion(Boolean(
+          data.order.payment.securityQuestion || data.order.payment.securityAnswer,
+        ));
+        setInteracSecurityQuestion(data.order.payment.securityQuestion || '');
+        setInteracSecurityAnswer(data.order.payment.securityAnswer || '');
         setSourceWalletAddress('');
       } else {
         setSourceWalletAddress('');
@@ -2443,6 +2550,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     isCardCheckoutDisabled,
     interacSenderEmail,
     interacSenderName,
+    effectiveInteracSenderEmail,
+    effectiveInteracSenderName,
     paymentMethod,
     selectedShippingServiceId,
     syncCheckoutUrlImmediately,
@@ -2680,7 +2789,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         setCheckoutSession(null);
         setQuote(null);
         setSelectedShippingServiceId(preservedShippingServiceId);
-        setPaymentMethod(nextPaymentMethod);
+        selectPaymentMethod(nextPaymentMethod);
         lastQuoteRequestSignature.current = null;
         syncCheckoutUrlImmediately();
         updateCheckoutUrl();
@@ -2704,6 +2813,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       checkoutSession,
       quoteRequestSignature,
       requestQuote,
+      selectPaymentMethod,
       shippingAddress,
       syncCheckoutUrlImmediately,
       updateCheckoutUrl,
@@ -2850,7 +2960,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     !(paymentMethod === 'card' && isCardCheckoutDisabled) &&
     !(
       paymentMethod === 'interac' &&
-      (!interacSenderEmail.trim() || !interacSenderName.trim())
+      (!effectiveInteracSenderEmail || !effectiveInteracSenderName)
     );
 
   return (
@@ -3136,7 +3246,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                         type="button"
                         onClick={() => {
                           if (isCardCheckoutDisabled) return;
-                          setPaymentMethod('card');
+                          selectPaymentMethod('card');
                         }}
                         disabled={isCardCheckoutDisabled}
                         className={cn(
@@ -3175,7 +3285,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
                       <button
                         type="button"
-                        onClick={() => setPaymentMethod('crypto')}
+                        onClick={() => selectPaymentMethod('crypto')}
                         className={cn(
                           'flex items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition-all',
                           paymentMethod === 'crypto'
@@ -3200,7 +3310,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
                       <button
                         type="button"
-                        onClick={() => setPaymentMethod('interac')}
+                        onClick={() => selectPaymentMethod('interac')}
                         className={cn(
                           'flex items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition-all',
                           paymentMethod === 'interac'
@@ -3306,11 +3416,49 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                             />
                           </label>
                         </div>
+                        <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-white px-3.5 py-3">
+                          <input
+                            type="checkbox"
+                            checked={interacHasSecurityQuestion}
+                            onChange={event => setInteracHasSecurityQuestion(event.target.checked)}
+                            className="mt-0.5 size-4 rounded border-border accent-[#0B2E2F]"
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold">My e-Transfer has a security question</span>
+                            <span className="mt-0.5 block text-xs leading-5 text-foreground/50">
+                              Optional. Only add this if your bank does not use Autodeposit for this transfer.
+                            </span>
+                          </span>
+                        </label>
+                        {interacHasSecurityQuestion ? (
+                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">Security question</span>
+                              <Input
+                                type="text"
+                                value={interacSecurityQuestion}
+                                onChange={event => setInteracSecurityQuestion(event.target.value)}
+                                placeholder="Question shown by your bank"
+                                className="h-11 rounded-xl border-border bg-white"
+                              />
+                            </label>
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">Security answer</span>
+                              <Input
+                                type="text"
+                                value={interacSecurityAnswer}
+                                onChange={event => setInteracSecurityAnswer(event.target.value)}
+                                placeholder="Answer we should use"
+                                className="h-11 rounded-xl border-border bg-white"
+                              />
+                            </label>
+                          </div>
+                        ) : null}
                       </div>
                     ) : (
                       <div className="mt-3 space-y-2">
                         <p className="px-1 text-xs text-foreground/45">
-                          Want to save 5%? Choose <button type="button" onClick={() => setPaymentMethod('crypto')} className="font-semibold text-[#0B2E2F] underline underline-offset-2">Direct Crypto</button> above and pay from your wallet.
+                          Want to save 5%? Choose <button type="button" onClick={() => selectPaymentMethod('crypto')} className="font-semibold text-[#0B2E2F] underline underline-offset-2">Direct Crypto</button> above and pay from your wallet.
                         </p>
                       </div>
                     )}
@@ -3873,6 +4021,15 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                                 <p className="mt-1 text-sm font-semibold">{interacPayment.expectedSenderName}</p>
                                 <p className="mt-0.5 break-all text-xs text-foreground/50">{interacPayment.expectedSenderEmail}</p>
                               </div>
+                              {interacPayment.securityQuestion || interacPayment.securityAnswer ? (
+                                <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Security question</p>
+                                  <p className="mt-1 text-sm font-semibold">{interacPayment.securityQuestion || 'Not provided'}</p>
+                                  {interacPayment.securityAnswer ? (
+                                    <p className="mt-0.5 break-all text-xs text-foreground/50">Answer: {interacPayment.securityAnswer}</p>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               <div className="rounded-xl border border-border/60 bg-white px-3.5 py-2.5">
                                 <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Status</p>
                                 <p className="mt-1 text-sm font-semibold capitalize">{formatPaymentStatus(paymentStatus)}</p>

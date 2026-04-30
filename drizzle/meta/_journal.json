@@ -141,6 +141,13 @@
       "when": 1777507200000,
       "tag": "0019_interac_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1777579200000,
+      "tag": "0020_interac_security_question",
+      "breakpoints": true
     }
   ]
 }

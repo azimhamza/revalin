@@ -122,6 +122,8 @@ type FinalizeCheckoutInput = {
   sourceWalletAddress?: string | null;
   interacSenderEmail?: string | null;
   interacSenderName?: string | null;
+  interacSecurityQuestion?: string | null;
+  interacSecurityAnswer?: string | null;
   selectedShippingServiceId: string;
   discountCode?: string | null;
   requestUrl: URL;
@@ -337,6 +339,20 @@ function doesExistingOrderMatchCheckoutAttempt(args: {
     if (
       normalizeComparableValue(args.existingOrder.payment.expectedSenderName) !==
       normalizeComparableValue(args.input.interacSenderName)
+    ) {
+      return false;
+    }
+
+    if (
+      normalizeComparableValue(args.existingOrder.payment.securityQuestion) !==
+      normalizeComparableValue(args.input.interacSecurityQuestion)
+    ) {
+      return false;
+    }
+
+    if (
+      normalizeComparableValue(args.existingOrder.payment.securityAnswer) !==
+      normalizeComparableValue(args.input.interacSecurityAnswer)
     ) {
       return false;
     }
@@ -916,6 +932,8 @@ function buildInteracOrderRecord(args: {
   cadAmount: string;
   expectedSenderEmail: string;
   expectedSenderName: string;
+  securityQuestion?: string | null;
+  securityAnswer?: string | null;
   expiresAt: string;
   amountPaidToDate?: string;
   attemptAmount?: string;
@@ -933,6 +951,8 @@ function buildInteracOrderRecord(args: {
     cadAmount: args.cadAmount,
     expectedSenderEmail: args.expectedSenderEmail,
     expectedSenderName: args.expectedSenderName,
+    securityQuestion: args.securityQuestion ?? null,
+    securityAnswer: args.securityAnswer ?? null,
     expiresAt: args.expiresAt,
     screenshotUrls: [],
     createdAt: now,
@@ -1575,6 +1595,8 @@ export function createFinalizeCheckoutSession(
       if (args.paymentMethod === 'interac') {
         const expectedSenderEmail = args.interacSenderEmail?.trim();
         const expectedSenderName = args.interacSenderName?.trim();
+        const securityQuestion = args.interacSecurityQuestion?.trim() || null;
+        const securityAnswer = args.interacSecurityAnswer?.trim() || null;
         if (!expectedSenderEmail || !expectedSenderName) {
           throw apiError.badRequest('Enter the Interac sender email and name before creating the payment.');
         }
@@ -1617,6 +1639,8 @@ export function createFinalizeCheckoutSession(
               recipient_email: recipientEmail,
               expected_sender_email: expectedSenderEmail,
               expected_sender_name: expectedSenderName,
+              security_question: securityQuestion,
+              security_answer: securityAnswer,
               cad_amount: cadAmount,
               expires_at: expiresAt,
               status: 'awaiting_transfer',
@@ -1666,6 +1690,8 @@ export function createFinalizeCheckoutSession(
           cadAmount,
           expectedSenderEmail,
           expectedSenderName,
+          securityQuestion,
+          securityAnswer,
           expiresAt,
           amountPaidToDate,
           attemptAmount: remainderPaymentAmount.toFixed(2),

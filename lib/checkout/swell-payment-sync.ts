@@ -218,6 +218,8 @@ export async function syncInteracOrderToSwell(order: CheckoutOrderRecord) {
         recipient_email: order.payment.recipientEmail,
         expected_sender_email: order.payment.expectedSenderEmail,
         expected_sender_name: order.payment.expectedSenderName,
+        security_question: order.payment.securityQuestion ?? null,
+        security_answer: order.payment.securityAnswer ?? null,
         cad_amount: order.payment.cadAmount,
         status: order.payment.status,
         received_amount: order.payment.receivedAmount ?? null,

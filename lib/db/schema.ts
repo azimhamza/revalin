@@ -1050,6 +1050,8 @@ export const checkoutDrafts = pgTable(
     sourceWalletAddress: text("source_wallet_address"),
     interacSenderEmail: varchar("interac_sender_email", { length: 256 }),
     interacSenderName: varchar("interac_sender_name", { length: 256 }),
+    interacSecurityQuestion: varchar("interac_security_question", { length: 256 }),
+    interacSecurityAnswer: varchar("interac_security_answer", { length: 256 }),
     discountCode: varchar("discount_code", { length: 128 }),
     pricingSnapshot: jsonb("pricing_snapshot"),
     providerQuoteCache: jsonb("provider_quote_cache"),

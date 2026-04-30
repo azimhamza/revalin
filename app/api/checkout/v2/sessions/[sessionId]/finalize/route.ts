@@ -117,6 +117,8 @@ export const POST = createApiRoute({
         sourceWalletAddress: session.sourceWalletAddress,
         interacSenderEmail: session.interacSenderEmail,
         interacSenderName: session.interacSenderName,
+        interacSecurityQuestion: session.interacSecurityQuestion,
+        interacSecurityAnswer: session.interacSecurityAnswer,
         selectedShippingServiceId: session.selectedShippingServiceId,
         discountCode: session.discountCode,
         requestUrl: new URL(request.url),

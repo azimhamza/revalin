@@ -35,6 +35,8 @@ export function toCheckoutSessionState(session: CheckoutSessionRecord) {
       sourceWalletAddress: session.sourceWalletAddress,
       interacSenderEmail: session.interacSenderEmail,
       interacSenderName: session.interacSenderName,
+      interacSecurityQuestion: session.interacSecurityQuestion,
+      interacSecurityAnswer: session.interacSecurityAnswer,
       discountCode: session.discountCode,
       pricingSnapshot: session.pricingSnapshot,
       providerQuoteCache: session.providerQuoteCache,
@@ -55,6 +57,8 @@ export function buildSessionChanges(body: {
   sourceWalletAddress?: string;
   interacSenderEmail?: string;
   interacSenderName?: string;
+  interacSecurityQuestion?: string;
+  interacSecurityAnswer?: string;
   discountCode?: string;
 }) {
   return {
@@ -67,6 +71,8 @@ export function buildSessionChanges(body: {
     sourceWalletAddress: body.sourceWalletAddress?.trim() || null,
     interacSenderEmail: body.interacSenderEmail?.trim() || null,
     interacSenderName: body.interacSenderName?.trim() || null,
+    interacSecurityQuestion: body.interacSecurityQuestion?.trim() || null,
+    interacSecurityAnswer: body.interacSecurityAnswer?.trim() || null,
     discountCode: body.discountCode
       ? normalizeSwellCouponCode(body.discountCode) || null
       : null,

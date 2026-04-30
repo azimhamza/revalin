@@ -28,6 +28,8 @@ export type CheckoutSessionRecord = {
   sourceWalletAddress: string | null;
   interacSenderEmail: string | null;
   interacSenderName: string | null;
+  interacSecurityQuestion: string | null;
+  interacSecurityAnswer: string | null;
   discountCode: string | null;
   pricingSnapshot: Record<string, unknown> | null;
   providerQuoteCache: Record<string, unknown> | null;
@@ -51,6 +53,8 @@ type UpsertSessionInput = {
   sourceWalletAddress?: string | null;
   interacSenderEmail?: string | null;
   interacSenderName?: string | null;
+  interacSecurityQuestion?: string | null;
+  interacSecurityAnswer?: string | null;
   discountCode?: string | null;
   pricingSnapshot?: Record<string, unknown> | null;
   providerQuoteCache?: Record<string, unknown> | null;
@@ -92,6 +96,8 @@ function rowToSession(row: typeof checkoutDrafts.$inferSelect): CheckoutSessionR
     sourceWalletAddress: row.sourceWalletAddress ?? null,
     interacSenderEmail: row.interacSenderEmail ?? null,
     interacSenderName: row.interacSenderName ?? null,
+    interacSecurityQuestion: row.interacSecurityQuestion ?? null,
+    interacSecurityAnswer: row.interacSecurityAnswer ?? null,
     discountCode: row.discountCode ?? null,
     pricingSnapshot: asNullableRecord(row.pricingSnapshot),
     providerQuoteCache: asNullableRecord(row.providerQuoteCache),
@@ -137,6 +143,8 @@ export async function createCheckoutSession(input: UpsertSessionInput = {}) {
       sourceWalletAddress: input.sourceWalletAddress ?? null,
       interacSenderEmail: input.interacSenderEmail ?? null,
       interacSenderName: input.interacSenderName ?? null,
+      interacSecurityQuestion: input.interacSecurityQuestion ?? null,
+      interacSecurityAnswer: input.interacSecurityAnswer ?? null,
       discountCode: input.discountCode ?? null,
       pricingSnapshot: input.pricingSnapshot ?? null,
       providerQuoteCache: input.providerQuoteCache ?? null,
@@ -251,6 +259,14 @@ export async function updateCheckoutSession(args: {
         args.changes.interacSenderName === undefined
           ? current.interacSenderName
           : args.changes.interacSenderName,
+      interacSecurityQuestion:
+        args.changes.interacSecurityQuestion === undefined
+          ? current.interacSecurityQuestion
+          : args.changes.interacSecurityQuestion,
+      interacSecurityAnswer:
+        args.changes.interacSecurityAnswer === undefined
+          ? current.interacSecurityAnswer
+          : args.changes.interacSecurityAnswer,
       discountCode:
         args.changes.discountCode === undefined
           ? current.discountCode
