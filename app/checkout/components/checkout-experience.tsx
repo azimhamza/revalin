@@ -1009,6 +1009,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const quoteAbortController = useRef<AbortController | null>(null);
   const previousPaymentSnapshot = useRef<{ orderId: string; status: string } | null>(null);
   const shieldClimbPaymentWindow = useRef<Window | null>(null);
+  const recentlyFinalizedCheckout = useRef<{ orderId: string; accessKey: string; expiresAt: number } | null>(null);
+  const restoreRequestVersion = useRef(0);
+  const checkoutSessionRef = useRef<CheckoutSession | null>(null);
   const interacSenderDefaults = useRef({ email: '', name: '' });
 
   const orderId = searchParams.get('order');
@@ -1018,6 +1021,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const retryKey = searchParams.get('key');
 
   const activeOrder = checkoutSession?.order ?? null;
+  checkoutSessionRef.current = checkoutSession;
+  const isCurrentCheckoutSession = (nextOrderId: string, nextAccessKey: string) => {
+    const current = checkoutSessionRef.current;
+    return current?.accessKey === nextAccessKey && current.order.orderId === nextOrderId;
+  };
   const selectedQuoteService =
     quote?.services.find(service => service.id === selectedShippingServiceId) ||
     quote?.services.find(service => service.id === quote.selectedServiceId) ||
@@ -1544,6 +1552,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
     previousCartSignature.current = cartSignature;
 
+    const finalized = recentlyFinalizedCheckout.current;
+    if (finalized && finalized.expiresAt > Date.now()) {
+      return;
+    }
+
     if (!activeOrder) {
       quoteAbortController.current?.abort();
       setQuote(null);
@@ -1611,34 +1624,139 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     if (!isDraftHydrated) return;
     if (orderId || accessKey || activeOrder) return;
 
+    let cancelled = false;
+
     try {
       const resume = readStoredCheckoutResume();
-      if (!resume) return;
+      if (!resume) {
+        return;
+      }
 
       if (!Number.isFinite(Date.parse(resume.savedAt)) || isCheckoutResumeExpired(resume)) {
         clearStoredCheckoutResume();
         return;
       }
 
+      const requestVersion = restoreRequestVersion.current + 1;
+      restoreRequestVersion.current = requestVersion;
+      recentlyFinalizedCheckout.current = {
+        orderId: resume.orderId,
+        accessKey: resume.accessKey,
+        expiresAt: Date.now() + 10_000,
+      };
+      setIsLoadingOrder(true);
       followCheckoutOrder(resume.orderId, resume.accessKey);
+
+      fetch(`/api/checkout/v2/orders/${encodeURIComponent(resume.orderId)}?key=${encodeURIComponent(resume.accessKey)}`, {
+        cache: 'no-store',
+      })
+        .then(async response => {
+          const payload = await readJsonSafely(response);
+          if (response.status === 429) {
+            return;
+          }
+          if (!response.ok) {
+            throw new Error(getApiErrorMessage(payload, 'Unable to restore checkout session.'));
+          }
+          const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
+          if (!data?.order) {
+            throw new Error('Unable to restore checkout session.');
+          }
+
+          if (cancelled || restoreRequestVersion.current !== requestVersion) return;
+
+          const supersededByOrderId = data.order.payment.supersededByOrderId?.trim();
+          const supersededByAccessKey = data.order.payment.supersededByAccessKey?.trim();
+          if (
+            supersededByOrderId &&
+            supersededByAccessKey &&
+            (supersededByOrderId !== resume.orderId || supersededByAccessKey !== resume.accessKey)
+          ) {
+            followCheckoutOrder(supersededByOrderId, supersededByAccessKey);
+            return;
+          }
+
+          const normalizedPaymentStatus = data.order.payment.status.toLowerCase();
+          if (INACTIVE_CHECKOUT_RESTORE_STATUSES.has(normalizedPaymentStatus)) {
+            clearStoredCheckoutResume();
+            setCheckoutSession(null);
+            setQuote(null);
+            setSelectedShippingServiceId('');
+            setError(null);
+            syncCheckoutUrlImmediately();
+            updateCheckoutUrl();
+            return;
+          }
+
+          setCheckoutSession({ accessKey: resume.accessKey, order: data.order });
+          setShippingAddress(data.order.shippingAddress);
+          if (isNowPaymentsOrder(data.order.payment)) {
+            setPaymentMethod('crypto');
+            setPaymentCurrency(data.order.payment.paymentCurrency);
+            setSourceWalletAddress(data.order.payment.sourceWalletAddress || '');
+          } else if (isInteracOrder(data.order.payment)) {
+            setPaymentMethod('interac');
+            setInteracSenderEmail(data.order.payment.expectedSenderEmail || '');
+            setInteracSenderName(data.order.payment.expectedSenderName || '');
+            setInteracHasSecurityQuestion(Boolean(
+              data.order.payment.securityQuestion || data.order.payment.securityAnswer,
+            ));
+            setInteracSecurityQuestion(data.order.payment.securityQuestion || '');
+            setInteracSecurityAnswer(data.order.payment.securityAnswer || '');
+            setSourceWalletAddress('');
+          } else {
+            setPaymentMethod('card');
+            setSourceWalletAddress('');
+          }
+          setDiscountCode(data.order.totals.discountCode || discountParam || '');
+          setQuote(null);
+          setSelectedShippingServiceId(data.order.shippingService?.id || '');
+          setError(null);
+        })
+        .catch((fetchError: unknown) => {
+          if (!cancelled && restoreRequestVersion.current === requestVersion) {
+            setError(fetchError instanceof Error ? fetchError.message : 'Unable to restore checkout session.');
+          }
+        })
+        .finally(() => {
+          if (!cancelled && restoreRequestVersion.current === requestVersion) {
+            setIsLoadingOrder(false);
+          }
+        });
     } catch {
       clearStoredCheckoutResume();
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     accessKey,
     activeOrder,
     clearStoredCheckoutResume,
+    discountParam,
     followCheckoutOrder,
     isDraftHydrated,
     orderId,
+    syncCheckoutUrlImmediately,
+    updateCheckoutUrl,
   ]);
 
   useEffect(() => {
     if (!orderId || !accessKey) {
+      const finalized = recentlyFinalizedCheckout.current;
+      if (finalized && finalized.expiresAt > Date.now()) return;
+      recentlyFinalizedCheckout.current = null;
+      restoreRequestVersion.current += 1;
+      setIsLoadingOrder(false);
       if (activeOrder) return;
       setCheckoutSession(null);
       return;
     }
+
+    recentlyFinalizedCheckout.current = null;
+    const requestVersion = restoreRequestVersion.current + 1;
+    restoreRequestVersion.current = requestVersion;
 
     if (cartSignature === 'loading') {
       return;
@@ -1663,7 +1781,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
           throw new Error('Unable to restore checkout session.');
         }
 
-        if (cancelled) return;
+        if (cancelled || restoreRequestVersion.current !== requestVersion) return;
 
         const supersededByOrderId = data.order.payment.supersededByOrderId?.trim();
         const supersededByAccessKey = data.order.payment.supersededByAccessKey?.trim();
@@ -1758,13 +1876,17 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         setError(null);
       })
       .catch((fetchError: unknown) => {
-        if (!cancelled) {
+        if (!cancelled && restoreRequestVersion.current === requestVersion) {
           setError(fetchError instanceof Error ? fetchError.message : 'Unable to restore checkout session.');
-          setCheckoutSession(null);
+          setCheckoutSession(current => (
+            current?.accessKey === accessKey && current.order.orderId === orderId
+              ? current
+              : null
+          ));
         }
       })
       .finally(() => {
-        if (!cancelled) {
+        if (!cancelled && restoreRequestVersion.current === requestVersion) {
           setIsLoadingOrder(false);
         }
       });
@@ -1772,7 +1894,17 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     return () => {
       cancelled = true;
     };
-  }, [accessKey, cartSignature, clearStoredCheckoutResume, followCheckoutOrder, orderId]);
+  }, [
+    accessKey,
+    activeOrder,
+    cartSignature,
+    clearStoredCheckoutResume,
+    discountParam,
+    followCheckoutOrder,
+    orderId,
+    syncCheckoutUrlImmediately,
+    updateCheckoutUrl,
+  ]);
 
   useEffect(() => {
     if (!isDraftHydrated) return;
@@ -1867,7 +1999,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       const payload = await readJsonSafely(response);
       const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
       if (!data?.order) return;
-      setCheckoutSession(current => (current ? { ...current, order: data.order } : current));
+      setCheckoutSession(current => (
+        current?.accessKey === currentAccessKey && current.order.orderId === currentOrderId
+          ? { ...current, order: data.order }
+          : current
+      ));
     }, 12000);
 
     return () => {
@@ -1893,6 +2029,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   }, []);
 
   const resetCheckoutSession = useCallback(() => {
+    restoreRequestVersion.current += 1;
+    recentlyFinalizedCheckout.current = null;
     resetQuoteState();
     setCheckoutApiSession(null);
     setCheckoutSession(null);
@@ -2472,10 +2610,34 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         throw new Error('Unable to create payment.');
       }
 
+      restoreRequestVersion.current += 1;
+      quoteAbortController.current?.abort();
+      quoteAbortController.current = null;
+      recentlyFinalizedCheckout.current = {
+        orderId: data.order.orderId,
+        accessKey: data.accessKey,
+        expiresAt: Date.now() + 10_000,
+      };
+      try {
+        persistCheckoutResume({
+          version: 1,
+          orderId: data.order.orderId,
+          accessKey: data.accessKey,
+          provider: data.order.payment.provider,
+          status: data.order.payment.status,
+          savedAt: new Date().toISOString(),
+          updatedAt: data.order.updatedAt,
+        });
+      } catch {
+        // Best effort only.
+      }
+
       setCheckoutSession({
         accessKey: data.accessKey,
         order: data.order,
       });
+      setShippingAddress(data.order.shippingAddress);
+      setSelectedShippingServiceId(data.order.shippingService?.id || selectedShippingServiceId);
 
       if (isNowPaymentsOrder(data.order.payment)) {
         setPaymentCurrency(data.order.payment.paymentCurrency);
@@ -2596,15 +2758,17 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   }, [isCreatingPayment, submitCheckoutPayment]);
 
   const refreshStatus = async () => {
-    if (!pollingId) return;
+    if (!pollingId || !checkoutSession) return;
 
     setIsRefreshingStatus(true);
+    const currentOrderId = checkoutSession.order.orderId;
+    const currentAccessKey = checkoutSession.accessKey;
 
     try {
       const response = await fetch(
         `/api/checkout/v2/payments/${encodeURIComponent(
           pollingId
-        )}/status?orderId=${encodeURIComponent(checkoutSession!.order.orderId)}&key=${encodeURIComponent(checkoutSession!.accessKey)}`,
+        )}/status?orderId=${encodeURIComponent(currentOrderId)}&key=${encodeURIComponent(currentAccessKey)}`,
         {
           cache: 'no-store',
         }
@@ -2621,10 +2785,16 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         throw new Error('Unable to refresh payment status.');
       }
 
-      setCheckoutSession(current => (current ? { ...current, order: data.order } : current));
+      setCheckoutSession(current => (
+        current?.accessKey === currentAccessKey && current.order.orderId === currentOrderId
+          ? { ...current, order: data.order }
+          : current
+      ));
       setError(null);
     } catch (refreshError: unknown) {
-      setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh payment status.');
+      if (isCurrentCheckoutSession(currentOrderId, currentAccessKey)) {
+        setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh payment status.');
+      }
     } finally {
       setIsRefreshingStatus(false);
     }
@@ -2635,14 +2805,16 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
     setIsSubmittingInterac(true);
     setError(null);
+    const currentOrderId = activeOrder.orderId;
+    const currentAccessKey = checkoutSession.accessKey;
 
     try {
       const response = await fetch(
-        `/api/checkout/v2/orders/${encodeURIComponent(activeOrder.orderId)}/interac-submission`,
+        `/api/checkout/v2/orders/${encodeURIComponent(currentOrderId)}/interac-submission`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accessKey: checkoutSession.accessKey }),
+          body: JSON.stringify({ accessKey: currentAccessKey }),
         },
       );
       const payload = await readJsonSafely(response);
@@ -2651,11 +2823,17 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       }
       const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
       if (data?.order) {
-        setCheckoutSession(current => (current ? { ...current, order: data.order } : current));
+        setCheckoutSession(current => (
+          current?.accessKey === currentAccessKey && current.order.orderId === currentOrderId
+            ? { ...current, order: data.order }
+            : current
+        ));
       }
       await refreshStatus();
     } catch (submitError: unknown) {
-      setError(submitError instanceof Error ? submitError.message : 'Unable to update Interac status.');
+      if (isCurrentCheckoutSession(currentOrderId, currentAccessKey)) {
+        setError(submitError instanceof Error ? submitError.message : 'Unable to update Interac status.');
+      }
     } finally {
       setIsSubmittingInterac(false);
     }
@@ -2666,13 +2844,15 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
     setIsUploadingInteracScreenshot(true);
     setError(null);
+    const currentOrderId = activeOrder.orderId;
+    const currentAccessKey = checkoutSession.accessKey;
 
     try {
       const formData = new FormData();
-      formData.set('accessKey', checkoutSession.accessKey);
+      formData.set('accessKey', currentAccessKey);
       formData.set('file', file);
       const response = await fetch(
-        `/api/checkout/v2/orders/${encodeURIComponent(activeOrder.orderId)}/interac-screenshot`,
+        `/api/checkout/v2/orders/${encodeURIComponent(currentOrderId)}/interac-screenshot`,
         {
           method: 'POST',
           body: formData,
@@ -2684,11 +2864,19 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       }
       const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
       if (data?.order) {
-        setCheckoutSession(current => (current ? { ...current, order: data.order } : current));
+        setCheckoutSession(current => (
+          current?.accessKey === currentAccessKey && current.order.orderId === currentOrderId
+            ? { ...current, order: data.order }
+            : current
+        ));
       }
-      toast.success('Screenshot uploaded for review');
+      if (isCurrentCheckoutSession(currentOrderId, currentAccessKey)) {
+        toast.success('Screenshot uploaded for review');
+      }
     } catch (uploadError: unknown) {
-      setError(uploadError instanceof Error ? uploadError.message : 'Unable to upload screenshot.');
+      if (isCurrentCheckoutSession(currentOrderId, currentAccessKey)) {
+        setError(uploadError instanceof Error ? uploadError.message : 'Unable to upload screenshot.');
+      }
     } finally {
       setIsUploadingInteracScreenshot(false);
     }
@@ -2962,6 +3150,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       paymentMethod === 'interac' &&
       (!effectiveInteracSenderEmail || !effectiveInteracSenderName)
     );
+  const isCheckoutRestoring = !isDraftHydrated || (isLoadingOrder && !activeOrder);
 
   return (
     <div className="px-sides pb-16 pt-[5.75rem] md:pt-top-spacing">
@@ -3063,7 +3252,14 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
           {/* ── Main content ── */}
           <section>
-            {!activeOrder ? (
+            {isCheckoutRestoring ? (
+              <div className="rounded-[26px] border border-border/70 bg-card p-6 shadow-[0_20px_48px_rgba(11,46,47,0.04)]">
+                <div className="flex items-center gap-3 text-sm text-foreground/60">
+                  <Loader2 className="size-4 animate-spin text-[#0B2E2F]" />
+                  Restoring checkout...
+                </div>
+              </div>
+            ) : !activeOrder ? (
               <form onSubmit={handleCreatePayment}>
                 <div className="mb-4">
                   <CheckoutAuthBanner />
@@ -3426,7 +3622,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                           <span className="min-w-0">
                             <span className="block text-sm font-semibold">My e-Transfer has a security question</span>
                             <span className="mt-0.5 block text-xs leading-5 text-foreground/50">
-                              Optional. Only add this if your bank does not use Autodeposit for this transfer.
+                              Optional. Only add this if your bank does not use Autodeposit. This sends the transfer to manual review.
                             </span>
                           </span>
                         </label>

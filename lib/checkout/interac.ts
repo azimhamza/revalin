@@ -79,6 +79,7 @@ type ReviewReason =
   | 'late_payment'
   | 'parser_failed'
   | 'suspicious_email'
+  | 'security_question'
   | 'screenshot_submitted';
 
 type InteracAmountOutcome =
@@ -224,6 +225,13 @@ function getInteracPaidCents(payment: InteracPaymentData) {
     toCents(payment.amountPaidToDate) ??
     toCents(payment.cumulativePaidAmount) ??
     0
+  );
+}
+
+function hasInteracSecurityQuestion(payment: InteracPaymentData) {
+  return Boolean(
+    payment.securityQuestion?.trim() ||
+      payment.securityAnswer?.trim(),
   );
 }
 
@@ -530,6 +538,56 @@ async function createReviewItem(args: {
   return row!;
 }
 
+function isReviewableInteracOrder(order: CheckoutOrderRecord) {
+  if (!isInteracPayment(order.payment)) return false;
+  if (order.payment.status === 'paid') return false;
+  if (order.payment.status === 'replaced') return false;
+  if (order.payment.status === 'cancelled') return false;
+  if (order.payment.swellPaymentId) return false;
+  return Date.parse(order.payment.expiresAt) > Date.now();
+}
+
+async function findLikelyInteracOrderForMissingMessage(args: {
+  parsed: InteracParsedEmail;
+  replyToEmail?: string | null;
+}) {
+  const receivedCents = toCents(args.parsed.amountValue ?? args.parsed.amount);
+  if (receivedCents === null || receivedCents <= 0) return null;
+
+  const replyTo = extractEmailAddress(args.replyToEmail);
+  const senderName = (args.parsed.sentFrom || '').trim().toLowerCase();
+  if (!replyTo && !senderName) return null;
+
+  const rows = await db
+    .select()
+    .from(checkoutOrders)
+    .where(sql`${checkoutOrders.payment}->>'provider' = 'interac'`)
+    .orderBy(desc(checkoutOrders.createdAt))
+    .limit(25);
+
+  const candidates: CheckoutOrderRecord[] = [];
+
+  for (const row of rows) {
+    const order = await getCheckoutOrder(row.orderId);
+    if (!order || !isReviewableInteracOrder(order)) continue;
+
+    const payment = order.payment;
+    if (!isInteracPayment(payment)) continue;
+    if (toCents(payment.cadAmount) !== receivedCents) continue;
+
+    const expectedEmail = extractEmailAddress(payment.expectedSenderEmail);
+    const expectedName = payment.expectedSenderName.trim().toLowerCase();
+    const emailMatches = Boolean(replyTo && expectedEmail && replyTo === expectedEmail);
+    const nameMatches = Boolean(senderName && expectedName && senderName === expectedName);
+
+    if (emailMatches || nameMatches) {
+      candidates.push(order);
+    }
+  }
+
+  return candidates.length === 1 ? candidates[0]! : null;
+}
+
 export async function findInteracOrderByMessageCode(messageCode?: string | null) {
   const normalized = normalizeCode(messageCode);
   if (!normalized) return null;
@@ -589,6 +647,55 @@ async function reconcileEvent(args: {
   }
 
   if (!args.parsed.message) {
+    const likelyOrder = await findLikelyInteracOrderForMissingMessage({
+      parsed: args.parsed,
+      replyToEmail: args.replyToEmail,
+    });
+    if (likelyOrder && isInteracPayment(likelyOrder.payment)) {
+      const receivedCents = toCents(args.parsed.amountValue ?? args.parsed.amount);
+      const expectedCents = toCents(likelyOrder.payment.cadAmount);
+      const updatedOrder = await updateCheckoutOrder(likelyOrder.orderId, (current) => {
+        if (!isInteracPayment(current.payment)) return current;
+        if (current.payment.status === 'paid' || current.payment.swellPaymentId) return current;
+
+        return {
+          ...current,
+          payment: {
+            ...current.payment,
+            status: 'under_review',
+            submittedAt: current.payment.submittedAt || new Date().toISOString(),
+            receivedAmount: receivedCents === null ? current.payment.receivedAmount : centsToAmount(receivedCents),
+            amountPaidToDate: receivedCents === null ? current.payment.amountPaidToDate : centsToAmount(receivedCents),
+            cumulativePaidAmount: receivedCents === null ? current.payment.cumulativePaidAmount : centsToAmount(receivedCents),
+            remainingBalanceAmount:
+              receivedCents === null || expectedCents === null
+                ? current.payment.remainingBalanceAmount
+                : centsToAmount(Math.max(expectedCents - receivedCents, 0)),
+            senderName: args.parsed.sentFrom ?? current.payment.senderName ?? null,
+            replyToEmail: args.replyToEmail ?? current.payment.replyToEmail ?? null,
+            bankReference: args.parsed.bankReference ?? current.payment.bankReference ?? null,
+            gmailMessageId: args.gmailMessageId,
+            updatedAt: new Date().toISOString(),
+          } satisfies InteracPaymentData,
+        };
+      });
+
+      await updateEventStatus({
+        eventId: args.eventId,
+        status: 'review_required',
+        matchedOrderId: likelyOrder.orderId,
+        reviewReason: 'missing_message',
+      });
+      await createReviewItem({
+        reason: 'missing_message',
+        eventId: args.eventId,
+        order: updatedOrder || likelyOrder,
+        parsed: args.parsed,
+        adminNotes: 'No Interac Message code was present. This was attached by exact CAD amount plus sender match; verify manually before approving.',
+      });
+      return updatedOrder ? buildPublicCheckoutOrder(updatedOrder) : buildPublicCheckoutOrder(likelyOrder);
+    }
+
     await updateEventStatus({
       eventId: args.eventId,
       status: 'review_required',
@@ -672,6 +779,46 @@ async function reconcileEvent(args: {
     (replyTo && expectedEmail && replyTo !== expectedEmail) ||
     (senderName && expectedName && senderName !== expectedName),
   );
+
+  if (hasInteracSecurityQuestion(order.payment)) {
+    const reviewOrder = await updateCheckoutOrder(order.orderId, (current) => {
+      if (!isInteracPayment(current.payment)) return current;
+
+      return {
+        ...current,
+        payment: {
+          ...current.payment,
+          status: current.payment.status === 'paid' ? 'paid' : 'under_review',
+          submittedAt: current.payment.submittedAt || new Date().toISOString(),
+          receivedAmount: centsToAmount(cumulativeReceivedCents),
+          amountPaidToDate: centsToAmount(cumulativeReceivedCents),
+          cumulativePaidAmount: centsToAmount(cumulativeReceivedCents),
+          remainingBalanceAmount: centsToAmount(Math.max(expectedCents - cumulativeReceivedCents, 0)),
+          senderName: args.parsed.sentFrom ?? current.payment.senderName ?? null,
+          replyToEmail: args.replyToEmail ?? current.payment.replyToEmail ?? null,
+          bankReference: args.parsed.bankReference ?? current.payment.bankReference ?? null,
+          gmailMessageId: args.gmailMessageId,
+          senderMismatch: Boolean(current.payment.senderMismatch || currentSenderMismatch),
+          updatedAt: new Date().toISOString(),
+        } satisfies InteracPaymentData,
+      };
+    });
+
+    await updateEventStatus({
+      eventId: args.eventId,
+      status: 'review_required',
+      matchedOrderId: order.orderId,
+      reviewReason: 'security_question',
+    });
+    await createReviewItem({
+      reason: 'security_question',
+      eventId: args.eventId,
+      order: reviewOrder || order,
+      parsed: args.parsed,
+      adminNotes: 'Customer supplied an Interac security question/answer. Do not auto-confirm; verify manually before approving.',
+    });
+    return reviewOrder ? buildPublicCheckoutOrder(reviewOrder) : null;
+  }
 
   if (cumulativeReceivedCents < expectedCents) {
     let amountOutcome = { kind: 'noop' } as InteracAmountOutcome;
@@ -1123,6 +1270,7 @@ export async function submitInteracTransfer(args: {
   accessKey: string;
   screenshotUrl?: string | null;
 }) {
+  let openedSecurityReview = false;
   const updated = await updateCheckoutOrder(args.orderId, (current) => {
     if (current.accessKey !== args.accessKey || !isInteracPayment(current.payment)) {
       return current;
@@ -1130,6 +1278,11 @@ export async function submitInteracTransfer(args: {
     if (current.payment.status === 'paid') {
       return current;
     }
+    const needsSecurityReview = hasInteracSecurityQuestion(current.payment);
+    openedSecurityReview =
+      needsSecurityReview &&
+      (current.payment.status === 'awaiting_transfer' ||
+        current.payment.status === 'submitted');
     const screenshotUrls = [
       ...(current.payment.screenshotUrls || []),
       ...(args.screenshotUrl ? [args.screenshotUrl] : []),
@@ -1138,7 +1291,11 @@ export async function submitInteracTransfer(args: {
       ...current,
       payment: {
         ...current.payment,
-        status: current.payment.status === 'awaiting_transfer' ? 'submitted' : current.payment.status,
+        status:
+          current.payment.status === 'awaiting_transfer' ||
+          (needsSecurityReview && current.payment.status === 'submitted')
+            ? (needsSecurityReview ? 'under_review' : 'submitted')
+            : current.payment.status,
         submittedAt: current.payment.submittedAt || new Date().toISOString(),
         screenshotUrls,
         updatedAt: new Date().toISOString(),
@@ -1153,7 +1310,14 @@ export async function submitInteracTransfer(args: {
     throw apiError.badRequest('Order is not an Interac payment.');
   }
 
-  if (args.screenshotUrl) {
+  if (openedSecurityReview) {
+    await createReviewItem({
+      order: updated,
+      reason: 'security_question',
+      screenshotUrls: args.screenshotUrl ? [args.screenshotUrl] : null,
+      adminNotes: 'Customer marked this Interac transfer as using a security question/answer. Verify manually before approving.',
+    });
+  } else if (args.screenshotUrl) {
     await createReviewItem({
       order: updated,
       reason: 'screenshot_submitted',
