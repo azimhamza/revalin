@@ -83,6 +83,55 @@ type Props = {
   isDev?: boolean;
 };
 
+type ManualAddressForm = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  address1: string;
+  address2: string;
+  city: string;
+  province: string;
+  postalCode: string;
+  country: string;
+  notes: string;
+};
+
+type ManualRate = {
+  id: string;
+  name: string;
+  carrier?: string;
+  estimatedDays?: number | null;
+  price: {
+    amount: string;
+    currencyCode: string;
+  };
+};
+
+type ManualQuote = {
+  swellOrderId: string;
+  orderNumber: string;
+  currencyCode: string;
+  totalAmount: string;
+  subtotalAmount: string;
+  itemCount: number;
+  rates: ManualRate[];
+};
+
+const EMPTY_MANUAL_ADDRESS: ManualAddressForm = {
+  firstName: '',
+  lastName: '',
+  email: '',
+  phone: '',
+  address1: '',
+  address2: '',
+  city: '',
+  province: '',
+  postalCode: '',
+  country: 'US',
+  notes: '',
+};
+
 export function FulfillmentTable({
   initialOrders,
   initialTotal,
@@ -98,19 +147,13 @@ export function FulfillmentTable({
   const [manualOpen, setManualOpen] = useState(false);
   const [manualLoading, setManualLoading] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
+  const [manualQuote, setManualQuote] = useState<ManualQuote | null>(null);
+  const [manualConfirmed, setManualConfirmed] = useState(false);
   const [manualForm, setManualForm] = useState({
-    orderNumber: '',
-    customerName: '',
-    email: '',
-    totalAmount: '',
-    currencyCode: 'USD',
-    itemCount: '1',
-    carrier: '',
-    service: '',
-    trackingCode: '',
-    labelUrl: '',
-    publicTrackingUrl: '',
-    fulfillmentStatus: 'pending',
+    swellOrderId: '',
+    payoutMethod: '',
+    selectedShippingServiceId: '',
+    shippingAddress: EMPTY_MANUAL_ADDRESS,
     notes: '',
   });
 
@@ -140,14 +183,97 @@ export function FulfillmentTable({
   }, [router]);
 
   const updateManualField = useCallback(
-    (field: keyof typeof manualForm, value: string) => {
+    (
+      field: Exclude<keyof typeof manualForm, 'shippingAddress'>,
+      value: string,
+    ) => {
       setManualForm((current) => ({
         ...current,
         [field]: value,
       }));
+      if (field === 'swellOrderId') {
+        setManualQuote(null);
+        setManualConfirmed(false);
+      }
     },
     [],
   );
+
+  const updateManualAddressField = useCallback(
+    (field: keyof ManualAddressForm, value: string) => {
+      setManualForm((current) => ({
+        ...current,
+        shippingAddress: {
+          ...current.shippingAddress,
+          [field]: value,
+        },
+      }));
+      setManualQuote(null);
+      setManualConfirmed(false);
+    },
+    [],
+  );
+
+  const resetManualForm = useCallback(() => {
+    setManualForm({
+      swellOrderId: '',
+      payoutMethod: '',
+      selectedShippingServiceId: '',
+      shippingAddress: EMPTY_MANUAL_ADDRESS,
+      notes: '',
+    });
+    setManualQuote(null);
+    setManualConfirmed(false);
+    setManualError(null);
+  }, []);
+
+  const quoteManualRates = useCallback(async () => {
+    setManualLoading(true);
+    setManualError(null);
+    setManualQuote(null);
+    setManualConfirmed(false);
+
+    try {
+      const response = await fetch('/api/admin/fulfillment/manual-order/rates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          swellOrderId: manualForm.swellOrderId,
+          shippingAddress: {
+            ...manualForm.shippingAddress,
+            country: manualForm.shippingAddress.country.trim().toUpperCase(),
+          },
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error?.message ||
+            `Failed to quote ShipEngine rates (${response.status}).`,
+        );
+      }
+
+      const quote = payload?.data?.quote as ManualQuote | undefined;
+      if (!quote?.rates?.length) {
+        throw new Error('ShipEngine returned no rates for this order.');
+      }
+
+      setManualQuote(quote);
+      setManualForm((current) => ({
+        ...current,
+        selectedShippingServiceId: quote.rates[0]?.id || '',
+      }));
+    } catch (error) {
+      setManualError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to quote ShipEngine rates.',
+      );
+    } finally {
+      setManualLoading(false);
+    }
+  }, [manualForm.shippingAddress, manualForm.swellOrderId]);
 
   const submitManualOrder = useCallback(async () => {
     setManualLoading(true);
@@ -159,7 +285,10 @@ export function FulfillmentTable({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...manualForm,
-          itemCount: Number(manualForm.itemCount || 1),
+          shippingAddress: {
+            ...manualForm.shippingAddress,
+            country: manualForm.shippingAddress.country.trim().toUpperCase(),
+          },
         }),
       });
       const payload = await response.json().catch(() => null);
@@ -171,22 +300,12 @@ export function FulfillmentTable({
         );
       }
 
-      setManualForm({
-        orderNumber: '',
-        customerName: '',
-        email: '',
-        totalAmount: '',
-        currencyCode: 'USD',
-        itemCount: '1',
-        carrier: '',
-        service: '',
-        trackingCode: '',
-        labelUrl: '',
-        publicTrackingUrl: '',
-        fulfillmentStatus: 'pending',
-        notes: '',
-      });
-      setManualOpen(false);
+      if (payload?.data?.hasLabel === false && payload.data.labelError) {
+        setManualError(payload.data.labelError);
+      } else {
+        resetManualForm();
+        setManualOpen(false);
+      }
       refreshList();
     } catch (error) {
       setManualError(
@@ -197,7 +316,7 @@ export function FulfillmentTable({
     } finally {
       setManualLoading(false);
     }
-  }, [manualForm, refreshList]);
+  }, [manualForm, refreshList, resetManualForm]);
 
   const copyTracking = useCallback(
     (trackingCode: string, orderId: string) => {
@@ -248,8 +367,7 @@ export function FulfillmentTable({
               Manual fulfillment
             </h2>
             <p className="mt-1 text-xs text-[#0B2E2F]/50">
-              Add an outside order to this queue with carrier, service,
-              tracking, and status.
+              Import a Swell order, quote ShipEngine rates, then buy the label.
             </p>
           </div>
           <button
@@ -263,26 +381,51 @@ export function FulfillmentTable({
         </div>
 
         {manualOpen ? (
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 space-y-4">
             <div className="grid gap-3 md:grid-cols-4">
+              <label className="space-y-1.5 md:col-span-2">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Swell order ID
+                </span>
+                <input
+                  value={manualForm.swellOrderId}
+                  onChange={(event) =>
+                    updateManualField('swellOrderId', event.target.value)
+                  }
+                  placeholder="Swell order object ID"
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none transition-colors focus:border-[#0B2E2F]"
+                />
+              </label>
+              <label className="space-y-1.5 md:col-span-2">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Payment / payout method
+                </span>
+                <input
+                  value={manualForm.payoutMethod}
+                  onChange={(event) =>
+                    updateManualField('payoutMethod', event.target.value)
+                  }
+                  placeholder="Manual, Interac, crypto, card..."
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none transition-colors focus:border-[#0B2E2F]"
+                />
+              </label>
+
               {[
-                ['orderNumber', 'Order / reference', 'RVL-1234'],
-                ['customerName', 'Customer', 'Jane Doe'],
+                ['firstName', 'First name', 'Jane'],
+                ['lastName', 'Last name', 'Doe'],
                 ['email', 'Email', 'customer@example.com'],
-                ['totalAmount', 'Total', '125.00'],
-                ['currencyCode', 'Currency', 'USD'],
-                ['itemCount', 'Items', '1'],
-                ['carrier', 'Carrier', 'Canada Post'],
-                ['service', 'Service', 'Tracked Packet'],
-                ['trackingCode', 'Tracking', 'Tracking number'],
-                ['labelUrl', 'Label URL', 'https://...'],
-                ['publicTrackingUrl', 'Tracking URL', 'https://...'],
-                ['notes', 'Notes', 'Optional note'],
+                ['phone', 'Phone', '+1 555 555 5555'],
+                ['address1', 'Address line 1', '123 Main St'],
+                ['address2', 'Address line 2', 'Suite 100'],
+                ['city', 'City', 'New York'],
+                ['province', 'State / province', 'NY'],
+                ['postalCode', 'Postal code', '10001'],
+                ['country', 'Country', 'US'],
               ].map(([field, label, placeholder]) => (
                 <label
                   key={field}
                   className={
-                    field === 'notes'
+                    field === 'address1' || field === 'address2'
                       ? 'space-y-1.5 md:col-span-2'
                       : 'space-y-1.5'
                   }
@@ -291,10 +434,14 @@ export function FulfillmentTable({
                     {label}
                   </span>
                   <input
-                    value={manualForm[field as keyof typeof manualForm]}
+                    value={
+                      manualForm.shippingAddress[
+                        field as keyof ManualAddressForm
+                      ]
+                    }
                     onChange={(event) =>
-                      updateManualField(
-                        field as keyof typeof manualForm,
+                      updateManualAddressField(
+                        field as keyof ManualAddressForm,
                         event.target.value,
                       )
                     }
@@ -304,41 +451,134 @@ export function FulfillmentTable({
                 </label>
               ))}
 
-              <label className="space-y-1.5">
+              <label className="space-y-1.5 md:col-span-2">
                 <span className="text-xs font-semibold text-[#0B2E2F]/60">
-                  Status
+                  Notes
                 </span>
-                <select
-                  value={manualForm.fulfillmentStatus}
+                <input
+                  value={manualForm.notes}
                   onChange={(event) =>
-                    updateManualField(
-                      'fulfillmentStatus',
-                      event.target.value,
-                    )
+                    updateManualField('notes', event.target.value)
                   }
+                  placeholder="Optional internal note"
                   className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none transition-colors focus:border-[#0B2E2F]"
-                >
-                  <option value="pending">Pending</option>
-                  <option value="label_ready">Label ready</option>
-                  <option value="packed">Packed</option>
-                  <option value="handed_to_carrier">Shipped</option>
-                  <option value="error">Error</option>
-                </select>
+                />
               </label>
             </div>
+
+            {manualQuote ? (
+              <div className="rounded-xl border border-[#0B2E2F]/10 bg-[#0B2E2F]/[0.02] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-[#0B2E2F]">
+                      {manualQuote.orderNumber}
+                    </p>
+                    <p className="text-xs text-[#0B2E2F]/50">
+                      {manualQuote.itemCount} item
+                      {manualQuote.itemCount === 1 ? '' : 's'} ·{' '}
+                      {formatCurrency(
+                        manualQuote.totalAmount,
+                        manualQuote.currencyCode,
+                      )}
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-[#0B2E2F]/60">
+                    {manualQuote.rates.length} ShipEngine rate
+                    {manualQuote.rates.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+
+                <div className="mt-3 grid gap-2 md:grid-cols-3">
+                  {manualQuote.rates.map((rate) => (
+                    <label
+                      key={rate.id}
+                      className={cn(
+                        'cursor-pointer rounded-xl border bg-white p-3 transition-colors',
+                        manualForm.selectedShippingServiceId === rate.id
+                          ? 'border-[#0B2E2F] ring-1 ring-[#0B2E2F]'
+                          : 'border-[#0B2E2F]/10 hover:border-[#0B2E2F]/30',
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="manual-shipping-rate"
+                        value={rate.id}
+                        checked={manualForm.selectedShippingServiceId === rate.id}
+                        onChange={(event) => {
+                          setManualForm((current) => ({
+                            ...current,
+                            selectedShippingServiceId: event.target.value,
+                          }));
+                          setManualConfirmed(false);
+                        }}
+                        className="sr-only"
+                      />
+                      <span className="block text-xs font-semibold text-[#0B2E2F]/60">
+                        {rate.carrier || 'ShipEngine'}
+                      </span>
+                      <span className="mt-1 block text-sm font-semibold text-[#0B2E2F]">
+                        {rate.name}
+                      </span>
+                      <span className="mt-2 block text-sm text-[#0B2E2F]/70">
+                        {formatCurrency(rate.price.amount, rate.price.currencyCode)}
+                        {rate.estimatedDays ? ` · ${rate.estimatedDays}d` : ''}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+
+                <label className="mt-4 flex items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    checked={manualConfirmed}
+                    onChange={(event) => setManualConfirmed(event.target.checked)}
+                    className="mt-0.5 size-4 rounded border-[#0B2E2F]/30 accent-[#0B2E2F]"
+                  />
+                  <span className="text-xs text-[#0B2E2F]/70">
+                    I verified the Swell order ID, destination address, and selected ShipEngine rate.
+                  </span>
+                </label>
+              </div>
+            ) : null}
 
             {manualError ? (
               <p className="text-xs text-red-600">{manualError}</p>
             ) : null}
 
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={quoteManualRates}
+                disabled={
+                  manualLoading ||
+                  !manualForm.swellOrderId.trim() ||
+                  !manualForm.shippingAddress.firstName.trim() ||
+                  !manualForm.shippingAddress.lastName.trim() ||
+                  !manualForm.shippingAddress.email.trim() ||
+                  !manualForm.shippingAddress.phone.trim() ||
+                  !manualForm.shippingAddress.address1.trim() ||
+                  !manualForm.shippingAddress.city.trim() ||
+                  !manualForm.shippingAddress.province.trim() ||
+                  !manualForm.shippingAddress.postalCode.trim() ||
+                  !manualForm.shippingAddress.country.trim()
+                }
+                className="flex items-center gap-1.5 rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-xs font-semibold text-[#0B2E2F] transition-colors hover:bg-[#0B2E2F]/5 disabled:opacity-40"
+              >
+                {manualLoading ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-3.5" />
+                )}
+                Get rates
+              </button>
               <button
                 type="button"
                 onClick={submitManualOrder}
                 disabled={
                   manualLoading ||
-                  !manualForm.customerName.trim() ||
-                  !manualForm.totalAmount.trim()
+                  !manualQuote ||
+                  !manualForm.selectedShippingServiceId ||
+                  !manualConfirmed
                 }
                 className="flex items-center gap-1.5 rounded-lg bg-[#0B2E2F] px-3 py-2 text-xs font-semibold text-[#F4F1EA] transition-colors hover:bg-[#0B2E2F]/90 disabled:opacity-40"
               >
@@ -347,7 +587,7 @@ export function FulfillmentTable({
                 ) : (
                   <Plus className="size-3.5" />
                 )}
-                Add manual order
+                Create label
               </button>
             </div>
           </div>
@@ -426,6 +666,11 @@ export function FulfillmentTable({
                 </td>
                 <td className="px-4 py-3 font-medium text-[#0B2E2F]">
                   {formatCurrency(order.totalAmount, order.currencyCode)}
+                  {order.payoutMethod ? (
+                    <p className="mt-0.5 text-[11px] font-normal text-[#0B2E2F]/45">
+                      {order.payoutMethod}
+                    </p>
+                  ) : null}
                 </td>
                 <td className="px-4 py-3 text-[#0B2E2F]/60">
                   {order.itemCount}

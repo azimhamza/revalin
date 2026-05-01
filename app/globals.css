@@ -95,7 +95,8 @@
   --radius: 0.5rem;
   --sides: 1rem;
   --modal-sides: 0.75rem;
-  --top-spacing: 5rem;
+  --base-top-spacing: 5rem;
+  --top-spacing: calc(var(--base-top-spacing) + var(--revalin-pending-banner-height, 0px));
   --height-fold: 100vh;
   --height-fold: 100svh;
 }
@@ -140,7 +141,7 @@
   :root {
     --sides: 1.5rem;
     --modal-sides: 1rem;
-    --top-spacing: 9rem;
+    --base-top-spacing: 9rem;
   }
 }
 

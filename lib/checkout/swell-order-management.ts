@@ -89,6 +89,7 @@ export type SwellBackendOrder = {
   grand_total: number;
   shipment_total: number;
   tax_total: number;
+  item_quantity?: number;
   coupon_code?: string;
   shipping?: SwellBackendCart["shipping"];
   billing?: {
@@ -190,6 +191,19 @@ const SWELL_SECRET_KEY = (process.env.SWELL_SECRET_KEY || "").trim();
 const SWELL_MANUAL_PAYMENT_METHOD = (
   process.env.SWELL_MANUAL_PAYMENT_METHOD || "crypto"
 ).trim();
+const SWELL_CRYPTO_PAYMENT_METHOD = (
+  process.env.SWELL_CRYPTO_PAYMENT_METHOD || "crypto"
+).trim();
+const SWELL_CARD_DEBIT_PAYMENT_METHOD = (
+  process.env.SWELL_CARD_DEBIT_PAYMENT_METHOD ||
+  process.env.SWELL_CARD_PAYMENT_METHOD ||
+  "card_debit"
+).trim();
+const SWELL_INTERAC_PAYMENT_METHOD = (
+  process.env.SWELL_INTERAC_PAYMENT_METHOD || "interac"
+).trim();
+
+export type SwellCheckoutPaymentMethod = "card" | "crypto" | "interac";
 
 function normalizeExplicitApiBase(apiUrl: string): string {
   const trimmed = apiUrl.trim();
@@ -523,7 +537,12 @@ function addressesMatch(
   );
 }
 
-export function getSwellManualPaymentMethod() {
+export function getSwellManualPaymentMethod(
+  paymentMethod?: SwellCheckoutPaymentMethod,
+) {
+  if (paymentMethod === "crypto") return SWELL_CRYPTO_PAYMENT_METHOD;
+  if (paymentMethod === "card") return SWELL_CARD_DEBIT_PAYMENT_METHOD;
+  if (paymentMethod === "interac") return SWELL_INTERAC_PAYMENT_METHOD;
   return SWELL_MANUAL_PAYMENT_METHOD;
 }
 

@@ -78,6 +78,14 @@ export function buildOrderDataVariables(order: CheckoutOrderRecord) {
     vars.tax = '$0.00';
   }
 
+  if (order.totals.landedCostAmount) {
+    vars.duties = formatCurrency(order.totals.landedCostAmount.amount, order.currencyCode);
+    vars.landedCost = vars.duties;
+  } else {
+    vars.duties = '$0.00';
+    vars.landedCost = '$0.00';
+  }
+
   if (order.shipengine?.trackingCode) {
     vars.trackingCode = order.shipengine.trackingCode;
     vars.carrier = order.shipengine.carrier || '';

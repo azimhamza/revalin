@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, ne, sql } from 'drizzle-orm';
 import { put } from '@vercel/blob';
 import { apiError } from '@/lib/api/errors';
 import { db } from '@/lib/db';
@@ -89,6 +89,19 @@ type InteracAmountOutcome =
   | { kind: 'duplicate' }
   | { kind: 'noop' };
 
+const REVIEW_REASON_PRIORITY: Record<ReviewReason, number> = {
+  screenshot_submitted: 10,
+  unknown_message: 20,
+  missing_message: 30,
+  parser_failed: 40,
+  security_question: 50,
+  partial_payment: 60,
+  duplicate: 70,
+  late_payment: 80,
+  wrong_amount: 90,
+  suspicious_email: 100,
+};
+
 function configuredMailbox() {
   return process.env.GMAIL_INTERAC_USER?.trim() || 'interac@revalin.ca';
 }
@@ -142,7 +155,17 @@ function getUnsupportedProcessorDomain(value?: string | null) {
 }
 
 function normalizeCode(value?: string | null) {
-  return (value || '').trim().toUpperCase();
+  const normalized = (value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\u2013\u2014]/g, '-');
+  const match = normalized.match(/\bRVL\s*-\s*([A-Z0-9]{3,5})\s*-\s*([A-Z0-9]{3,5})\b/);
+
+  if (match) {
+    return `RVL-${match[1]}-${match[2]}`;
+  }
+
+  return normalized;
 }
 
 function parseAmount(value?: string | null) {
@@ -197,6 +220,8 @@ function getHeader(headers: GmailHeader[] | undefined, name: string) {
 function normalizeEmailBody(value: string) {
   return value
     .replace(/\r/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[\u200b-\u200d\ufeff]/g, '')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -213,6 +238,66 @@ function extractLabel(text: string, label: string, nextLabels: string[]) {
   );
   const match = text.match(pattern);
   return match?.[1]?.trim().replace(/\n+/g, ' ') || null;
+}
+
+function normalizeLabel(value: string) {
+  return value
+    .replace(/:$/g, '')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function extractLineLabel(text: string, label: string, nextLabels: string[]) {
+  const normalizedLabel = normalizeLabel(label);
+  const normalizedNextLabels = new Set(nextLabels.map(normalizeLabel));
+  const lines = text.split('\n').map(line => line.trim());
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] || '';
+    if (!line) continue;
+
+    const [left, ...rightParts] = line.split(':');
+    if (normalizeLabel(left || line) !== normalizedLabel) {
+      continue;
+    }
+
+    const inlineValue = rightParts.join(':').trim();
+    if (inlineValue) {
+      return inlineValue;
+    }
+
+    for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex += 1) {
+      const nextLine = lines[nextIndex] || '';
+      if (!nextLine) continue;
+
+      if (normalizedNextLabels.has(normalizeLabel(nextLine))) {
+        break;
+      }
+
+      return nextLine;
+    }
+  }
+
+  return null;
+}
+
+function extractField(text: string, label: string, nextLabels: string[]) {
+  return extractLabel(text, label, nextLabels) || extractLineLabel(text, label, nextLabels);
+}
+
+function extractMessageCode(value?: string | null) {
+  const normalized = normalizeCode(value);
+  return normalized.match(/\bRVL-[A-Z0-9]{3,5}-[A-Z0-9]{3,5}\b/)?.[0] || null;
+}
+
+function extractFallbackAmount(text: string, subject?: string | null) {
+  return (
+    subject?.match(/(?:received|deposited)\s+\$?([\d,]+(?:\.\d{2})?)/i)?.[1] ||
+    text.match(/Funds Deposited!\s*\n\s*(\$?\s*[\d,]+(?:\.\d{2})?(?:\s*\([A-Z]{3}\))?)/i)?.[1] ||
+    text.match(/\$\s*[\d,]+(?:\.\d{2})?\s*(?:\([A-Z]{3}\))?/i)?.[0] ||
+    null
+  );
 }
 
 function centsToAmount(cents: number) {
@@ -247,14 +332,15 @@ export function parseInteracEmail(args: {
   const labels = ['Message', 'Date', 'Reference Number', 'Sent From', 'Amount', 'FAQ'];
   const labelPattern = new RegExp(`\\s+(${labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\s*:`, 'gi');
   const text = baseText.replace(labelPattern, '\n$1:');
-  const message = extractLabel(text, 'Message', labels.filter((label) => label !== 'Message'));
-  const transferDate = extractLabel(text, 'Date', labels.filter((label) => label !== 'Date'));
-  const bankReference = extractLabel(text, 'Reference Number', labels.filter((label) => label !== 'Reference Number'));
-  const sentFrom = extractLabel(text, 'Sent From', labels.filter((label) => label !== 'Sent From'));
-  const amountField = extractLabel(text, 'Amount', labels.filter((label) => label !== 'Amount'));
-  const subjectAmount = args.subject?.match(/received\s+\$?([\d,]+(?:\.\d{2})?)/i)?.[1] || null;
+  const messageField = extractField(text, 'Message', labels.filter((label) => label !== 'Message'));
+  const message = extractMessageCode(messageField) || extractMessageCode(`${args.subject || ''}\n${text}`);
+  const transferDate = extractField(text, 'Date', labels.filter((label) => label !== 'Date'));
+  const bankReference = extractField(text, 'Reference Number', labels.filter((label) => label !== 'Reference Number'));
+  const sentFrom = extractField(text, 'Sent From', labels.filter((label) => label !== 'Sent From'));
+  const amountField = extractField(text, 'Amount', labels.filter((label) => label !== 'Amount'));
+  const subjectAmount = extractFallbackAmount(text, args.subject);
   const amountValue = parseAmount(amountField || subjectAmount);
-  const currency = amountField?.match(/\(([A-Z]{3})\)/i)?.[1]?.toUpperCase() || 'CAD';
+  const currency = (amountField || subjectAmount)?.match(/\(([A-Z]{3})\)/i)?.[1]?.toUpperCase() || 'CAD';
 
   return {
     message,
@@ -518,6 +604,72 @@ async function createReviewItem(args: {
   adminNotes?: string | null;
 }) {
   const payment = args.order && isInteracPayment(args.order.payment) ? args.order.payment : null;
+  const nextScreenshotUrls = args.screenshotUrls ?? null;
+  const nextMessageCode = normalizeCode(args.parsed?.message) || payment?.messageCode || null;
+  const nextReceivedAmount = args.parsed?.amountValue?.toFixed(2) ?? null;
+
+  const existingRows = args.order?.orderId
+    ? await db
+        .select()
+        .from(interacReviewItems)
+        .where(
+          and(
+            eq(interacReviewItems.orderId, args.order.orderId),
+            eq(interacReviewItems.status, 'open'),
+          ),
+        )
+        .orderBy(desc(interacReviewItems.updatedAt))
+        .limit(1)
+    : args.eventId
+      ? await db
+          .select()
+          .from(interacReviewItems)
+          .where(
+            and(
+              eq(interacReviewItems.eventId, args.eventId),
+              eq(interacReviewItems.status, 'open'),
+            ),
+          )
+          .orderBy(desc(interacReviewItems.updatedAt))
+          .limit(1)
+      : [];
+  const existing = existingRows[0] ?? null;
+
+  if (existing) {
+    const existingScreenshots = Array.isArray(existing.screenshotUrls)
+      ? existing.screenshotUrls.filter((item): item is string => typeof item === 'string')
+      : [];
+    const screenshotUrls = Array.from(new Set([
+      ...existingScreenshots,
+      ...(nextScreenshotUrls ?? []),
+    ]));
+    const existingPriority = REVIEW_REASON_PRIORITY[existing.reason as ReviewReason] ?? 0;
+    const nextPriority = REVIEW_REASON_PRIORITY[args.reason] ?? 0;
+    const nextAdminNotes = args.adminNotes?.trim()
+      ? existing.adminNotes?.includes(args.adminNotes.trim())
+        ? existing.adminNotes
+        : [existing.adminNotes, args.adminNotes.trim()].filter(Boolean).join('\n\n')
+      : existing.adminNotes;
+    const [row] = await db
+      .update(interacReviewItems)
+      .set({
+        eventId: existing.eventId ?? args.eventId ?? null,
+        reason: nextPriority > existingPriority ? args.reason : existing.reason,
+        expectedAmount: payment?.cadAmount ?? existing.expectedAmount,
+        receivedAmount: nextReceivedAmount ?? existing.receivedAmount,
+        messageCode: nextMessageCode ?? existing.messageCode,
+        senderName: args.parsed?.sentFrom ?? existing.senderName,
+        senderEmail: payment?.replyToEmail ?? existing.senderEmail,
+        bankReference: args.parsed?.bankReference ?? existing.bankReference,
+        screenshotUrls: screenshotUrls.length ? screenshotUrls : existing.screenshotUrls,
+        adminNotes: nextAdminNotes ?? null,
+        updatedAt: new Date(),
+      })
+      .where(eq(interacReviewItems.id, existing.id))
+      .returning();
+    return row!;
+  }
+
   const [row] = await db
     .insert(interacReviewItems)
     .values({
@@ -525,12 +677,12 @@ async function createReviewItem(args: {
       eventId: args.eventId ?? null,
       reason: args.reason,
       expectedAmount: payment?.cadAmount ?? null,
-      receivedAmount: args.parsed?.amountValue?.toFixed(2) ?? null,
-      messageCode: normalizeCode(args.parsed?.message) || payment?.messageCode || null,
+      receivedAmount: nextReceivedAmount,
+      messageCode: nextMessageCode,
       senderName: args.parsed?.sentFrom ?? null,
       senderEmail: payment?.replyToEmail ?? null,
       bankReference: args.parsed?.bankReference ?? null,
-      screenshotUrls: args.screenshotUrls ?? null,
+      screenshotUrls: nextScreenshotUrls,
       adminNotes: args.adminNotes ?? null,
       updatedAt: new Date(),
     })
@@ -1309,6 +1461,9 @@ export async function submitInteracTransfer(args: {
   if (!isInteracPayment(updated.payment)) {
     throw apiError.badRequest('Order is not an Interac payment.');
   }
+  if (updated.payment.status === 'paid' || updated.payment.swellPaymentId) {
+    return buildPublicCheckoutOrder(updated);
+  }
 
   if (openedSecurityReview) {
     await createReviewItem({
@@ -1463,6 +1618,22 @@ export async function approveInteracReview(args: {
       updatedAt: new Date(),
     })
     .where(eq(interacReviewItems.id, args.reviewId));
+
+  await db
+    .update(interacReviewItems)
+    .set({
+      status: 'resolved',
+      resolvedByUserId: args.adminUserId,
+      resolvedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(interacReviewItems.orderId, order.orderId),
+        eq(interacReviewItems.status, 'open'),
+        ne(interacReviewItems.id, args.reviewId),
+      ),
+    );
 
   const updatedOrder = await getCheckoutOrder(order.orderId);
   return buildPublicCheckoutOrder(updatedOrder || order);

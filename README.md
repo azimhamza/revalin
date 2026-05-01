@@ -24,7 +24,10 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `NEXT_PUBLIC_SWELL_CHECKOUT_URL`
 - `NEXT_PUBLIC_STORE_CURRENCY` (defaults to `USD`)
 - `STORE_CURRENCY_BY_COUNTRY` (optional country mapping, e.g. `CA:CAD,US:USD,GB:GBP`)
-- `SWELL_MANUAL_PAYMENT_METHOD` (manual payment method ID configured in Swell Payment Settings for NOWPayments sync; defaults to `crypto`)
+- `SWELL_CRYPTO_PAYMENT_METHOD` (manual payment method ID configured in Swell Payment Settings for direct crypto payments; defaults to `crypto`)
+- `SWELL_CARD_DEBIT_PAYMENT_METHOD` (manual payment method ID configured in Swell Payment Settings for card/debit payments; defaults to `card_debit`)
+- `SWELL_INTERAC_PAYMENT_METHOD` (manual payment method ID configured in Swell Payment Settings for Interac payments; defaults to `interac`)
+- `SWELL_MANUAL_PAYMENT_METHOD` (legacy manual payment method fallback used only by older call sites; defaults to `crypto`)
 - `NOW_PRIVATE_KEY` or `NOWPAYMENTS_API_KEY` (NOWPayments server API key; `NOW_PRIVATE_KEY` is accepted as an alias)
 - `NOW_PUBLIC_KEY` or `NOWPAYMENTS_IPN_SECRET` (NOWPayments webhook signing secret; `NOW_PUBLIC_KEY` is accepted as an alias)
 - `NEXT_PUBLIC_NOWPAYMENTS_QUICK_CURRENCIES` (optional comma-separated checkout currency chips, e.g. `btc,eth,sol,ltc,usdttrc20,trx`)
@@ -36,6 +39,12 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `SHIPENGINE_US_PREFERRED_CARRIERS` (optional comma-separated carrier name/code matchers for US ShipEngine quotes; defaults to `fedex,dhl`)
 - `SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS=true` (optional; if enabled, US ShipEngine quotes return no rates unless a preferred carrier is available)
 - `SHIPENGINE_PARCEL_LENGTH_IN`, `SHIPENGINE_PARCEL_WIDTH_IN`, `SHIPENGINE_PARCEL_HEIGHT_IN`, `SHIPENGINE_DEFAULT_ITEM_WEIGHT_OZ` (optional parcel defaults for small-vial shipments)
+- `ZONOS_CREDENTIAL_TOKEN` (optional; enables Zonos landed-cost duties, import taxes, and fees on non-domestic checkout shipping)
+- `ZONOS_DUTY_TAX_MODE` (optional; defaults to `DDP_PREFERRED`)
+- `ZONOS_ORIGIN_COUNTRY`, `ZONOS_ORIGIN_STREET1`, `ZONOS_ORIGIN_POSTAL_CODE` (optional Zonos origin overrides; falls back to the ShipEngine origin fields)
+- `ZONOS_DEFAULT_SERVICE_LEVEL_CODE` (optional; set to the Zonos service-level code from your Zonos dashboard if ShipEngine/Swell service codes do not match Zonos)
+- `ZONOS_DEFAULT_ITEM_COUNTRY_OF_ORIGIN` (optional; defaults to the ShipEngine customs origin or `CA`)
+- `ZONOS_REQUIRE_LANDED_COST=true` (optional; if enabled, non-domestic checkout fails instead of omitting duties when Zonos cannot return a quote)
 - `SHIPPO_API_TOKEN` (optional; enables live Shippo rate quotes before order creation)
 - `SHIPPO_ORIGIN_STREET1`, `SHIPPO_ORIGIN_ZIP` (required to activate Shippo live rates)
 - `SHIPPO_ORIGIN_CITY`, `SHIPPO_ORIGIN_STATE`, `SHIPPO_ORIGIN_COUNTRY`, `SHIPPO_ORIGIN_NAME` (optional origin fields; defaults assume Waterloo, ON, CA)
@@ -65,7 +74,7 @@ The native `/checkout` flow creates real Swell guest accounts, quotes shipping, 
 creates a NOWPayments payment for that Swell order total. For that flow to work:
 
 - `SWELL_SECRET_KEY` must be present
-- `SWELL_MANUAL_PAYMENT_METHOD` must match a manual payment method configured in your Swell dashboard
+- `SWELL_CRYPTO_PAYMENT_METHOD`, `SWELL_CARD_DEBIT_PAYMENT_METHOD`, and `SWELL_INTERAC_PAYMENT_METHOD` must match manual payment methods configured in your Swell dashboard
 - Either Swell shipping services must be configured, or ShipEngine / Shippo must be configured with API credentials plus origin street/postal code
 
 ## Deployment

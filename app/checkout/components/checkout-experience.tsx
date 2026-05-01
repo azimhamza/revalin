@@ -1009,6 +1009,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const quoteAbortController = useRef<AbortController | null>(null);
   const previousPaymentSnapshot = useRef<{ orderId: string; status: string } | null>(null);
   const shieldClimbPaymentWindow = useRef<Window | null>(null);
+  const paymentSubmitInFlight = useRef(false);
   const recentlyFinalizedCheckout = useRef<{ orderId: string; accessKey: string; expiresAt: number } | null>(null);
   const restoreRequestVersion = useRef(0);
   const checkoutSessionRef = useRef<CheckoutSession | null>(null);
@@ -1072,6 +1073,10 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const summaryShipping = activeOrder?.totals.shippingAmount?.amount || selectedQuoteService?.price.amount || '0.00';
   const summaryShippingOriginal = selectedQuoteService?.originalPrice?.amount;
   const summaryTax = activeOrder?.totals.taxAmount?.amount || selectedQuoteService?.taxAmount?.amount || '0.00';
+  const summaryLandedCost =
+    activeOrder?.totals.landedCostAmount?.amount ||
+    selectedQuoteService?.landedCostAmount?.amount ||
+    '0.00';
   const summaryPricing = useMemo(() => {
     if (activeOrder) {
       const discounts = getCheckoutDiscounts({
@@ -1088,27 +1093,30 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       };
     }
 
-    if (quote?.paymentMethod === paymentMethod) {
-      const discounts = getCheckoutDiscounts({
+    if (quote) {
+      const quoteCouponDiscountAmount = quote.discounts?.length
+        ? quote.discounts
+            .filter(discount => discount.kind !== 'crypto')
+            .reduce((total, discount) => total + Number(discount.amount.amount || 0), 0)
+            .toFixed(2)
+        : quote.paymentMethod === 'crypto'
+          ? appliedDiscount?.amount || '0.00'
+          : quote.discountAmount?.amount || appliedDiscount?.amount || '0.00';
+      const pricing = calculateCheckoutPricing({
         currencyCode: quote.currencyCode,
-        discounts: quote.discounts,
-        discountAmount: quote.discountAmount?.amount,
-        discountCode: quote.discountCode,
+        subtotalAmount: summarySubtotal,
+        couponDiscountAmount: quoteCouponDiscountAmount,
+        couponCode: quote.discountCode || appliedDiscount?.code,
+        shippingAmount: summaryShipping,
+        taxAmount: summaryTax,
+        landedCostAmount: summaryLandedCost,
+        paymentMethod,
       });
-      const totalValue = (
-        Number(summarySubtotal) -
-        Number(quote.discountAmount?.amount || 0) +
-        Number(summaryShipping) +
-        Number(summaryTax)
-      ).toFixed(2);
 
       return {
-        discounts,
-        totalAmount: {
-          amount: totalValue,
-          currencyCode: quote.currencyCode,
-        },
-        cryptoDiscountAmount: discounts.find(discount => discount.kind === 'crypto')?.amount,
+        discounts: pricing.discounts,
+        totalAmount: pricing.totalAmount,
+        cryptoDiscountAmount: pricing.cryptoDiscountAmount,
       };
     }
 
@@ -1119,6 +1127,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       couponCode: appliedDiscount?.code,
       shippingAmount: summaryShipping,
       taxAmount: summaryTax,
+      landedCostAmount: summaryLandedCost,
       paymentMethod,
     });
 
@@ -1138,6 +1147,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     quote?.discounts,
     quote?.paymentMethod,
     summaryCurrencyCode,
+    summaryLandedCost,
     summaryShipping,
     summarySubtotal,
     summaryTax,
@@ -1161,6 +1171,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
           appliedDiscount?.code || quote?.discountCode || activeOrder?.totals.discountCode,
         shippingAmount: summaryShipping,
         taxAmount: summaryTax,
+        landedCostAmount: summaryLandedCost,
         paymentMethod: 'card',
       }),
     [
@@ -1169,6 +1180,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       quote?.discountCode,
       summaryCouponDiscountAmount,
       summaryCurrencyCode,
+      summaryLandedCost,
       summaryShipping,
       summarySubtotal,
       summaryTax,
@@ -1188,6 +1200,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     : isShippingAddressReady(shippingAddress)
       ? (isLoadingQuote ? 'Calculating...' : 'Select a method')
       : 'Enter address';
+  const hasLandedCost = Number(summaryLandedCost || 0) > 0.009;
+  const summaryLandedCostValue = formatPrice(summaryLandedCost, summaryCurrencyCode);
   const summaryCryptoDiscountAmount = summaryPricing.cryptoDiscountAmount?.amount;
   const summaryTotal = summaryPricing.totalAmount.amount;
   const isCartHydrating = !activeOrder && cart === undefined;
@@ -2549,6 +2563,10 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       return;
     }
 
+    if (paymentSubmitInFlight.current) {
+      return;
+    }
+    paymentSubmitInFlight.current = true;
     setIsCreatingPayment(true);
     setError(null);
 
@@ -2701,6 +2719,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       setError(submitError instanceof Error ? submitError.message : 'Unable to create payment.');
       setIsCardCheckoutOpen(false);
     } finally {
+      paymentSubmitInFlight.current = false;
       setIsCreatingPayment(false);
     }
   }, [
@@ -3210,6 +3229,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                     value={summaryShippingValue}
                   />
                   <SummaryBlock label="Tax" value={summaryTaxValue} />
+                  {hasLandedCost ? (
+                    <SummaryBlock label="Duties & import taxes" value={summaryLandedCostValue} />
+                  ) : null}
                 </div>
                 <div className="mt-3 border-t border-border/70 pt-3">
                   <SummaryBlock label="Total" value={formatPrice(summaryTotal, summaryCurrencyCode)} emphasized />
@@ -3371,6 +3393,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                           const carrierLogo = getShippingCarrierLogo(service.carrier);
                           const estimatedDelivery = formatEstimatedDeliveryDays(service.estimatedDays);
                           const optionCategory = formatShippingOptionCategory(service.quoteCategory);
+                          const optionLandedCost = Number(service.landedCostAmount?.amount || 0);
                           return (
                             <label
                               key={service.id}
@@ -3410,12 +3433,19 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                                   </div>
                                 </div>
                               </div>
-                              <div className="text-sm font-semibold">
-                                {renderShippingPrice(
-                                  service.price.amount,
-                                  service.price.currencyCode,
-                                  service.originalPrice?.amount
-                                )}
+                              <div className="text-right">
+                                <div className="text-sm font-semibold">
+                                  {renderShippingPrice(
+                                    service.price.amount,
+                                    service.price.currencyCode,
+                                    service.originalPrice?.amount
+                                  )}
+                                </div>
+                                {optionLandedCost > 0.009 ? (
+                                  <p className="mt-1 text-[11px] font-medium text-foreground/55">
+                                    +{formatPrice(service.landedCostAmount?.amount || '0.00', service.landedCostAmount?.currencyCode || service.price.currencyCode)} duties
+                                  </p>
+                                ) : null}
                               </div>
                             </label>
                           );
@@ -3878,6 +3908,12 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                               <div className="flex justify-between">
                                 <span className="text-foreground/65">Tax</span>
                                 <span>{formatPrice(activeOrder.totals.taxAmount.amount, activeOrder.totals.taxAmount.currencyCode)}</span>
+                              </div>
+                            ) : null}
+                            {activeOrder.totals.landedCostAmount && Number(activeOrder.totals.landedCostAmount.amount) > 0 ? (
+                              <div className="flex justify-between">
+                                <span className="text-foreground/65">Duties & import taxes</span>
+                                <span>{formatPrice(activeOrder.totals.landedCostAmount.amount, activeOrder.totals.landedCostAmount.currencyCode)}</span>
                               </div>
                             ) : null}
                             <div className="flex justify-between border-t border-border/50 pt-1.5 font-semibold">
@@ -4373,6 +4409,12 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                                 <div className="flex justify-between">
                                   <span className="text-foreground/65">Tax</span>
                                   <span>{formatPrice(activeOrder.totals.taxAmount.amount, activeOrder.totals.taxAmount.currencyCode)}</span>
+                                </div>
+                              ) : null}
+                              {activeOrder.totals.landedCostAmount && Number(activeOrder.totals.landedCostAmount.amount) > 0 ? (
+                                <div className="flex justify-between">
+                                  <span className="text-foreground/65">Duties & import taxes</span>
+                                  <span>{formatPrice(activeOrder.totals.landedCostAmount.amount, activeOrder.totals.landedCostAmount.currencyCode)}</span>
                                 </div>
                               ) : null}
                               <div className="flex justify-between border-t border-border/50 pt-1.5 font-semibold">

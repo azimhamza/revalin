@@ -397,6 +397,14 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
               </span>
             </div>
           ) : null}
+          {order.totals.landedCostAmount && Number(order.totals.landedCostAmount.amount) > 0 ? (
+            <div className="flex justify-between text-sm">
+              <span className="text-[#0B2E2F]/60">Duties & import taxes</span>
+              <span className="font-medium text-[#0B2E2F]">
+                {formatCurrency(order.totals.landedCostAmount.amount, order.currencyCode)}
+              </span>
+            </div>
+          ) : null}
           <div className="flex justify-between border-t border-[#0B2E2F]/10 pt-2 text-base">
             <span className="font-semibold text-[#0B2E2F]">Total</span>
             <span className="font-semibold text-[#0B2E2F]">

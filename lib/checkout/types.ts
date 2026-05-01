@@ -35,12 +35,26 @@ export type CheckoutAppliedDiscount = {
   code?: string;
 };
 
+export type CheckoutLandedCost = {
+  provider: 'zonos';
+  id?: string;
+  amount: Money;
+  dutiesAmount?: Money;
+  importTaxAmount?: Money;
+  feesAmount?: Money;
+  calculationMethod?: string;
+  tariffRate?: string;
+  serviceLevelCode?: string;
+};
+
 export type CheckoutOrderTotals = {
   subtotalAmount: Money;
   discountAmount?: Money;
   discountCode?: string;
   discounts?: CheckoutAppliedDiscount[];
   taxAmount?: Money;
+  landedCostAmount?: Money;
+  landedCost?: CheckoutLandedCost;
   totalAmount: Money;
   shippingAmount?: Money;
   shippingThresholdAmount: Money;
@@ -60,11 +74,14 @@ export type CheckoutShippingService = {
   price: Money;
   originalPrice?: Money;
   taxAmount?: Money;
+  landedCostAmount?: Money;
+  landedCost?: CheckoutLandedCost;
   pickup?: boolean;
 };
 
 export type NowPaymentsPaymentData = {
   provider: 'nowpayments';
+  paymentMethod?: 'crypto';
   paymentId?: string;
   purchaseId?: string;
   swellPaymentId?: string;
@@ -91,6 +108,7 @@ export type NowPaymentsPaymentData = {
 
 export type ShieldClimbPaymentData = {
   provider: 'shieldclimb';
+  paymentMethod?: 'card_debit';
   walletId: string;
   addressIn: string;
   polygonAddressIn: string;
@@ -119,6 +137,7 @@ export type ShieldClimbPaymentData = {
 
 export type InteracPaymentData = {
   provider: 'interac';
+  paymentMethod?: 'interac';
   status:
     | 'awaiting_transfer'
     | 'submitted'
@@ -140,6 +159,8 @@ export type InteracPaymentData = {
   submittedAt?: string;
   screenshotUrls?: string[];
   swellPaymentId?: string;
+  swellPaymentSyncToken?: string | null;
+  swellPaymentSyncStartedAt?: string | null;
   confirmedAt?: string;
   receivedAmount?: string;
   senderName?: string | null;

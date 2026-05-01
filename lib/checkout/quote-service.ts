@@ -19,6 +19,7 @@ import {
 } from '@/lib/checkout/swell-order-management';
 import type { CheckoutShippingAddress } from '@/lib/checkout/types';
 import { getShipEngineMissingConfig, isShipEngineConfigured } from '@/lib/checkout/shipengine';
+import { applyZonosLandedCostToServices } from '@/lib/checkout/zonos';
 
 type CheckoutSessionCartSnapshot = {
   currencyCode: string;
@@ -43,6 +44,14 @@ type CheckoutQuoteInput = {
   paymentMethod?: 'card' | 'crypto' | 'interac' | null;
   selectedShippingServiceId?: string | null;
 };
+
+function normalizeCheckoutPaymentMethod(
+  paymentMethod?: CheckoutQuoteInput['paymentMethod'],
+): 'card' | 'crypto' | 'interac' {
+  if (paymentMethod === 'crypto') return 'crypto';
+  if (paymentMethod === 'interac') return 'interac';
+  return 'card';
+}
 
 function sanitizeCartSnapshot(cartSnapshot: CheckoutSessionCartSnapshot) {
   return {
@@ -146,7 +155,8 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       );
     }
 
-    const manualMethod = getSwellManualPaymentMethod();
+    const paymentMethod = normalizeCheckoutPaymentMethod(args.paymentMethod);
+    const manualMethod = getSwellManualPaymentMethod(paymentMethod);
     const swellShipping = toSwellAddress({
       ...args.shippingAddress,
       email: args.shippingAddress.email,
@@ -186,12 +196,7 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       subtotalAmount,
       couponDiscountAmount,
       couponCode: args.discountCode || swellCart.coupon_code,
-      paymentMethod:
-        args.paymentMethod === 'crypto'
-          ? 'crypto'
-          : args.paymentMethod === 'interac'
-            ? 'interac'
-            : 'card',
+      paymentMethod,
     });
 
     const fallbackServices = mapSwellRatedServices(
@@ -205,12 +210,7 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       discountAmount: pricing.discountTotalValue,
       discountCode: args.discountCode || swellCart.coupon_code,
       discounts: pricing.discounts,
-      paymentMethod:
-        args.paymentMethod === 'crypto'
-          ? 'crypto'
-          : args.paymentMethod === 'interac'
-            ? 'interac'
-            : 'card',
+      paymentMethod,
       services:
         preferredServices.length > 0 ? preferredServices : fallbackServices,
     });
@@ -232,6 +232,13 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
     });
     quote.services = selectedRating.services;
 
+    quote.services = await applyZonosLandedCostToServices({
+      shippingAddress: args.shippingAddress,
+      cartSnapshot: args.cartSnapshot,
+      services: quote.services,
+      currencyCode: selectedRating.currencyCode || swellCart.currency || currencyCode,
+    });
+
     const resolvedCouponDiscountAmount =
       selectedRating.couponDiscountAmount ?? couponDiscountAmount;
     const resolvedCouponCode =
@@ -241,17 +248,20 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       throw apiError.badRequest('That discount code is invalid or has expired.');
     }
 
+    const selectedServiceForPricing =
+      findCheckoutShippingService(quote.services, quote.selectedServiceId) ||
+      quote.services[0] ||
+      null;
+
     const resolvedPricing = calculateCheckoutPricing({
       currencyCode: selectedRating.currencyCode || swellCart.currency || currencyCode,
       subtotalAmount,
       couponDiscountAmount: resolvedCouponDiscountAmount,
       couponCode: resolvedCouponCode,
-      paymentMethod:
-        args.paymentMethod === 'crypto'
-          ? 'crypto'
-          : args.paymentMethod === 'interac'
-            ? 'interac'
-            : 'card',
+      shippingAmount: selectedServiceForPricing?.price.amount,
+      taxAmount: selectedServiceForPricing?.taxAmount?.amount,
+      landedCostAmount: selectedServiceForPricing?.landedCostAmount?.amount,
+      paymentMethod,
     });
 
     quote.discountAmount = {

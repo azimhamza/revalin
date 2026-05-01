@@ -63,6 +63,7 @@ import {
   mapSwellRatedServices,
   type CheckoutRatedService,
 } from '@/lib/checkout/shipping-rates';
+import { quoteZonosLandedCost } from '@/lib/checkout/zonos';
 import {
   cancelSwellOrder,
   convertSwellCartToOrder,
@@ -80,6 +81,7 @@ import {
 } from '@/lib/checkout/telemetry';
 import type {
   CheckoutOrderAffiliate,
+  CheckoutLandedCost,
   CheckoutOrderLine,
   CheckoutOrderPromoter,
   CheckoutOrderPublic,
@@ -593,6 +595,32 @@ function mapShippingService(
           currencyCode: service.taxAmount.currencyCode || currencyCode,
         }
       : undefined,
+    landedCostAmount: service.landedCostAmount
+      ? {
+          amount: Number(service.landedCostAmount.amount || 0).toFixed(2),
+          currencyCode: service.landedCostAmount.currencyCode || currencyCode,
+        }
+      : undefined,
+    landedCost: service.landedCost,
+  };
+}
+
+function buildLandedCostTotalFields(args: {
+  orderLandedCostTotal?: number;
+  currencyCode: string;
+  landedCost?: CheckoutLandedCost | null;
+}) {
+  const orderLandedCostTotal = Number(args.orderLandedCostTotal || 0);
+  if (!Number.isFinite(orderLandedCostTotal) || orderLandedCostTotal <= 0.009) {
+    return {};
+  }
+
+  return {
+    landedCostAmount: {
+      amount: orderLandedCostTotal.toFixed(2),
+      currencyCode: args.currencyCode,
+    },
+    landedCost: args.landedCost || undefined,
   };
 }
 
@@ -706,6 +734,8 @@ function buildNowPaymentsOrderRecord(args: {
   orderTaxTotal: number;
   orderGrandTotal: number;
   orderShipmentTotal: number;
+  orderLandedCostTotal?: number;
+  landedCost?: CheckoutLandedCost | null;
   paymentCurrency: string;
   sourceWalletAddress?: string | null;
   payment: Awaited<ReturnType<typeof createNowPaymentsPayment>>;
@@ -720,6 +750,7 @@ function buildNowPaymentsOrderRecord(args: {
 
   const paymentData: NowPaymentsPaymentData = {
     provider: 'nowpayments',
+    paymentMethod: 'crypto',
     paymentId: String(args.payment.payment_id),
     purchaseId: args.payment.purchase_id,
     status: args.payment.payment_status,
@@ -772,6 +803,11 @@ function buildNowPaymentsOrderRecord(args: {
         amount: args.orderTaxTotal.toFixed(2),
         currencyCode: args.currencyCode,
       },
+      ...buildLandedCostTotalFields({
+        orderLandedCostTotal: args.orderLandedCostTotal,
+        currencyCode: args.currencyCode,
+        landedCost: args.landedCost,
+      }),
       totalAmount: {
         amount: args.orderGrandTotal.toFixed(2),
         currencyCode: args.currencyCode,
@@ -818,6 +854,8 @@ function buildShieldClimbOrderRecord(args: {
   orderTaxTotal: number;
   orderGrandTotal: number;
   orderShipmentTotal: number;
+  orderLandedCostTotal?: number;
+  landedCost?: CheckoutLandedCost | null;
   walletId: string;
   addressIn: string;
   polygonAddressIn: string;
@@ -838,6 +876,7 @@ function buildShieldClimbOrderRecord(args: {
 
   const paymentData: ShieldClimbPaymentData = {
     provider: 'shieldclimb',
+    paymentMethod: 'card_debit',
     walletId: args.walletId,
     addressIn: args.addressIn,
     polygonAddressIn: args.polygonAddressIn,
@@ -881,6 +920,11 @@ function buildShieldClimbOrderRecord(args: {
         amount: args.orderTaxTotal.toFixed(2),
         currencyCode: args.currencyCode,
       },
+      ...buildLandedCostTotalFields({
+        orderLandedCostTotal: args.orderLandedCostTotal,
+        currencyCode: args.currencyCode,
+        landedCost: args.landedCost,
+      }),
       totalAmount: {
         amount: args.orderGrandTotal.toFixed(2),
         currencyCode: args.currencyCode,
@@ -927,6 +971,8 @@ function buildInteracOrderRecord(args: {
   orderTaxTotal: number;
   orderGrandTotal: number;
   orderShipmentTotal: number;
+  orderLandedCostTotal?: number;
+  landedCost?: CheckoutLandedCost | null;
   recipientEmail: string;
   messageCode: string;
   cadAmount: string;
@@ -945,6 +991,7 @@ function buildInteracOrderRecord(args: {
 
   const paymentData: InteracPaymentData = {
     provider: 'interac',
+    paymentMethod: 'interac',
     status: 'awaiting_transfer',
     recipientEmail: args.recipientEmail,
     messageCode: args.messageCode,
@@ -988,6 +1035,11 @@ function buildInteracOrderRecord(args: {
         amount: args.orderTaxTotal.toFixed(2),
         currencyCode: args.currencyCode,
       },
+      ...buildLandedCostTotalFields({
+        orderLandedCostTotal: args.orderLandedCostTotal,
+        currencyCode: args.currencyCode,
+        landedCost: args.landedCost,
+      }),
       totalAmount: {
         amount: args.orderGrandTotal.toFixed(2),
         currencyCode: args.currencyCode,
@@ -1145,7 +1197,9 @@ export function createFinalizeCheckoutSession(
       const itemCount = getCartSnapshotItemCount(args.cartSnapshot);
       const paymentCurrency = (args.paymentCurrency || '').toLowerCase();
       const ipnCallbackEnabled = shouldEnableIpnCallback(requestUrl);
-      const manualMethod = dependencies.getSwellManualPaymentMethod();
+      const manualMethod = dependencies.getSwellManualPaymentMethod(
+        args.paymentMethod,
+      );
       const swellShipping = toSwellAddress({
         ...args.shippingAddress,
         email: args.shippingAddress.email,
@@ -1274,27 +1328,50 @@ export function createFinalizeCheckoutSession(
         selectedService,
         swellShipmentTotal: swellOrder.shipment_total,
       });
+      const orderCurrencyCode = swellOrder.currency || currencyCode;
+      const landedCost = await quoteZonosLandedCost({
+        shippingAddress: args.shippingAddress,
+        cartSnapshot: args.cartSnapshot,
+        service: {
+          ...selectedService,
+          price: {
+            amount: orderShipmentTotal.toFixed(2),
+            currencyCode: orderCurrencyCode,
+          },
+        },
+        currencyCode: orderCurrencyCode,
+      });
+      const orderLandedCostTotal = Number(landedCost?.amount.amount || 0);
+      const selectedServiceForOrder = landedCost
+        ? {
+            ...selectedService,
+            landedCostAmount: landedCost.amount,
+            landedCost,
+          }
+        : selectedService;
       const orderSubtotalAmount = Number.isFinite(Number(swellOrder.sub_total))
         ? Number(swellOrder.sub_total)
         : subtotalAmount;
       const appliedDiscountCode = args.discountCode || swellOrder.coupon_code;
       const pricing = calculateCheckoutPricing({
-        currencyCode: swellOrder.currency || currencyCode,
+        currencyCode: orderCurrencyCode,
         subtotalAmount: orderSubtotalAmount,
         couponDiscountAmount: couponDiscountTotal,
         couponCode: appliedDiscountCode,
         shippingAmount: orderShipmentTotal,
         taxAmount: orderTaxTotal,
+        landedCostAmount: orderLandedCostTotal,
         paymentMethod: args.paymentMethod,
       });
       const orderDiscountTotal = pricing.discountTotalValue;
       const orderTotal = pricing.totalValue;
-      const fiatCurrency = (swellOrder.currency || currencyCode).toLowerCase();
+      const fiatCurrency = orderCurrencyCode.toLowerCase();
       const pricingMetadata = buildCheckoutPricingMetadata({
-        currencyCode: swellOrder.currency || currencyCode,
+        currencyCode: orderCurrencyCode,
         subtotalAmount: orderSubtotalAmount,
         shippingAmount: orderShipmentTotal,
         taxAmount: orderTaxTotal,
+        landedCostAmount: orderLandedCostTotal,
         totalAmount: orderTotal,
         discounts: pricing.discounts,
         discountAmount: orderDiscountTotal,
@@ -1378,12 +1455,12 @@ export function createFinalizeCheckoutSession(
             swellCartId: ratedCart.id,
             swellOrderId: swellOrder.id,
             swellOrderNumber: swellOrder.number,
-            currencyCode: swellOrder.currency || currencyCode,
+            currencyCode: orderCurrencyCode,
             lines,
             shippingAddress: args.shippingAddress,
             shippingService: mapShippingService(
-              selectedService,
-              swellOrder.currency || currencyCode,
+              selectedServiceForOrder,
+              orderCurrencyCode,
             ),
             orderSubtotal: orderSubtotalAmount,
             orderDiscountTotal,
@@ -1392,6 +1469,8 @@ export function createFinalizeCheckoutSession(
             orderTaxTotal,
             orderGrandTotal: orderTotal,
             orderShipmentTotal,
+            orderLandedCostTotal,
+            landedCost,
             walletId: 'pending',
             addressIn: '',
             polygonAddressIn: '',
@@ -1470,6 +1549,7 @@ export function createFinalizeCheckoutSession(
             checkout_reference: orderId,
             coupon_code: appliedDiscountCode || null,
             pricing: pricingMetadata,
+            landed_cost: landedCost ?? null,
             shieldclimb: {
               session_id: shieldClimbSessionId,
               ipn_token: scWallet.ipn_token,
@@ -1504,12 +1584,12 @@ export function createFinalizeCheckoutSession(
             swellCartId: ratedCart.id,
             swellOrderId: swellOrder.id,
             swellOrderNumber: swellOrder.number,
-            currencyCode: swellOrder.currency || currencyCode,
+            currencyCode: orderCurrencyCode,
             lines,
             shippingAddress: args.shippingAddress,
             shippingService: mapShippingService(
-              selectedService,
-              swellOrder.currency || currencyCode,
+              selectedServiceForOrder,
+              orderCurrencyCode,
             ),
             orderSubtotal: orderSubtotalAmount,
             orderDiscountTotal,
@@ -1518,6 +1598,8 @@ export function createFinalizeCheckoutSession(
             orderTaxTotal,
             orderGrandTotal: orderTotal,
             orderShipmentTotal,
+            orderLandedCostTotal,
+            landedCost,
             walletId: shieldClimbSessionId,
             addressIn: scWallet.address_in,
             polygonAddressIn: scWallet.polygon_address_in,
@@ -1634,6 +1716,7 @@ export function createFinalizeCheckoutSession(
             checkout_reference: orderId,
             coupon_code: appliedDiscountCode || null,
             pricing: pricingMetadata,
+            landed_cost: landedCost ?? null,
             interac: {
               message_code: messageCode,
               recipient_email: recipientEmail,
@@ -1671,12 +1754,12 @@ export function createFinalizeCheckoutSession(
           swellCartId: ratedCart.id,
           swellOrderId: swellOrder.id,
           swellOrderNumber: swellOrder.number,
-          currencyCode: swellOrder.currency || currencyCode,
+          currencyCode: orderCurrencyCode,
           lines,
           shippingAddress: args.shippingAddress,
           shippingService: mapShippingService(
-            selectedService,
-            swellOrder.currency || currencyCode,
+            selectedServiceForOrder,
+            orderCurrencyCode,
           ),
           orderSubtotal: orderSubtotalAmount,
           orderDiscountTotal,
@@ -1685,6 +1768,8 @@ export function createFinalizeCheckoutSession(
           orderTaxTotal,
           orderGrandTotal: orderTotal,
           orderShipmentTotal,
+          orderLandedCostTotal,
+          landedCost,
           recipientEmail,
           messageCode,
           cadAmount,
@@ -1813,6 +1898,7 @@ export function createFinalizeCheckoutSession(
           checkout_reference: orderId,
           coupon_code: appliedDiscountCode || null,
           pricing: pricingMetadata,
+          landed_cost: landedCost ?? null,
           nowpayments: {
             payment_id: payment.payment_id,
             purchase_id: payment.purchase_id,
@@ -1860,12 +1946,12 @@ export function createFinalizeCheckoutSession(
           swellCartId: ratedCart.id,
           swellOrderId: swellOrder.id,
           swellOrderNumber: swellOrder.number,
-          currencyCode: swellOrder.currency || currencyCode,
+          currencyCode: orderCurrencyCode,
           lines,
           shippingAddress: args.shippingAddress,
           shippingService: mapShippingService(
-            selectedService,
-            swellOrder.currency || currencyCode,
+            selectedServiceForOrder,
+            orderCurrencyCode,
           ),
           orderSubtotal: orderSubtotalAmount,
           orderDiscountTotal,
@@ -1874,6 +1960,8 @@ export function createFinalizeCheckoutSession(
           orderTaxTotal,
           orderGrandTotal: orderTotal,
           orderShipmentTotal,
+          orderLandedCostTotal,
+          landedCost,
           paymentCurrency,
           sourceWalletAddress: args.sourceWalletAddress,
           payment,

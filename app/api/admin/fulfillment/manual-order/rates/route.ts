@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { apiError } from '@/lib/api/errors';
 import { createApiRoute } from '@/lib/api/route';
-import { createManualSwellFulfillmentOrder } from '@/lib/checkout/fulfillment-service';
+import { quoteManualSwellFulfillmentRates } from '@/lib/checkout/fulfillment-service';
 
 const shippingAddressSchema = z.object({
   firstName: z.string().trim().min(1, 'First name is required.'),
@@ -20,25 +20,18 @@ const shippingAddressSchema = z.object({
 const bodySchema = z.object({
   swellOrderId: z.string().trim().min(1, 'Swell order ID is required.'),
   shippingAddress: shippingAddressSchema,
-  selectedShippingServiceId: z.string().trim().min(1, 'Select a ShipEngine rate.'),
-  payoutMethod: z.string().trim().optional(),
-  notes: z.string().trim().optional(),
 });
 
-function normalizeManualFulfillmentError(error: unknown) {
+function normalizeRateQuoteError(error: unknown) {
   if (!(error instanceof Error)) {
-    return apiError.internal('Failed to create manual fulfillment order.');
-  }
-
-  if (/already exists/i.test(error.message)) {
-    return apiError.conflict(error.message);
+    return apiError.internal('Failed to quote ShipEngine rates.');
   }
 
   if (/already in fulfillment/i.test(error.message)) {
     return apiError.conflict(error.message);
   }
 
-  if (/required|valid|must be|non-negative|not found|no rates|select/i.test(error.message)) {
+  if (/required|not found|no rates|address|shipengine|shipping/i.test(error.message)) {
     return apiError.badRequest(error.message);
   }
 
@@ -48,13 +41,13 @@ function normalizeManualFulfillmentError(error: unknown) {
 export const dynamic = 'force-dynamic';
 
 export const POST = createApiRoute({
-  route: '/api/admin/fulfillment/manual-order',
+  route: '/api/admin/fulfillment/manual-order/rates',
   access: 'admin',
   bodySchema,
   cacheControl: 'no-store',
   handler: async ({ body }) => {
     try {
-      const order = await createManualSwellFulfillmentOrder({
+      const quote = await quoteManualSwellFulfillmentRates({
         swellOrderId: body.swellOrderId,
         shippingAddress: {
           ...body.shippingAddress,
@@ -62,23 +55,15 @@ export const POST = createApiRoute({
           address2: body.shippingAddress.address2 || undefined,
           notes: body.shippingAddress.notes || undefined,
         },
-        selectedShippingServiceId: body.selectedShippingServiceId,
-        payoutMethod: body.payoutMethod || undefined,
-        notes: body.notes || undefined,
       });
 
       return {
         data: {
-          orderId: order.orderId,
-          fulfillmentStatus: order.fulfillmentStatus,
-          hasLabel: Boolean(order.shipengine?.labelUrl),
-          trackingCode: order.shipengine?.trackingCode || null,
-          labelUrl: order.shipengine?.labelUrl || null,
-          labelError: order.shipengine?.labelError || null,
+          quote,
         },
       };
     } catch (error) {
-      throw normalizeManualFulfillmentError(error);
+      throw normalizeRateQuoteError(error);
     }
   },
 });

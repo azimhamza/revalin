@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type { CheckoutOrderRecord } from '@/lib/checkout/types';
 import { isInteracPayment, isShieldClimbPayment } from '@/lib/checkout/types';
 import { createSwellOrderPayment, getSwellManualPaymentMethod, updateSwellOrder } from '@/lib/checkout/swell-order-management';
@@ -5,6 +6,8 @@ import type { NowPaymentsPaymentResponse } from '@/lib/checkout/nowpayments';
 import { isNowPaymentsPayment } from '@/lib/checkout/types';
 import { updateCheckoutOrder } from '@/lib/checkout/order-store';
 import { buildCheckoutPricingMetadata } from '@/lib/checkout/pricing';
+
+const SWELL_PAYMENT_SYNC_CLAIM_MS = 5 * 60 * 1000;
 
 export async function syncCheckoutOrderToSwell(
   order: CheckoutOrderRecord,
@@ -23,7 +26,7 @@ export async function syncCheckoutOrderToSwell(
     | 'expiration_estimate_date'
   >
 ) {
-  const manualMethod = getSwellManualPaymentMethod();
+  const manualMethod = getSwellManualPaymentMethod('crypto');
 
   await updateSwellOrder(order.swell.orderId, {
     // Suppress Swell's built-in emails — all emails sent via Loops.
@@ -44,6 +47,7 @@ export async function syncCheckoutOrderToSwell(
         subtotalAmount: order.totals.subtotalAmount.amount,
         shippingAmount: order.totals.shippingAmount?.amount,
         taxAmount: order.totals.taxAmount?.amount,
+        landedCostAmount: order.totals.landedCostAmount?.amount,
         totalAmount: order.totals.totalAmount.amount,
         discounts: order.totals.discounts,
         discountAmount: order.totals.discountAmount?.amount,
@@ -105,7 +109,7 @@ export async function syncShieldClimbOrderToSwell(order: CheckoutOrderRecord) {
     return null;
   }
 
-  const manualMethod = getSwellManualPaymentMethod();
+  const manualMethod = getSwellManualPaymentMethod('card');
 
   await updateSwellOrder(order.swell.orderId, {
     // Suppress Swell's built-in emails — all emails sent via Loops.
@@ -126,6 +130,7 @@ export async function syncShieldClimbOrderToSwell(order: CheckoutOrderRecord) {
         subtotalAmount: order.totals.subtotalAmount.amount,
         shippingAmount: order.totals.shippingAmount?.amount,
         taxAmount: order.totals.taxAmount?.amount,
+        landedCostAmount: order.totals.landedCostAmount?.amount,
         totalAmount: order.totals.totalAmount.amount,
         discounts: order.totals.discounts,
         discountAmount: order.totals.discountAmount?.amount,
@@ -188,83 +193,133 @@ export async function syncInteracOrderToSwell(order: CheckoutOrderRecord) {
     return null;
   }
 
-  const manualMethod = getSwellManualPaymentMethod();
+  const manualMethod = getSwellManualPaymentMethod('interac');
+  const syncToken = crypto.randomUUID();
+  const syncStartedAt = new Date().toISOString();
 
-  await updateSwellOrder(order.swell.orderId, {
-    $notify: false,
-    billing: {
-      method: manualMethod,
-      intent: {
-        provider: 'interac',
-        message_code: order.payment.messageCode,
-        status: order.payment.status,
-      },
-    },
-    metadata: {
-      checkout_reference: order.orderId,
-      pricing: buildCheckoutPricingMetadata({
-        currencyCode: order.currencyCode,
-        subtotalAmount: order.totals.subtotalAmount.amount,
-        shippingAmount: order.totals.shippingAmount?.amount,
-        taxAmount: order.totals.taxAmount?.amount,
-        totalAmount: order.totals.totalAmount.amount,
-        discounts: order.totals.discounts,
-        discountAmount: order.totals.discountAmount?.amount,
-        discountCode: order.totals.discountCode,
-        paymentMethod: 'interac',
-      }),
-      interac: {
-        message_code: order.payment.messageCode,
-        recipient_email: order.payment.recipientEmail,
-        expected_sender_email: order.payment.expectedSenderEmail,
-        expected_sender_name: order.payment.expectedSenderName,
-        security_question: order.payment.securityQuestion ?? null,
-        security_answer: order.payment.securityAnswer ?? null,
-        cad_amount: order.payment.cadAmount,
-        status: order.payment.status,
-        received_amount: order.payment.receivedAmount ?? null,
-        sender_name: order.payment.senderName ?? null,
-        reply_to_email: order.payment.replyToEmail ?? null,
-        bank_reference: order.payment.bankReference ?? null,
-        gmail_message_id: order.payment.gmailMessageId ?? null,
-        sender_mismatch: order.payment.senderMismatch ?? false,
-        confirmed_at: order.payment.confirmedAt ?? null,
-      },
-    },
-  });
-
-  if (order.payment.status !== 'paid') {
-    return null;
-  }
-
-  if (order.payment.swellPaymentId) {
-    return null;
-  }
-
-  const swellPayment = await createSwellOrderPayment({
-    account_id: order.swell.accountId,
-    order_id: order.swell.orderId,
-    amount: Number(order.totals.totalAmount.amount),
-    currency: order.currencyCode,
-    method: manualMethod,
-    transaction_id:
-      order.payment.bankReference ||
-      order.payment.gmailMessageId ||
-      order.payment.messageCode,
-    authorized: true,
-    captured: true,
-  });
-
-  await updateCheckoutOrder(order.orderId, current => {
+  const claimedOrder = await updateCheckoutOrder(order.orderId, current => {
     if (!isInteracPayment(current.payment)) return current;
+    if (current.payment.status !== 'paid') return current;
+    if (current.payment.swellPaymentId) return current;
+
+    const existingStartedAt = Date.parse(current.payment.swellPaymentSyncStartedAt || '');
+    const hasFreshClaim = Boolean(
+      current.payment.swellPaymentSyncToken &&
+        Number.isFinite(existingStartedAt) &&
+        Date.now() - existingStartedAt < SWELL_PAYMENT_SYNC_CLAIM_MS,
+    );
+    if (hasFreshClaim) return current;
+
     return {
       ...current,
       payment: {
         ...current.payment,
-        swellPaymentId: swellPayment.id,
+        swellPaymentSyncToken: syncToken,
+        swellPaymentSyncStartedAt: syncStartedAt,
       },
     };
   });
 
-  return swellPayment;
+  if (!claimedOrder || !isInteracPayment(claimedOrder.payment)) {
+    return null;
+  }
+  if (claimedOrder.payment.status !== 'paid' || claimedOrder.payment.swellPaymentId) {
+    return null;
+  }
+  if (claimedOrder.payment.swellPaymentSyncToken !== syncToken) {
+    return null;
+  }
+
+  try {
+    await updateSwellOrder(claimedOrder.swell.orderId, {
+      $notify: false,
+      billing: {
+        method: manualMethod,
+        intent: {
+          provider: 'interac',
+          message_code: claimedOrder.payment.messageCode,
+          status: claimedOrder.payment.status,
+        },
+      },
+      metadata: {
+        checkout_reference: claimedOrder.orderId,
+        pricing: buildCheckoutPricingMetadata({
+          currencyCode: claimedOrder.currencyCode,
+          subtotalAmount: claimedOrder.totals.subtotalAmount.amount,
+          shippingAmount: claimedOrder.totals.shippingAmount?.amount,
+          taxAmount: claimedOrder.totals.taxAmount?.amount,
+          landedCostAmount: claimedOrder.totals.landedCostAmount?.amount,
+          totalAmount: claimedOrder.totals.totalAmount.amount,
+          discounts: claimedOrder.totals.discounts,
+          discountAmount: claimedOrder.totals.discountAmount?.amount,
+          discountCode: claimedOrder.totals.discountCode,
+          paymentMethod: 'interac',
+        }),
+        interac: {
+          message_code: claimedOrder.payment.messageCode,
+          recipient_email: claimedOrder.payment.recipientEmail,
+          expected_sender_email: claimedOrder.payment.expectedSenderEmail,
+          expected_sender_name: claimedOrder.payment.expectedSenderName,
+          security_question: claimedOrder.payment.securityQuestion ?? null,
+          security_answer: claimedOrder.payment.securityAnswer ?? null,
+          cad_amount: claimedOrder.payment.cadAmount,
+          status: claimedOrder.payment.status,
+          received_amount: claimedOrder.payment.receivedAmount ?? null,
+          sender_name: claimedOrder.payment.senderName ?? null,
+          reply_to_email: claimedOrder.payment.replyToEmail ?? null,
+          bank_reference: claimedOrder.payment.bankReference ?? null,
+          gmail_message_id: claimedOrder.payment.gmailMessageId ?? null,
+          sender_mismatch: claimedOrder.payment.senderMismatch ?? false,
+          confirmed_at: claimedOrder.payment.confirmedAt ?? null,
+        },
+      },
+    });
+
+    const swellPayment = await createSwellOrderPayment({
+      account_id: claimedOrder.swell.accountId,
+      order_id: claimedOrder.swell.orderId,
+      amount: Number(claimedOrder.totals.totalAmount.amount),
+      currency: claimedOrder.currencyCode,
+      method: manualMethod,
+      transaction_id:
+        claimedOrder.payment.bankReference ||
+        claimedOrder.payment.gmailMessageId ||
+        claimedOrder.payment.messageCode,
+      authorized: true,
+      captured: true,
+    });
+
+    await updateCheckoutOrder(claimedOrder.orderId, current => {
+      if (!isInteracPayment(current.payment)) return current;
+      if (current.payment.swellPaymentId) return current;
+      if (current.payment.swellPaymentSyncToken !== syncToken) return current;
+      return {
+        ...current,
+        payment: {
+          ...current.payment,
+          swellPaymentId: swellPayment.id,
+          swellPaymentSyncToken: null,
+          swellPaymentSyncStartedAt: null,
+        },
+      };
+    });
+
+    return swellPayment;
+  } catch (error) {
+    await updateCheckoutOrder(claimedOrder.orderId, current => {
+      if (!isInteracPayment(current.payment)) return current;
+      if (current.payment.swellPaymentSyncToken !== syncToken) return current;
+      return {
+        ...current,
+        payment: {
+          ...current.payment,
+          swellPaymentSyncToken: null,
+          swellPaymentSyncStartedAt: null,
+        },
+      };
+    }).catch((clearError) => {
+      console.error('Unable to clear Interac Swell payment sync claim:', clearError);
+    });
+    throw error;
+  }
 }

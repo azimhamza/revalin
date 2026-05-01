@@ -3,6 +3,7 @@ import { apiError } from './errors.ts';
 type ProviderName =
   | 'swell'
   | 'shipengine'
+  | 'zonos'
   | 'shieldclimb'
   | 'nowpayments'
   | 'loops'
@@ -19,6 +20,7 @@ type ProviderFetchOptions = RequestInit & {
 const PROVIDER_TIMEOUTS: Record<ProviderName, number> = {
   swell: 4_000,
   shipengine: 3_000,
+  zonos: 5_000,
   shieldclimb: 4_000,
   nowpayments: 4_000,
   loops: 3_000,

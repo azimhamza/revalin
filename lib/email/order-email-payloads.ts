@@ -71,6 +71,9 @@ export function buildOrderConfirmationDataVariables(order: CheckoutOrderRecord) 
   const taxAmount = order.totals.taxAmount
     ? formatCurrency(order.totals.taxAmount.amount, order.currencyCode)
     : "$0.00";
+  const landedCostAmount = order.totals.landedCostAmount
+    ? formatCurrency(order.totals.landedCostAmount.amount, order.currencyCode)
+    : "$0.00";
   const discountAmount =
     order.totals.discountAmount && Number(order.totals.discountAmount.amount) > 0
       ? `-${formatCurrency(order.totals.discountAmount.amount, order.currencyCode)}`
@@ -82,6 +85,8 @@ export function buildOrderConfirmationDataVariables(order: CheckoutOrderRecord) 
     shipping: shippingAmount,
     shipping_total: shippingAmount,
     tax: taxAmount,
+    duties: landedCostAmount,
+    landed_cost: landedCostAmount,
     discount: discountAmount,
     total_paid: formatCurrency(order.totals.totalAmount.amount, order.currencyCode),
     customer_name: `${order.shippingAddress.firstName} ${order.shippingAddress.lastName}`.trim(),
@@ -102,6 +107,9 @@ export function buildOrderShippedDataVariables(order: CheckoutOrderRecord) {
     : "Free";
   const taxAmount = order.totals.taxAmount
     ? formatCurrency(order.totals.taxAmount.amount, order.currencyCode)
+    : "$0.00";
+  const landedCostAmount = order.totals.landedCostAmount
+    ? formatCurrency(order.totals.landedCostAmount.amount, order.currencyCode)
     : "$0.00";
   const discountAmount =
     order.totals.discountAmount && Number(order.totals.discountAmount.amount) > 0
@@ -125,6 +133,8 @@ export function buildOrderShippedDataVariables(order: CheckoutOrderRecord) {
     subtotal: formatCurrency(order.totals.subtotalAmount.amount, order.currencyCode),
     shipping_total: shippingAmount,
     tax: taxAmount,
+    duties: landedCostAmount,
+    landed_cost: landedCostAmount,
     discount: discountAmount,
     total_paid: formatCurrency(order.totals.totalAmount.amount, order.currencyCode),
     customer_name: `${order.shippingAddress.firstName} ${order.shippingAddress.lastName}`.trim(),

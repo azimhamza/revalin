@@ -58,14 +58,16 @@ export function calculateCheckoutPricing(args: {
   couponCode?: string | null;
   shippingAmount?: MoneyInput;
   taxAmount?: MoneyInput;
+  landedCostAmount?: MoneyInput;
   paymentMethod: PaymentMethod;
 }) {
   const subtotalValue = roundCurrency(Math.max(0, toNumber(args.subtotalAmount)));
   const shippingValue = roundCurrency(Math.max(0, toNumber(args.shippingAmount)));
   const taxValue = roundCurrency(Math.max(0, toNumber(args.taxAmount)));
+  const landedCostValue = roundCurrency(Math.max(0, toNumber(args.landedCostAmount)));
   const couponDiscountValue = roundCurrency(Math.max(0, toNumber(args.couponDiscountAmount)));
   const totalBeforeCryptoDiscount = roundCurrency(
-    Math.max(0, subtotalValue - couponDiscountValue + shippingValue + taxValue)
+    Math.max(0, subtotalValue - couponDiscountValue + shippingValue + taxValue + landedCostValue)
   );
   const cryptoDiscountValue =
     args.paymentMethod === 'crypto'
@@ -93,13 +95,14 @@ export function calculateCheckoutPricing(args: {
 
   const discountTotalValue = roundCurrency(couponDiscountValue + cryptoDiscountValue);
   const totalValue = roundCurrency(
-    Math.max(0, subtotalValue - discountTotalValue + shippingValue + taxValue)
+    Math.max(0, subtotalValue - discountTotalValue + shippingValue + taxValue + landedCostValue)
   );
 
   return {
     subtotalValue,
     shippingValue,
     taxValue,
+    landedCostValue,
     couponDiscountValue,
     cryptoDiscountValue,
     discountTotalValue,
@@ -107,6 +110,7 @@ export function calculateCheckoutPricing(args: {
     subtotalAmount: toMoney(subtotalValue, args.currencyCode),
     shippingAmount: toMoney(shippingValue, args.currencyCode),
     taxAmount: toMoney(taxValue, args.currencyCode),
+    landedCostAmount: toMoney(landedCostValue, args.currencyCode),
     discountAmount: toMoney(discountTotalValue, args.currencyCode),
     totalAmount: toMoney(totalValue, args.currencyCode),
     cryptoDiscountAmount:
@@ -120,6 +124,7 @@ export function buildCheckoutPricingMetadata(args: {
   subtotalAmount: MoneyInput;
   shippingAmount?: MoneyInput;
   taxAmount?: MoneyInput;
+  landedCostAmount?: MoneyInput;
   totalAmount: MoneyInput;
   discounts?: CheckoutAppliedDiscount[] | null;
   discountAmount?: MoneyInput;
@@ -139,6 +144,7 @@ export function buildCheckoutPricingMetadata(args: {
     subtotal: toMoney(args.subtotalAmount, args.currencyCode),
     shipping: toMoney(args.shippingAmount, args.currencyCode),
     tax: toMoney(args.taxAmount, args.currencyCode),
+    landedCost: toMoney(args.landedCostAmount, args.currencyCode),
     total: toMoney(args.totalAmount, args.currencyCode),
     discounts: discounts.map(discount => ({
       kind: discount.kind,

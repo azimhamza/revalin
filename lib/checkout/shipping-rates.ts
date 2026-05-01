@@ -3,7 +3,7 @@ import {
   getFreeShippingThresholdForCurrency,
 } from '@/lib/checkout/constants';
 import { quoteShipEngineRates, type ShipEngineCheckoutRate } from '@/lib/checkout/shipengine';
-import type { CheckoutAppliedDiscount, CheckoutShippingAddress } from '@/lib/checkout/types';
+import type { CheckoutAppliedDiscount, CheckoutLandedCost, CheckoutShippingAddress } from '@/lib/checkout/types';
 import type { StorefrontCartSnapshot, SwellShipmentService } from '@/lib/checkout/swell-order-management';
 
 export type CheckoutRatedService = {
@@ -29,6 +29,11 @@ export type CheckoutRatedService = {
     amount: string;
     currencyCode: string;
   };
+  landedCostAmount?: {
+    amount: string;
+    currencyCode: string;
+  };
+  landedCost?: CheckoutLandedCost;
 };
 
 function toFixedAmount(amount: number) {
