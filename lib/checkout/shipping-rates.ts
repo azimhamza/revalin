@@ -48,7 +48,7 @@ const US_SHIPENGINE_PREFERRED_CARRIER_PATTERNS = (
   .filter(Boolean);
 
 const SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS =
-  process.env.SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS === 'true';
+  process.env.SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS !== 'false';
 
 function sortServicesByPrice<T extends CheckoutRatedService>(services: T[]) {
   return [...services].sort((left, right) => Number(left.price.amount) - Number(right.price.amount));

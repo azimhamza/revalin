@@ -41,6 +41,7 @@ import {
   getApiErrorMessage,
   readJsonSafely,
 } from "@/lib/api/client";
+import type { AffiliateOpenPanelTelemetry } from "@/lib/analytics/openpanel";
 import {
   buildPayoutDestinationPreview,
   getPayoutMethodShortLabel,
@@ -112,10 +113,14 @@ type AssignmentFormState = {
 type DialogTab =
   | "codes"
   | "rates"
+  | "sales"
+  | "analytics"
   | "commission"
   | "history"
   | "options"
   | "danger";
+
+type DetailRange = "24h" | "7d" | "30d" | "all";
 
 type AssignmentResult = {
   affiliateCode: string;
@@ -178,6 +183,41 @@ type CommissionOverview = {
   summary: CommissionSummary;
   recentMonths: CommissionSummary[];
   events: CommissionEventRow[];
+};
+
+type AffiliatePerformance = {
+  range: DetailRange;
+  rangeLabel: string;
+  openPanelConfigured: boolean;
+  salesSummary: {
+    orderCount: number;
+    revenue: number;
+    commission: number;
+    currentMonthCommission: number;
+    currentYearCommission: number;
+    currentMonthKey: string;
+    currentYearKey: string;
+    firstPartyVisits: number;
+    firstPartyUniqueVisitors: number;
+    trackedVisits: number;
+    trackedPurchases: number;
+    trackedRevenue: number;
+    trackedEvents: number;
+  };
+  sales: Array<{
+    payoutId: string;
+    orderId: string;
+    saleDate: string | Date;
+    revenue: string;
+    commission: string;
+    commissionRate: string;
+    status: string;
+    currencyCode: string;
+    paymentStatus: string | null;
+    customerEmail: string | null;
+    fulfillmentStatus: string | null;
+  }>;
+  telemetry: AffiliateOpenPanelTelemetry | null;
 };
 
 type BulkDiscountSummary = {
@@ -245,6 +285,16 @@ function formatCurrency(value: string | number) {
   }).format(Number.isFinite(numeric) ? numeric : 0);
 }
 
+function formatDateTime(value: string | Date | null | undefined) {
+  if (!value) return "-";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
 function unwrapAdminPayload<T>(payload: unknown) {
   return (getApiData<T>(payload) ?? payload) as T;
 }
@@ -308,6 +358,9 @@ export function AffiliateManagement({
   const [commissionLoading, setCommissionLoading] = useState(false);
   const [commissionOverview, setCommissionOverview] =
     useState<CommissionOverview | null>(null);
+  const [detailRange, setDetailRange] = useState<DetailRange>("30d");
+  const [affiliatePerformance, setAffiliatePerformance] =
+    useState<AffiliatePerformance | null>(null);
   const [discountHistory, setDiscountHistory] = useState<DiscountHistoryRow[]>(
     [],
   );
@@ -432,6 +485,8 @@ export function AffiliateManagement({
     : ([
         { key: "codes", label: "Codes" },
         { key: "rates", label: "Rates" },
+        { key: "sales", label: "Sales" },
+        { key: "analytics", label: "OpenPanel" },
         { key: "commission", label: "Commission" },
         { key: "history", label: "History" },
         { key: "options", label: "Options" },
@@ -472,6 +527,8 @@ export function AffiliateManagement({
         confirmAssignment: false,
       });
       setCommissionMonthKey(new Date().toISOString().slice(0, 7));
+      setDetailRange("30d");
+      setAffiliatePerformance(null);
       setOverrideRateInput("");
       setOverrideReason("");
       setAssignmentOpen(true);
@@ -497,6 +554,8 @@ export function AffiliateManagement({
         confirmAssignment: false,
       });
       setCommissionMonthKey(new Date().toISOString().slice(0, 7));
+      setDetailRange("30d");
+      setAffiliatePerformance(null);
       setOverrideRateInput("");
       setOverrideReason("");
       setAssignmentOpen(true);
@@ -517,6 +576,7 @@ export function AffiliateManagement({
       setProfilesExpanded(false);
       setSelectedAffiliate(null);
       setSelectedDraftSetup(null);
+      setAffiliatePerformance(null);
     }
   }
 
@@ -567,6 +627,8 @@ export function AffiliateManagement({
     if (
       isDraftSetup &&
       (activeTab === "commission" ||
+        activeTab === "sales" ||
+        activeTab === "analytics" ||
         activeTab === "history" ||
         activeTab === "danger")
     ) {
@@ -585,13 +647,14 @@ export function AffiliateManagement({
     fetch(
       `/api/admin/affiliates/${selectedAffiliate.id}?monthKey=${encodeURIComponent(
         commissionMonthKey,
-      )}`,
+      )}&range=${encodeURIComponent(detailRange)}`,
     )
       .then(async (response) => {
         const payload = await readJsonSafely(response);
         const data = unwrapAdminPayload<{
           commission?: CommissionOverview | null;
           discountHistory?: DiscountHistoryRow[];
+          performance?: AffiliatePerformance | null;
         }>(payload);
         if (!response.ok) {
           throw new Error(
@@ -606,6 +669,7 @@ export function AffiliateManagement({
 
         setCommissionOverview(data.commission ?? null);
         setDiscountHistory(data.discountHistory ?? []);
+        setAffiliatePerformance(data.performance ?? null);
         if (data.commission?.summary) {
           setOverrideRateInput(
             data.commission.summary.overrideRate
@@ -633,7 +697,7 @@ export function AffiliateManagement({
     return () => {
       cancelled = true;
     };
-  }, [assignmentOpen, commissionMonthKey, selectedAffiliate]);
+  }, [assignmentOpen, commissionMonthKey, detailRange, selectedAffiliate]);
 
   function toggleAffiliateSelection(id: string, checked: boolean) {
     setSelectedAffiliateIds((current) =>
@@ -1491,6 +1555,281 @@ export function AffiliateManagement({
                           </p>
                         </div>
                       </div>
+                    </div>
+                  ) : null}
+
+                  {/* ── Sales Tab ── */}
+                  {activeTab === "sales" ? (
+                    <div className="space-y-3">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
+                            Sales
+                          </p>
+                          <p className="mt-1 text-xs text-[#0B2E2F]/58">
+                            Orders and revenue attributed to this Growth Partner.
+                          </p>
+                        </div>
+                        <div className="w-full max-w-[180px] space-y-2">
+                          <Label>Time frame</Label>
+                          <select
+                            value={detailRange}
+                            onChange={(event) =>
+                              setDetailRange(event.target.value as DetailRange)
+                            }
+                            className={adminFieldClass}
+                          >
+                            <option value="24h">1 day</option>
+                            <option value="7d">1 week</option>
+                            <option value="30d">1 month</option>
+                            <option value="all">All time</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {commissionLoading ? (
+                        <div className="flex items-center gap-2 text-xs text-[#0B2E2F]/58">
+                          <Loader2 className="size-4 animate-spin" />
+                          Loading sales...
+                        </div>
+                      ) : affiliatePerformance ? (
+                        <div className="space-y-3">
+                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Sales
+                              </p>
+                              <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
+                                {affiliatePerformance.salesSummary.orderCount}
+                              </p>
+                            </div>
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Revenue
+                              </p>
+                              <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
+                                {formatCurrency(affiliatePerformance.salesSummary.revenue)}
+                              </p>
+                            </div>
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Commission
+                              </p>
+                              <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
+                                {formatCurrency(affiliatePerformance.salesSummary.commission)}
+                              </p>
+                            </div>
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                First-party visits
+                              </p>
+                              <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
+                                {affiliatePerformance.salesSummary.firstPartyVisits}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-white/80 px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Monthly commission
+                              </p>
+                              <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
+                                {formatCurrency(
+                                  affiliatePerformance.salesSummary.currentMonthCommission,
+                                )}
+                              </p>
+                              <p className="mt-1 text-[11px] text-[#0B2E2F]/52">
+                                {affiliatePerformance.salesSummary.currentMonthKey}
+                              </p>
+                            </div>
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-white/80 px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Annual commission
+                              </p>
+                              <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
+                                {formatCurrency(
+                                  affiliatePerformance.salesSummary.currentYearCommission,
+                                )}
+                              </p>
+                              <p className="mt-1 text-[11px] text-[#0B2E2F]/52">
+                                {affiliatePerformance.salesSummary.currentYearKey}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="overflow-hidden border border-[#0B2E2F]/10 bg-white/72">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>Sale</TableHead>
+                                  <TableHead>Customer</TableHead>
+                                  <TableHead>Revenue</TableHead>
+                                  <TableHead>Commission</TableHead>
+                                  <TableHead>Status</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {affiliatePerformance.sales.map((sale) => (
+                                  <TableRow key={sale.payoutId}>
+                                    <TableCell className="py-2 text-xs">
+                                      <p className="font-semibold text-[#0B2E2F]">
+                                        {sale.orderId}
+                                      </p>
+                                      <p className="text-[11px] text-[#0B2E2F]/58">
+                                        {formatDateTime(sale.saleDate)}
+                                      </p>
+                                    </TableCell>
+                                    <TableCell className="py-2 text-xs text-[#0B2E2F]/72">
+                                      {sale.customerEmail || "-"}
+                                    </TableCell>
+                                    <TableCell className="py-2 text-xs font-semibold text-[#0B2E2F]">
+                                      {formatCurrency(sale.revenue)}
+                                    </TableCell>
+                                    <TableCell className="py-2 text-xs text-[#0B2E2F]/72">
+                                      {formatCurrency(sale.commission)}
+                                    </TableCell>
+                                    <TableCell className="py-2">
+                                      <Badge variant="outline" className="rounded-none">
+                                        {sale.status}
+                                      </Badge>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                                {affiliatePerformance.sales.length === 0 ? (
+                                  <TableRow>
+                                    <TableCell
+                                      colSpan={5}
+                                      className="py-8 text-center text-xs text-[#0B2E2F]/58"
+                                    >
+                                      No attributed sales in this time frame.
+                                    </TableCell>
+                                  </TableRow>
+                                ) : null}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {/* ── OpenPanel Tab ── */}
+                  {activeTab === "analytics" ? (
+                    <div className="space-y-3">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0B2E2F]/45">
+                            OpenPanel
+                          </p>
+                          <p className="mt-1 text-xs text-[#0B2E2F]/58">
+                            Tracked visits, purchases, revenue, and attribution data for this Growth Partner.
+                          </p>
+                        </div>
+                        <div className="w-full max-w-[180px] space-y-2">
+                          <Label>Time frame</Label>
+                          <select
+                            value={detailRange}
+                            onChange={(event) =>
+                              setDetailRange(event.target.value as DetailRange)
+                            }
+                            className={adminFieldClass}
+                          >
+                            <option value="24h">1 day</option>
+                            <option value="7d">1 week</option>
+                            <option value="30d">1 month</option>
+                            <option value="all">All time</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {commissionLoading ? (
+                        <div className="flex items-center gap-2 text-xs text-[#0B2E2F]/58">
+                          <Loader2 className="size-4 animate-spin" />
+                          Loading OpenPanel data...
+                        </div>
+                      ) : affiliatePerformance ? (
+                        <div className="space-y-3">
+                          {!affiliatePerformance.openPanelConfigured ? (
+                            <div className="rounded-none border border-dashed border-[#0B2E2F]/12 bg-[#FCFAF6] px-3 py-3 text-xs text-[#0B2E2F]/58">
+                              OpenPanel read credentials are not configured.
+                            </div>
+                          ) : null}
+                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Tracked visits
+                              </p>
+                              <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
+                                {affiliatePerformance.salesSummary.trackedVisits}
+                              </p>
+                            </div>
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Purchases
+                              </p>
+                              <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
+                                {affiliatePerformance.salesSummary.trackedPurchases}
+                              </p>
+                            </div>
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Tracked revenue
+                              </p>
+                              <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
+                                {formatCurrency(affiliatePerformance.salesSummary.trackedRevenue)}
+                              </p>
+                            </div>
+                            <div className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-2.5 py-2.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                Events
+                              </p>
+                              <p className="mt-1.5 text-sm font-semibold text-[#0B2E2F]">
+                                {affiliatePerformance.salesSummary.trackedEvents}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="grid gap-3 lg:grid-cols-2">
+                            {[
+                              ["Referrers", affiliatePerformance.telemetry?.referrers ?? []],
+                              ["Landing paths", affiliatePerformance.telemetry?.landingPaths ?? []],
+                              ["Devices", affiliatePerformance.telemetry?.devices ?? []],
+                              ["Countries", affiliatePerformance.telemetry?.countries ?? []],
+                            ].map(([title, items]) => (
+                              <div
+                                key={String(title)}
+                                className="rounded-none border border-[#0B2E2F]/10 bg-[#FCFAF6] px-3 py-3"
+                              >
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                                  {String(title)}
+                                </p>
+                                {(items as { name: string; value: number }[]).length > 0 ? (
+                                  <div className="mt-2 space-y-1.5">
+                                    {(items as { name: string; value: number }[]).slice(0, 6).map((item) => (
+                                      <div
+                                        key={item.name}
+                                        className="flex items-center justify-between gap-3 text-xs"
+                                      >
+                                        <span className="truncate text-[#0B2E2F]/64">
+                                          {item.name}
+                                        </span>
+                                        <span className="font-semibold text-[#0B2E2F]">
+                                          {item.value}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="mt-2 text-xs text-[#0B2E2F]/58">
+                                    No data returned.
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
 

@@ -91,7 +91,7 @@ export function FeaturedProductLabel({
           ) : null}
         </div>
 
-        {/* Add to Cart — right column, aligned with dosage column on desktop */}
+        {/* Add to Cart — right column, aligned with size column on desktop */}
         <div className="col-span-2 row-start-4 mt-4 w-full md:col-span-1 md:col-start-2 md:row-start-3 md:mt-4 md:w-fit md:self-end md:justify-self-end">
           <Suspense
             fallback={

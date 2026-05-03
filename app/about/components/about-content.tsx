@@ -170,19 +170,16 @@ export function AboutContent() {
               variants={staggerContainer}
             >
               <Paragraph>
-                We didn't start Revalin as researchers. We started it as people who were
-                frustrated — with weight that wouldn't shift, with hair that kept thinning, and
-                with a medical system that kept offering prescriptions without ever addressing the
-                root cause. When we found peptides, something changed. Not just physically, but in
-                how we understood health entirely. For the first time we had real options and the
-                agency to pursue them.
+                We started Revalin because the research peptide market didn't reflect the
+                seriousness of the science. Grey-market suppliers with no documentation,
+                no third-party testing, and packaging that felt more like a back-alley
+                transaction than a considered purchase. The compounds existed — but the
+                infrastructure around them didn't.
               </Paragraph>
               <Paragraph>
-                But the market didn't match the potential. Grey-market suppliers, no documentation,
-                packaging that felt more like a back-alley transaction than a considered purchase.
-                The entire space was built around one type of person and spoke to no one else.
-                There was nothing that reflected the seriousness of the research or the people
-                doing it.
+                Researchers deserved better. Verified purity, open Certificates of Analysis,
+                and a supplier that treats documentation as a baseline — not a differentiator.
+                That's the gap we set out to fill.
               </Paragraph>
             </motion.div>
           </div>
@@ -232,16 +229,14 @@ export function AboutContent() {
                 where what's in the vial actually matters.
               </Paragraph>
               <Paragraph>
-                Revalin exists for people who are done being managed. Those who research before
-                they act, who demand verified documentation, and who see their health as something
-                to be understood — not just treated. That includes the biohacker tracking every
-                biomarker, the longevity-focused individual playing a decades-long game, and the
-                growing number of people who have realized the peptide space extends far beyond
-                what mainstream conversation has told them.
+                Revalin exists for qualified researchers and institutions who demand verified
+                documentation and refuse to compromise on material quality. People who read
+                the Certificate of Analysis before anything else, and who expect their supplier
+                to meet the same standard they hold themselves to.
               </Paragraph>
               <Paragraph>
-                This category has been speaking to a narrow audience for too long. We intend to
-                change that.
+                The research peptide category has operated without accountability for too long.
+                We intend to change that.
               </Paragraph>
             </motion.div>
           </div>

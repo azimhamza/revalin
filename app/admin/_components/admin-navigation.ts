@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   BellRing,
   BookOpen,
+  CreditCard,
   Handshake,
   LayoutDashboard,
   Landmark,
@@ -54,6 +55,12 @@ export const ADMIN_NAVIGATION_ITEMS: AdminNavigationItem[] = [
     href: "/admin/interac",
     description: "Review e-Transfer matches, screenshots, and exceptions.",
     icon: Landmark,
+  },
+  {
+    title: "Payment Diagnostics",
+    href: "/admin/payment-diagnostics",
+    description: "Trace checkout, provider, Swell, and OpenPanel payment state.",
+    icon: CreditCard,
   },
   {
     title: "Growth Partners",

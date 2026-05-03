@@ -344,7 +344,19 @@ function buildShipEngineErrorMessage(errors: ShipEngineApiError[] | undefined, f
     .map(error => error.message?.trim())
     .filter((message): message is string => Boolean(message));
 
-  return messages[0] || fallback;
+  return normalizeShipEngineErrorMessage(messages[0] || fallback);
+}
+
+function normalizeShipEngineErrorMessage(message: string) {
+  if (/Zonos Declaration ID|Zonos Account Key/i.test(message)) {
+    return [
+      'Canada Post requires a Zonos Account Key in the Canada Post carrier settings for U.S. labels.',
+      'ZONOS_CREDENTIAL_TOKEN only enables checkout landed-cost quotes in this app; it is not the Canada Post account key and is not forwarded through ShipEngine.',
+      'Configure the Zonos Account Key in ShipStation/ShipEngine Canada Post settings, or use a non-postal U.S. carrier such as FedEx/DHL.',
+    ].join(' ');
+  }
+
+  return message;
 }
 
 function buildShipEngineInvalidRateMessage(

@@ -25,13 +25,13 @@ export function ProductInventoryPanel({ product }: { product: Product }) {
 
   const hasSelectableVariants = product.variants.length > 1;
   const requiresVariantSelection = hasSelectableVariants && !selectedVariant;
-  const itemLabel = product.variants.length > 0 ? 'this dosage' : 'this product';
+  const itemLabel = product.variants.length > 0 ? 'this option' : 'this product';
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (requiresVariantSelection) {
-      setFeedback('Select a dosage before joining the restock list.');
+      setFeedback('Select a size before joining the restock list.');
       return;
     }
 
@@ -119,7 +119,7 @@ export function ProductInventoryPanel({ product }: { product: Product }) {
 
       {hasSelectableVariants && !selectedVariant ? (
         <p className="mt-1 text-xs text-foreground/40">
-          Select a dosage above to tie the alert to the exact option you want.
+          Select a size above to tie the alert to the exact option you want.
         </p>
       ) : null}
 

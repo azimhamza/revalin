@@ -462,7 +462,7 @@ export function ProductNotificationManagement({
       <AdminSectionHeader
         eyebrow="Restock Ops"
         title="Product notifications"
-        description="Track demand by product and dosage, review live stock against pending subscribers, then send one shared 48-hour discount code across the selected restock batch."
+        description="Track demand by product and variant, review live stock against pending subscribers, then send one shared 48-hour discount code across the selected restock batch."
       />
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
@@ -501,9 +501,9 @@ export function ProductNotificationManagement({
           emptyMessage="No product request data available yet."
         />
         <BreakdownChart
-          title="Most requested dosages"
+          title="Most requested sizes"
           items={data.analytics.topVariants}
-          emptyMessage="No dosage-level request data available yet."
+          emptyMessage="No variant-level request data available yet."
         />
       </div>
 
@@ -516,7 +516,7 @@ export function ProductNotificationManagement({
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search product or dosage"
+              placeholder="Search product or variant"
               className={adminFieldClass}
             />
             <Button
@@ -560,7 +560,7 @@ export function ProductNotificationManagement({
               Latest updated Swell products
             </h3>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
-              Expand a product to review dosage-level demand and send readiness.
+              Expand a product to review variant-level demand and send readiness.
             </p>
           </div>
           <Button
@@ -650,7 +650,7 @@ export function ProductNotificationManagement({
                         <div className="grid gap-px bg-border/60">
                           <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(110px,0.8fr)_88px_140px_120px_56px] gap-px bg-border/60">
                             <div className="bg-background px-3 py-2 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                              Dosage
+                              Size
                             </div>
                             <div className="bg-background px-3 py-2 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                               Stock

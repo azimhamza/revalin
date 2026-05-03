@@ -46,6 +46,7 @@ export const ADMIN_NAV_ROUTES: NavItem[] = [
   { href: "/admin", label: "Overview" },
   { href: "/admin/product-notifications", label: "Restock Alerts" },
   { href: "/admin/interac", label: "Interac" },
+  { href: "/admin/payment-diagnostics", label: "Payment Diagnostics" },
   { href: "/admin/users", label: "Users" },
   { href: "/admin/affiliates", label: "Growth Partners" },
   { href: "/admin/promoters", label: "Promoters" },

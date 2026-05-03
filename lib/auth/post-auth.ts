@@ -6,6 +6,7 @@ import {
   getAffiliateByUserIdentity,
   syncApprovedAffiliateForUser,
 } from '@/lib/checkout/affiliate-service';
+import { linkCurrentResearchConsentToUser } from '@/lib/compliance/research-access-consent';
 import { stampUserReferralFromCookie } from '@/lib/checkout/affiliate-user-referral';
 import { linkOrdersToUser } from '@/lib/checkout/link-orders-to-user';
 import { syncPromoterForUser } from '@/lib/checkout/promoter-service';
@@ -18,7 +19,13 @@ type PostAuthUser = {
 };
 
 export async function reconcilePostAuthUser(user: PostAuthUser) {
-  const [linkedOrders, affiliateSync, referralStamp, promoterSync] = await Promise.allSettled([
+  const [
+    linkedOrders,
+    affiliateSync,
+    referralStamp,
+    promoterSync,
+    researchConsentLink,
+  ] = await Promise.allSettled([
     linkOrdersToUser(user.id, user.email),
     syncApprovedAffiliateForUser({
       userId: user.id,
@@ -33,12 +40,23 @@ export async function reconcilePostAuthUser(user: PostAuthUser) {
       userId: user.id,
       email: user.email,
     }),
+    linkCurrentResearchConsentToUser({
+      userId: user.id,
+      email: user.email,
+    }),
   ]);
 
   if (referralStamp.status === 'rejected') {
     console.error(
       'Failed to stamp affiliate referral on user row:',
       referralStamp.reason,
+    );
+  }
+
+  if (researchConsentLink.status === 'rejected') {
+    console.error(
+      'Failed to link research consent on user row:',
+      researchConsentLink.reason,
     );
   }
 

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { createApiRoute } from '@/lib/api/route';
 import { apiError } from '@/lib/api/errors';
+import { linkCurrentResearchConsentToEmail } from '@/lib/compliance/research-access-consent';
 import { hasLoopsConfig } from '@/lib/email/loops';
 import { issueWelcomeDiscount } from '@/lib/email/welcome-discount-service';
 
@@ -16,7 +17,7 @@ export const POST = createApiRoute({
   rateLimit: 'marketing',
   bodySchema: subscribeSchema,
   cacheControl: 'no-store',
-  handler: async ({ body }) => {
+  handler: async ({ request, body }) => {
     if (!hasLoopsConfig()) {
       throw apiError.providerUnavailable('Email service not configured.', {
         provider: 'loops',
@@ -30,6 +31,14 @@ export const POST = createApiRoute({
       mailingLists: newsletterListId ? { [newsletterListId]: true } : undefined,
       eventName: 'subscriber_welcome',
       lookupErrorLogPrefix: 'EMAIL-SUBSCRIBE',
+    });
+
+    await linkCurrentResearchConsentToEmail({
+      email: body.email,
+      source: body.source,
+      request,
+    }).catch((error) => {
+      console.error('[RESEARCH-CONSENT] Failed to link newsletter signup:', error);
     });
 
     return {

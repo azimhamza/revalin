@@ -9,6 +9,7 @@ import { useAuthSession } from '@/components/auth/session-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { getApiData, getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
+import { RESEARCH_CONSENT_ACCEPTED_EVENT } from '@/lib/compliance/research-consent-client';
 
 const POPUP_DELAY_MS = 10_000;
 const WELCOME_POPUP_PATHS = new Set(['/', '/shop']);
@@ -26,7 +27,18 @@ export function WelcomePopup() {
   const [submitted, setSubmitted] = useState(false);
   const [alreadySubscribed, setAlreadySubscribed] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const canShowPopup = !isPending && !session?.user && isWelcomePopupPath(pathname);
+  const [hasResearchConsent, setHasResearchConsent] = useState(false);
+  const canShowPopup =
+    hasResearchConsent && !isPending && !session?.user && isWelcomePopupPath(pathname);
+
+  useEffect(() => {
+    const handleConsentAccepted = () => {
+      setHasResearchConsent(true);
+    };
+
+    window.addEventListener(RESEARCH_CONSENT_ACCEPTED_EVENT, handleConsentAccepted);
+    return () => window.removeEventListener(RESEARCH_CONSENT_ACCEPTED_EVENT, handleConsentAccepted);
+  }, []);
 
   useEffect(() => {
     if (!canShowPopup) {

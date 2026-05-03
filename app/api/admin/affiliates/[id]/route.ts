@@ -1,10 +1,14 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { createApiRoute } from "@/lib/api/route";
 import { apiError } from "@/lib/api/errors";
+import {
+  getAffiliateOpenPanelTelemetry,
+  hasOpenPanelCredentials,
+} from "@/lib/analytics/openpanel";
 import { db } from "@/lib/db";
-import { affiliates } from "@/lib/db/schema";
+import { affiliatePayouts, affiliateVisits, affiliates, checkoutOrders } from "@/lib/db/schema";
 import {
   DEFAULT_AFFILIATE_DISCOUNT_PERCENT,
   checkAffiliateAssignmentAvailability,
@@ -31,6 +35,7 @@ const querySchema = z.object({
     .trim()
     .regex(/^\d{4}-\d{2}$/)
     .optional(),
+  range: z.enum(["24h", "7d", "30d", "all"]).default("30d"),
 });
 
 const patchSchema = z.object({
@@ -73,6 +78,164 @@ async function getAffiliateRow(id: string) {
   return rows[0] || null;
 }
 
+function getRangeStart(range: z.infer<typeof querySchema>["range"]) {
+  if (range === "24h") return new Date(Date.now() - 24 * 60 * 60 * 1000);
+  if (range === "7d") return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  if (range === "30d") return new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  return null;
+}
+
+function getRangeLabel(range: z.infer<typeof querySchema>["range"]) {
+  if (range === "24h") return "Last 1 day";
+  if (range === "7d") return "Last 1 week";
+  if (range === "30d") return "Last 1 month";
+  return "All time";
+}
+
+function getAffiliatePerformanceScope(affiliateId: string, startDate: Date | null) {
+  const affiliateScope = eq(affiliatePayouts.affiliateId, affiliateId);
+  if (!startDate) return affiliateScope;
+
+  return and(
+    affiliateScope,
+    sql`coalesce(${affiliatePayouts.earnedAt}, ${affiliatePayouts.createdAt}) >= ${startDate}`,
+  );
+}
+
+function getVisitScope(affiliateId: string, startDate: Date | null) {
+  const affiliateScope = eq(affiliateVisits.affiliateId, affiliateId);
+  if (!startDate) return affiliateScope;
+
+  return and(
+    affiliateScope,
+    sql`${affiliateVisits.createdAt} >= ${startDate}`,
+  );
+}
+
+function getCurrentCommissionPeriodKeys() {
+  const now = new Date();
+  const monthKey = now.toISOString().slice(0, 7);
+
+  return {
+    monthKey,
+    yearKey: monthKey.slice(0, 4),
+  };
+}
+
+async function getAffiliateAdminPerformance(args: {
+  affiliateId: string;
+  affiliateCode: string;
+  range: z.infer<typeof querySchema>["range"];
+}) {
+  const startDate = getRangeStart(args.range);
+  const payoutScope = getAffiliatePerformanceScope(args.affiliateId, startDate);
+  const visitScope = getVisitScope(args.affiliateId, startDate);
+  const { monthKey, yearKey } = getCurrentCommissionPeriodKeys();
+
+  const [
+    summaryRows,
+    periodRows,
+    salesRows,
+    visitRows,
+    uniqueVisitorRows,
+    telemetry,
+  ] =
+    await Promise.all([
+      db
+        .select({
+          orderCount: sql<number>`count(*)`,
+          revenue: sql<string>`coalesce(sum(coalesce(nullif(${affiliatePayouts.normalizedOrderTotal}, '')::numeric, nullif(${affiliatePayouts.orderTotal}, '')::numeric, 0)), 0)`,
+          commission: sql<string>`coalesce(sum(coalesce(nullif(${affiliatePayouts.normalizedCommissionAmount}, '')::numeric, nullif(${affiliatePayouts.commissionAmount}, '')::numeric, 0)), 0)`,
+        })
+        .from(affiliatePayouts)
+        .where(payoutScope),
+      db
+        .select({
+          currentMonthCommission: sql<string>`coalesce(sum(coalesce(nullif(${affiliatePayouts.normalizedCommissionAmount}, '')::numeric, nullif(${affiliatePayouts.commissionAmount}, '')::numeric, 0)) filter (where coalesce(${affiliatePayouts.commissionMonthKey}, to_char(coalesce(${affiliatePayouts.earnedAt}, ${affiliatePayouts.createdAt}), 'YYYY-MM')) = ${monthKey}), 0)`,
+          currentYearCommission: sql<string>`coalesce(sum(coalesce(nullif(${affiliatePayouts.normalizedCommissionAmount}, '')::numeric, nullif(${affiliatePayouts.commissionAmount}, '')::numeric, 0)) filter (where left(coalesce(${affiliatePayouts.commissionMonthKey}, to_char(coalesce(${affiliatePayouts.earnedAt}, ${affiliatePayouts.createdAt}), 'YYYY-MM')), 4) = ${yearKey}), 0)`,
+        })
+        .from(affiliatePayouts)
+        .where(eq(affiliatePayouts.affiliateId, args.affiliateId)),
+      db
+        .select({
+          payoutId: affiliatePayouts.id,
+          orderId: affiliatePayouts.orderId,
+          orderTotal: affiliatePayouts.orderTotal,
+          normalizedOrderTotal: affiliatePayouts.normalizedOrderTotal,
+          commissionAmount: affiliatePayouts.commissionAmount,
+          normalizedCommissionAmount: affiliatePayouts.normalizedCommissionAmount,
+          commissionRate: affiliatePayouts.commissionRate,
+          status: affiliatePayouts.status,
+          currencyCode: affiliatePayouts.currencyCode,
+          earnedAt: affiliatePayouts.earnedAt,
+          createdAt: affiliatePayouts.createdAt,
+          paymentStatus: checkoutOrders.paymentStatus,
+          customerEmail: checkoutOrders.email,
+          fulfillmentStatus: checkoutOrders.fulfillmentStatus,
+        })
+        .from(affiliatePayouts)
+        .innerJoin(
+          checkoutOrders,
+          eq(affiliatePayouts.orderId, checkoutOrders.orderId),
+        )
+        .where(payoutScope)
+        .orderBy(desc(affiliatePayouts.createdAt)),
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(affiliateVisits)
+        .where(visitScope),
+      db
+        .selectDistinct({ visitorId: affiliateVisits.visitorId })
+        .from(affiliateVisits)
+        .where(visitScope),
+      hasOpenPanelCredentials()
+        ? getAffiliateOpenPanelTelemetry(args.affiliateCode, args.range).catch(
+            () => null,
+          )
+        : Promise.resolve(null),
+    ]);
+
+  const sales = salesRows.map((row) => ({
+    ...row,
+    saleDate: row.earnedAt ?? row.createdAt,
+    revenue: row.normalizedOrderTotal ?? row.orderTotal,
+    commission: row.normalizedCommissionAmount ?? row.commissionAmount,
+  }));
+
+  const trackedVisits = telemetry?.trend.reduce((sum, point) => sum + point.visits, 0) ?? 0;
+  const trackedPurchases =
+    telemetry?.trend.reduce((sum, point) => sum + point.purchases, 0) ?? 0;
+  const trackedRevenue =
+    telemetry?.trend.reduce((sum, point) => sum + point.revenue, 0) ?? 0;
+
+  return {
+    range: args.range,
+    rangeLabel: getRangeLabel(args.range),
+    openPanelConfigured: hasOpenPanelCredentials(),
+    salesSummary: {
+      orderCount: Number(summaryRows[0]?.orderCount ?? 0),
+      revenue: Number(summaryRows[0]?.revenue ?? 0),
+      commission: Number(summaryRows[0]?.commission ?? 0),
+      currentMonthCommission: Number(
+        periodRows[0]?.currentMonthCommission ?? 0,
+      ),
+      currentYearCommission: Number(
+        periodRows[0]?.currentYearCommission ?? 0,
+      ),
+      currentMonthKey: monthKey,
+      currentYearKey: yearKey,
+      firstPartyVisits: Number(visitRows[0]?.count ?? 0),
+      firstPartyUniqueVisitors: uniqueVisitorRows.length,
+      trackedVisits,
+      trackedPurchases,
+      trackedRevenue,
+      trackedEvents: telemetry?.events.length ?? 0,
+    },
+    sales,
+    telemetry,
+  };
+}
+
 function normalizeAffiliateError(error: unknown) {
   if (!(error instanceof Error)) {
     return apiError.internal("Failed to update affiliate.");
@@ -110,13 +273,23 @@ export const GET = createApiRoute({
   querySchema,
   cacheControl: "no-store",
   handler: async ({ params, query }) => {
-    const [assignment, commission, discountHistory] = await Promise.all([
+    const affiliate = await getAffiliateRow(params.id);
+    if (!affiliate) {
+      throw apiError.notFound("Affiliate not found.");
+    }
+
+    const [assignment, commission, discountHistory, performance] = await Promise.all([
       getAffiliateCodeAssignment(params.id),
       getAffiliateCommissionOverview({
         affiliateId: params.id,
         monthKey: query.monthKey,
       }),
       listAffiliateDiscountChangesForAffiliate(params.id, 10),
+      getAffiliateAdminPerformance({
+        affiliateId: params.id,
+        affiliateCode: affiliate.code,
+        range: query.range,
+      }),
     ]);
 
     return {
@@ -124,6 +297,7 @@ export const GET = createApiRoute({
         assignment,
         commission,
         discountHistory,
+        performance,
       },
     };
   },

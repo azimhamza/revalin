@@ -6,16 +6,16 @@ import { useSelectedVariant } from '@/components/products/variant-selector';
 import type { Product } from '@/lib/swell/types';
 import { useProductQuantity } from './product-quantity-context';
 
-function getDosageLabel(product: Product, variantId?: string) {
+function getQuantityLabel(product: Product, variantId?: string) {
   const variant = product.variants.find(item => item.id === variantId);
-  const dosageOption = variant?.selectedOptions.find(option => option.name.toLowerCase().includes('dos'));
+  const quantityOption = variant?.selectedOptions.find(option => option.name.toLowerCase().includes('dos') || option.name.toLowerCase().includes('size'));
 
-  return dosageOption?.value || variant?.title || 'the lower-dose option';
+  return quantityOption?.value || variant?.title || 'the smaller option';
 }
 
 export function DosageSubstitutionNotice({ product }: { product: Product }) {
   const searchParams = useSearchParams();
-  const requestedDosage = searchParams.get('substitute_dosage');
+  const requestedDosage = searchParams.get('substitute_size');
   const selectedVariant = useSelectedVariant(product);
   const { quantity } = useProductQuantity();
 
@@ -23,16 +23,16 @@ export function DosageSubstitutionNotice({ product }: { product: Product }) {
     return null;
   }
 
-  const replacementDosage = getDosageLabel(product, selectedVariant.id);
+  const replacementLabel = getQuantityLabel(product, selectedVariant.id);
 
   return (
     <details className="group rounded-md bg-popover px-3 py-3 ring-1 ring-[#0B2E2F]/10">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-[#0B2E2F] marker:hidden">
-        <span>{requestedDosage} is out of stock. Using {quantity} x {replacementDosage}.</span>
+        <span>{requestedDosage} is out of stock. Using {quantity} x {replacementLabel}.</span>
         <ChevronDown className="size-4 shrink-0 transition-transform group-open:rotate-180" />
       </summary>
       <p className="mt-2 text-sm leading-relaxed text-foreground/60">
-        This gives the same total dosage using the available lower-dose bottles. The cart will add {quantity} bottles of {replacementDosage}, and volume pricing is applied automatically.
+        This gives the same total quantity using the available smaller size. The cart will add {quantity} units of {replacementLabel}, and volume pricing is applied automatically.
       </p>
     </details>
   );

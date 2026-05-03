@@ -263,11 +263,11 @@ export function VariantOptionSelector({
           nextParams.set(option.name.toLowerCase(), option.value);
         });
         nextParams.set('qty', String(substitution.quantityMultiplier));
-        nextParams.set('substitute_dosage', valueName);
+        nextParams.set('substitute_size', valueName);
       } else {
         nextParams.set(optionNameLowerCase, valueName);
         nextParams.delete('qty');
-        nextParams.delete('substitute_dosage');
+        nextParams.delete('substitute_size');
       }
 
       if (!isProductPage) {

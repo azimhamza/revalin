@@ -269,6 +269,91 @@ export const checkoutOrders = pgTable(
   ],
 );
 
+export const researchAccessConsents = pgTable(
+  "research_access_consents",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    consentToken: varchar("consent_token", { length: 128 }).notNull(),
+    termsVersion: varchar("terms_version", { length: 32 }).notNull(),
+    minimumAge: integer("minimum_age").notNull(),
+    termsAccepted: boolean("terms_accepted").default(true).notNull(),
+    researchUseAccepted: boolean("research_use_accepted").default(true).notNull(),
+    institutionName: varchar("institution_name", { length: 256 }),
+    institutionIdentifier: varchar("institution_identifier", { length: 128 }),
+    researchUseDescription: text("research_use_description"),
+    institutionNameProvided: boolean("institution_name_provided")
+      .default(false)
+      .notNull(),
+    institutionIdentifierProvided: boolean("institution_identifier_provided")
+      .default(false)
+      .notNull(),
+    researchUseDescriptionProvided: boolean(
+      "research_use_description_provided",
+    )
+      .default(false)
+      .notNull(),
+    email: varchar("email", { length: 256 }),
+    normalizedEmail: varchar("normalized_email", { length: 256 }),
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    entryPath: varchar("entry_path", { length: 512 }),
+    referrer: text("referrer"),
+    metadata: jsonb("metadata"),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("research_access_consents_token_idx").on(table.consentToken),
+    index("research_access_consents_email_idx").on(table.normalizedEmail),
+    index("research_access_consents_user_id_idx").on(table.userId),
+    index("research_access_consents_accepted_at_idx").on(table.acceptedAt),
+  ],
+);
+
+export const researchAccessConsentEvents = pgTable(
+  "research_access_consent_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    consentId: uuid("consent_id")
+      .notNull()
+      .references(() => researchAccessConsents.id, { onDelete: "cascade" }),
+    eventType: varchar("event_type", { length: 64 }).notNull(),
+    source: varchar("source", { length: 64 }),
+    email: varchar("email", { length: 256 }),
+    normalizedEmail: varchar("normalized_email", { length: 256 }),
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    checkoutOrderId: varchar("checkout_order_id", { length: 64 }).references(
+      () => checkoutOrders.orderId,
+      { onDelete: "set null" },
+    ),
+    checkoutSessionId: varchar("checkout_session_id", { length: 128 }),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("research_access_consent_events_consent_id_idx").on(table.consentId),
+    index("research_access_consent_events_type_idx").on(table.eventType),
+    index("research_access_consent_events_email_idx").on(table.normalizedEmail),
+    index("research_access_consent_events_user_id_idx").on(table.userId),
+    index("research_access_consent_events_order_id_idx").on(
+      table.checkoutOrderId,
+    ),
+    index("research_access_consent_events_created_at_idx").on(table.createdAt),
+  ],
+);
+
 export const wallets = pgTable("wallets", {
   id: uuid("id").defaultRandom().primaryKey(),
   orderId: varchar("order_id", { length: 64 })

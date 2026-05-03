@@ -100,7 +100,7 @@ export function ProductAddToCart({
     <form onSubmit={handleSubmit} className={className}>
       <LayoutGroup>
         <div className="flex items-stretch gap-2">
-          {/* Quantity selector — only visible after dosage is selected */}
+          {/* Quantity selector — only visible after variant is selected */}
           <AnimatePresence>
             {cartVariant && !inventory.isBackorder && (
               <motion.div

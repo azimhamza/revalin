@@ -23,6 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getApiData, getApiErrorMessage, readJsonSafely } from "@/lib/api/client";
+import type { PromoterOpenPanelTelemetry } from "@/lib/analytics/openpanel";
 import {
   buildPayoutDestinationPreview,
   getPayoutMethodShortLabel,
@@ -68,6 +69,46 @@ type AdminInviteRow = {
   affiliateStatus: "pending" | "approved" | "rejected" | "suspended" | null;
 };
 
+type DetailRange = "24h" | "7d" | "30d" | "all";
+
+type PromoterPerformance = {
+  range: DetailRange;
+  rangeLabel: string;
+  openPanelConfigured: boolean;
+  salesSummary: {
+    orderCount: number;
+    revenue: number;
+    commission: number;
+    currentMonthCommission: number;
+    currentYearCommission: number;
+    currentMonthKey: string;
+    currentYearKey: string;
+    activePartners: number;
+    invites: number;
+    trackedVisits: number;
+    trackedPurchases: number;
+    trackedRevenue: number;
+    trackedEvents: number;
+  };
+  sales: Array<{
+    payoutId: string;
+    orderId: string;
+    affiliateCode: string;
+    affiliateName: string;
+    saleDate: string | Date;
+    revenue: string;
+    commission: string;
+    commissionRate: string;
+    status: string;
+    currencyCode: string;
+    paymentStatus: string | null;
+    customerEmail: string | null;
+    fulfillmentStatus: string | null;
+  }>;
+  partnerNames: Record<string, string>;
+  telemetry: PromoterOpenPanelTelemetry | null;
+};
+
 function formatRate(value: string | null | undefined) {
   const numeric = Number(value || 0);
   if (!Number.isFinite(numeric) || numeric <= 0) return "-";
@@ -78,6 +119,25 @@ function formatRateForInput(value: string | null | undefined) {
   const numeric = Number(value || 0);
   if (!Number.isFinite(numeric) || numeric <= 0) return "2.5";
   return String(Number((numeric * 100).toFixed(2)));
+}
+
+function formatCurrency(value: string | number) {
+  const numeric = Number(value || 0);
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(numeric) ? numeric : 0);
+}
+
+function formatDateTime(value: string | Date | null | undefined) {
+  if (!value) return "-";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
 }
 
 function statusVariant(
@@ -153,6 +213,10 @@ export function PromoterManagement({
   const [reviewDialog, setReviewDialog] = useState<ReviewDialogState | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [detailRange, setDetailRange] = useState<DetailRange>("30d");
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [promoterPerformance, setPromoterPerformance] =
+    useState<PromoterPerformance | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const counts = useMemo(
@@ -290,13 +354,58 @@ export function PromoterManagement({
       removalStatus: "suspended",
     });
     setReviewError(null);
+    setDetailRange("30d");
+    setPromoterPerformance(null);
   }
 
   function closeReviewDialog() {
     setReviewDialog(null);
     setReviewError(null);
+    setPromoterPerformance(null);
     setShowDeleteConfirm(false);
   }
+
+  useEffect(() => {
+    if (!reviewDialog) return;
+
+    let cancelled = false;
+    setDetailLoading(true);
+    fetch(
+      `/api/admin/promoters/${reviewDialog.promoter.id}?range=${encodeURIComponent(
+        detailRange,
+      )}`,
+    )
+      .then(async (response) => {
+        const payload = await readJsonSafely(response);
+        const data = getApiData<{ performance?: PromoterPerformance | null }>(
+          payload,
+        );
+        if (!response.ok) {
+          throw new Error(
+            getApiErrorMessage(payload, "Failed to load promoter detail."),
+          );
+        }
+        if (!cancelled) {
+          setPromoterPerformance(data?.performance ?? null);
+        }
+      })
+      .catch((caught) => {
+        if (!cancelled) {
+          setReviewError(
+            caught instanceof Error
+              ? caught.message
+              : "Failed to load promoter detail.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detailRange, reviewDialog?.promoter.id]);
 
   async function handleDeletePromoter() {
     if (!reviewDialog) return;
@@ -977,7 +1086,7 @@ export function PromoterManagement({
 
       {/* ── Promoter review dialog ── */}
       <Dialog open={Boolean(reviewDialog)} onOpenChange={(open) => !open && closeReviewDialog()}>
-        <DialogContent className="max-w-2xl rounded-none">
+        <DialogContent className="max-h-[86vh] max-w-5xl overflow-y-auto rounded-none">
           <DialogHeader>
             <DialogTitle>Review promoter</DialogTitle>
           </DialogHeader>
@@ -1091,6 +1200,264 @@ export function PromoterManagement({
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Sales and attribution detail */}
+              <div className="space-y-3 border-t border-border pt-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Sales &amp; OpenPanel
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Revenue, commission, and attribution across this promoter's recruited Growth Partners.
+                    </p>
+                  </div>
+                  <div className="w-full max-w-[180px] space-y-1.5">
+                    <Label>Time frame</Label>
+                    <select
+                      value={detailRange}
+                      onChange={(event) =>
+                        setDetailRange(event.target.value as DetailRange)
+                      }
+                      className={adminFieldClass}
+                    >
+                      <option value="24h">1 day</option>
+                      <option value="7d">1 week</option>
+                      <option value="30d">1 month</option>
+                      <option value="all">All time</option>
+                    </select>
+                  </div>
+                </div>
+
+                {detailLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                    Loading promoter detail...
+                  </div>
+                ) : promoterPerformance ? (
+                  <div className="space-y-3">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="rounded-none border border-border bg-muted/40 px-2.5 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          Sales
+                        </p>
+                        <p className="mt-1.5 text-sm font-semibold text-foreground">
+                          {promoterPerformance.salesSummary.orderCount}
+                        </p>
+                      </div>
+                      <div className="rounded-none border border-border bg-muted/40 px-2.5 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          Revenue
+                        </p>
+                        <p className="mt-1.5 text-sm font-semibold text-foreground">
+                          {formatCurrency(promoterPerformance.salesSummary.revenue)}
+                        </p>
+                      </div>
+                      <div className="rounded-none border border-border bg-muted/40 px-2.5 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          Promoter commission
+                        </p>
+                        <p className="mt-1.5 text-sm font-semibold text-foreground">
+                          {formatCurrency(promoterPerformance.salesSummary.commission)}
+                        </p>
+                      </div>
+                      <div className="rounded-none border border-border bg-muted/40 px-2.5 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          Active partners
+                        </p>
+                        <p className="mt-1.5 text-sm font-semibold text-foreground">
+                          {promoterPerformance.salesSummary.activePartners}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-none border border-border bg-background px-2.5 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          Monthly commission
+                        </p>
+                        <p className="mt-1.5 text-sm font-semibold text-foreground">
+                          {formatCurrency(
+                            promoterPerformance.salesSummary.currentMonthCommission,
+                          )}
+                        </p>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          {promoterPerformance.salesSummary.currentMonthKey}
+                        </p>
+                      </div>
+                      <div className="rounded-none border border-border bg-background px-2.5 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          Annual commission
+                        </p>
+                        <p className="mt-1.5 text-sm font-semibold text-foreground">
+                          {formatCurrency(
+                            promoterPerformance.salesSummary.currentYearCommission,
+                          )}
+                        </p>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          {promoterPerformance.salesSummary.currentYearKey}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="rounded-none border border-border bg-background px-2.5 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          Tracked visits
+                        </p>
+                        <p className="mt-1.5 text-sm font-semibold text-foreground">
+                          {promoterPerformance.salesSummary.trackedVisits}
+                        </p>
+                      </div>
+                      <div className="rounded-none border border-border bg-background px-2.5 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          Purchases
+                        </p>
+                        <p className="mt-1.5 text-sm font-semibold text-foreground">
+                          {promoterPerformance.salesSummary.trackedPurchases}
+                        </p>
+                      </div>
+                      <div className="rounded-none border border-border bg-background px-2.5 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          Tracked revenue
+                        </p>
+                        <p className="mt-1.5 text-sm font-semibold text-foreground">
+                          {formatCurrency(promoterPerformance.salesSummary.trackedRevenue)}
+                        </p>
+                      </div>
+                      <div className="rounded-none border border-border bg-background px-2.5 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          Events
+                        </p>
+                        <p className="mt-1.5 text-sm font-semibold text-foreground">
+                          {promoterPerformance.salesSummary.trackedEvents}
+                        </p>
+                      </div>
+                    </div>
+
+                    {!promoterPerformance.openPanelConfigured ? (
+                      <div className="rounded-none border border-dashed border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
+                        OpenPanel read credentials are not configured.
+                      </div>
+                    ) : null}
+
+                    <div className="overflow-hidden border border-border bg-background">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Sale</TableHead>
+                            <TableHead>Growth Partner</TableHead>
+                            <TableHead>Customer</TableHead>
+                            <TableHead>Revenue</TableHead>
+                            <TableHead>Commission</TableHead>
+                            <TableHead>Status</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {promoterPerformance.sales.map((sale) => (
+                            <TableRow key={sale.payoutId}>
+                              <TableCell className="py-2 text-xs">
+                                <p className="font-semibold text-foreground">
+                                  {sale.orderId}
+                                </p>
+                                <p className="text-[11px] text-muted-foreground">
+                                  {formatDateTime(sale.saleDate)}
+                                </p>
+                              </TableCell>
+                              <TableCell className="py-2 text-xs">
+                                <p className="font-semibold text-foreground">
+                                  {sale.affiliateName || sale.affiliateCode}
+                                </p>
+                                <p className="font-mono text-[11px] text-muted-foreground">
+                                  {sale.affiliateCode}
+                                </p>
+                              </TableCell>
+                              <TableCell className="py-2 text-xs text-muted-foreground">
+                                {sale.customerEmail || "-"}
+                              </TableCell>
+                              <TableCell className="py-2 text-xs font-semibold text-foreground">
+                                {formatCurrency(sale.revenue)}
+                              </TableCell>
+                              <TableCell className="py-2 text-xs text-muted-foreground">
+                                {formatCurrency(sale.commission)}
+                              </TableCell>
+                              <TableCell className="py-2">
+                                <Badge variant="outline" className="rounded-none">
+                                  {sale.status}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          {promoterPerformance.sales.length === 0 ? (
+                            <TableRow>
+                              <TableCell
+                                colSpan={6}
+                                className="py-8 text-center text-xs text-muted-foreground"
+                              >
+                                No promoter-attributed sales in this time frame.
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
+                        </TableBody>
+                      </Table>
+                    </div>
+
+                    <div className="grid gap-3 lg:grid-cols-2">
+                      {[
+                        ["Partner breakdown", promoterPerformance.telemetry?.partnerBreakdown ?? []],
+                        ["Referrers", promoterPerformance.telemetry?.referrers ?? []],
+                        ["Landing paths", promoterPerformance.telemetry?.landingPaths ?? []],
+                        ["Devices", promoterPerformance.telemetry?.devices ?? []],
+                      ].map(([title, items]) => (
+                        <div
+                          key={String(title)}
+                          className="rounded-none border border-border bg-muted/30 px-3 py-3"
+                        >
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                            {String(title)}
+                          </p>
+                          {(items as Array<{ name?: string; affiliateCode?: string; value?: number; revenue?: number; purchases?: number; visits?: number }>).length > 0 ? (
+                            <div className="mt-2 space-y-1.5">
+                              {(items as Array<{ name?: string; affiliateCode?: string; value?: number; revenue?: number; purchases?: number; visits?: number }>).slice(0, 6).map((item) => {
+                                const label =
+                                  item.name ||
+                                  item.affiliateCode ||
+                                  "Unknown";
+                                const value =
+                                  item.value ??
+                                  item.revenue ??
+                                  item.purchases ??
+                                  item.visits ??
+                                  0;
+
+                                return (
+                                  <div
+                                    key={label}
+                                    className="flex items-center justify-between gap-3 text-xs"
+                                  >
+                                    <span className="truncate text-muted-foreground">
+                                      {label}
+                                    </span>
+                                    <span className="font-semibold text-foreground">
+                                      {typeof item.revenue === "number"
+                                        ? formatCurrency(value)
+                                        : value}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="mt-2 text-xs text-muted-foreground">
+                              No data returned.
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               {/* Actions section — varies by status */}

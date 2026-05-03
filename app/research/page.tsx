@@ -12,9 +12,9 @@ import { LatestPapersStrip } from './components/latest-papers-strip';
 export const revalidate = 300;
 
 export const metadata: Metadata = {
-  title: 'Research Library - Peptide Profiles & Protocols',
+  title: 'Research Library - Peptide Profiles & Documentation',
   description:
-    'Comprehensive research peptide profiles with storage protocols, reconstitution guidelines, and study references.',
+    'Comprehensive research peptide profiles with handling specifications, technical documentation, and peer-reviewed study references.',
   alternates: {
     canonical: '/research',
   },
@@ -50,7 +50,7 @@ export default async function ResearchPage() {
                 Research library
               </p>
               <h1 className="max-w-3xl text-balance text-3xl tracking-[-0.05em] md:text-[3.1rem] md:leading-[0.95]">
-                Peptides, protocols, and published papers.
+                Peptides, documentation, and published papers.
               </h1>
               <p className="max-w-xl text-sm leading-relaxed text-[#0B2E2F]/72 md:text-base">
                 A curated library of peptide profiles and peer-reviewed

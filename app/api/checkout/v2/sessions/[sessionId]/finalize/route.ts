@@ -20,6 +20,7 @@ import {
 } from '@/lib/checkout/session-store';
 import type { CheckoutOrderPublic } from '@/lib/checkout/types';
 import { buildPublicCheckoutOrder } from '@/lib/checkout/public-order';
+import { linkCurrentResearchConsentToOrder } from '@/lib/compliance/research-access-consent';
 
 const paramsSchema = z.object({
   sessionId: z.string().trim().min(1),
@@ -42,6 +43,17 @@ export const POST = createApiRoute({
     if (current.finalizedOrderId && current.finalizedAccessKey) {
       const existingOrder = await getCheckoutOrder(current.finalizedOrderId);
       if (existingOrder) {
+        const authSession = await optionalSession();
+        await linkCurrentResearchConsentToOrder({
+          checkoutOrderId: existingOrder.orderId,
+          checkoutSessionId: current.sessionId,
+          email: existingOrder.shippingAddress.email,
+          userId: authSession?.user?.id ?? null,
+          request,
+        }).catch((error) => {
+          console.error('[RESEARCH-CONSENT] Failed to link existing checkout order:', error);
+        });
+
         return {
           data: {
             session: toCheckoutSessionState(current),
@@ -77,6 +89,30 @@ export const POST = createApiRoute({
     }>(idempotencyKey);
 
     if (stored) {
+      const storedOrderId =
+        typeof stored.order.orderId === 'string' ? stored.order.orderId : null;
+      const storedShippingAddress =
+        stored.order.shippingAddress &&
+        typeof stored.order.shippingAddress === 'object'
+          ? (stored.order.shippingAddress as { email?: unknown })
+          : null;
+      const storedEmail =
+        typeof storedShippingAddress?.email === 'string'
+          ? storedShippingAddress.email
+          : null;
+      if (storedOrderId) {
+        const authSession = await optionalSession();
+        await linkCurrentResearchConsentToOrder({
+          checkoutOrderId: storedOrderId,
+          checkoutSessionId: session.sessionId,
+          email: storedEmail,
+          userId: authSession?.user?.id ?? null,
+          request,
+        }).catch((error) => {
+          console.error('[RESEARCH-CONSENT] Failed to link stored checkout order:', error);
+        });
+      }
+
       return {
         data: {
           session: toCheckoutSessionState(session),
@@ -92,9 +128,9 @@ export const POST = createApiRoute({
     // post-auth reconcile. This preserves attribution for shoppers who
     // cleared cookies, switched devices, or returned after the 30-day
     // cookie window — as long as they're signed in when they check out.
+    const authSession = await optionalSession();
     let affiliateCode = cookieAffiliateCode;
     if (!affiliateCode) {
-      const authSession = await optionalSession();
       if (authSession?.user?.id) {
         affiliateCode = await getStoredUserReferralCode(authSession.user.id);
       }
@@ -150,6 +186,16 @@ export const POST = createApiRoute({
         finalizedOrderId: result.order.orderId,
         finalizedAccessKey: result.accessKey,
       },
+    });
+
+    await linkCurrentResearchConsentToOrder({
+      checkoutOrderId: result.order.orderId,
+      checkoutSessionId: session.sessionId,
+      email: result.order.shippingAddress.email,
+      userId: authSession?.user?.id ?? null,
+      request,
+    }).catch((error) => {
+      console.error('[RESEARCH-CONSENT] Failed to link checkout order:', error);
     });
 
     await storeIdempotentResponse({
