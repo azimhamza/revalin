@@ -139,35 +139,36 @@ export function ResearchDisclaimerPopup() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 8 }}
               transition={{ duration: 0.3, ease: 'easeOut' }}
-              className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-[#F4F1EA] px-6 py-7 shadow-2xl md:px-9 md:py-9"
+              className="relative flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-[#F4F1EA] shadow-2xl"
               role="dialog"
               aria-modal="true"
               aria-labelledby="age-gate-title"
               aria-describedby="age-gate-description"
             >
-              {/* Logo */}
-              <div className="flex flex-col items-center">
-                <LogoSvg className="w-36 h-auto text-[#0B2E2F]" />
-              </div>
+              <div className="min-h-0 max-h-[440px] overflow-y-auto px-6 pb-3 pt-6 md:px-9 md:pt-7">
+                {/* Logo */}
+                <div className="flex flex-col items-center">
+                  <LogoSvg className="h-auto w-32 text-[#0B2E2F]" />
+                </div>
 
               {/* Divider */}
-              <div className="my-6 h-px bg-[#0B2E2F]/10" />
+              <div className="my-4 h-px bg-[#0B2E2F]/10" />
 
               {/* Heading */}
               <h2
                 id="age-gate-title"
                 className="text-center text-xl font-semibold tracking-tight text-[#0B2E2F]"
               >
-                Welcome to Revalin
+                Research-use agreement required
               </h2>
               <p className="mt-2 text-center text-[13px] leading-relaxed text-[#0B2E2F]/55">
-                Canadian supplier of research-grade peptides for qualified researchers and institutions.
+                You must actively agree before entering Revalin.
               </p>
 
               {/* Info points */}
-              <div className="mt-6 space-y-2.5">
+              <div className="mt-4 space-y-2">
                 {INFO_POINTS.map(({ icon: Icon, text }) => (
-                  <div key={text} className="flex items-center gap-3 rounded-xl bg-[#0B2E2F]/[0.04] px-4 py-3">
+                  <div key={text} className="flex items-center gap-3 rounded-xl bg-[#0B2E2F]/[0.04] px-4 py-2.5">
                     <Icon className="size-4 shrink-0 text-[#0B2E2F]/50" strokeWidth={1.5} />
                     <span className="text-[13px] text-[#0B2E2F]/70">{text}</span>
                   </div>
@@ -177,18 +178,22 @@ export function ResearchDisclaimerPopup() {
               {/* Research disclaimer */}
               <p
                 id="age-gate-description"
-                className="mt-5 text-center text-[12px] leading-relaxed text-[#0B2E2F]/50"
+                className="mt-4 text-center text-[12px] leading-relaxed text-[#0B2E2F]/50"
               >
                 All products are strictly for research purposes only and are not intended for human consumption. These products have not been evaluated or approved by the FDA or Health Canada.
               </p>
 
-              <div className="mt-6 rounded-xl border border-[#0B2E2F]/8 bg-white/50 px-4 py-3.5 text-center">
+              <div className="mt-4 rounded-xl border border-[#0B2E2F]/8 bg-white/50 px-4 py-3 text-center">
                 <p className="text-[13px] font-medium text-[#0B2E2F]/80">
                   You must be 21 or older to browse this site.
                 </p>
               </div>
 
-              <div className="mt-5 space-y-3">
+              <div className="mt-5 border-t border-[#0B2E2F]/10 pt-4">
+                <p className="mb-3 text-center text-[10px] font-semibold uppercase tracking-[0.14em] text-[#0B2E2F]/45">
+                  Optional research details
+                </p>
+                <div className="space-y-2.5">
                 <label className="flex flex-col gap-1.5">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#0B2E2F]/55">
                     Institution or company name optional
@@ -228,22 +233,47 @@ export function ResearchDisclaimerPopup() {
                     onChange={(event) => setResearchUseDescription(event.target.value)}
                     maxLength={2000}
                     disabled={isSubmitting}
-                    rows={3}
+                    rows={2}
                     className="resize-none rounded-xl border border-[#0B2E2F]/10 bg-white/65 px-3 py-2 text-sm leading-5 text-[#0B2E2F] outline-none transition-colors placeholder:text-[#0B2E2F]/30 focus:border-[#0B2E2F]/35"
                     placeholder="Briefly describe the lawful research context"
                   />
                 </label>
+                </div>
+                <p className="mt-3 text-center text-[10px] leading-4 text-[#0B2E2F]/45">
+                  Leaving these fields blank records that no institution or research details were provided.
+                </p>
+              </div>
               </div>
 
-              <p className="mt-3 text-center text-[11px] leading-5 text-[#0B2E2F]/45">
-                This is the research-use access gate, separate from cookie consent. Leaving optional fields blank records that they were not provided.
-              </p>
-
-              <div className="mt-6">
+              <div className="shrink-0 border-t border-[#0B2E2F]/10 bg-[#F4F1EA]/95 px-6 pb-3 pt-3 backdrop-blur md:px-9">
+                <p className="mb-2 text-center text-[10px] leading-4 text-[#0B2E2F]/50">
+                  This is the research-use access gate, separate from cookie consent.
+                </p>
+                <p className="mb-2 text-center text-[10px] leading-4 text-[#0B2E2F]/50">
+                  By clicking Yes, you confirm you are 21 or older, are acting for lawful research purposes, and agree to our{' '}
+                  <Link
+                    className="underline underline-offset-2 hover:text-[#0B2E2F]/70"
+                    href="/terms-of-service"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Terms of Service
+                  </Link>{' '}
+                  and{' '}
+                  <Link
+                    className="underline underline-offset-2 hover:text-[#0B2E2F]/70"
+                    href="/privacy-policy"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Privacy Policy
+                  </Link>
+                  .
+                </p>
                 <button
                   onClick={handleAccept}
                   disabled={isSubmitting}
-                  className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-[#0B2E2F] text-sm font-medium text-[#F4F1EA] transition-all hover:bg-[#0B2E2F]/90 disabled:cursor-not-allowed disabled:opacity-70"
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-full bg-[#0B2E2F] text-sm font-medium text-[#F4F1EA] transition-all hover:bg-[#0B2E2F]/90 disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {isSubmitting ? (
                     <>
@@ -254,31 +284,10 @@ export function ResearchDisclaimerPopup() {
                     'Yes, I agree and enter site'
                   )}
                 </button>
+                {error ? (
+                  <p className="mt-3 text-center text-xs font-medium text-red-700">{error}</p>
+                ) : null}
               </div>
-              {error ? (
-                <p className="mt-3 text-center text-xs font-medium text-red-700">{error}</p>
-              ) : null}
-
-              <p className="mt-5 text-center text-[11px] text-[#0B2E2F]/40">
-                By clicking Yes, you confirm you are 21 or older, are acting for lawful research purposes, and agree to our{' '}
-                <Link
-                  className="underline underline-offset-2 hover:text-[#0B2E2F]/60"
-                  href="/terms-of-service"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Terms of Service
-                </Link>{' '}
-                and{' '}
-                <Link
-                  className="underline underline-offset-2 hover:text-[#0B2E2F]/60"
-                  href="/privacy-policy"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Privacy Policy
-                </Link>
-              </p>
             </motion.section>
           </div>
         </motion.div>
