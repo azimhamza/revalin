@@ -204,7 +204,7 @@ function resolvePaymentMethodLabel(
   if (explicitMethod) return explicitMethod;
 
   if (payment?.provider === 'nowpayments') return 'crypto';
-  if (payment?.provider === 'shieldclimb') return 'card_debit';
+  if (payment?.provider === 'shieldclimb' || payment?.provider === 'bankful') return 'card_debit';
   if (payment?.provider === 'interac') return 'interac';
 
   return null;

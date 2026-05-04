@@ -69,6 +69,14 @@ export const checkoutSessionMutationSchema = checkoutSessionCreateSchema.extend(
   sessionKey: z.string().trim().min(1),
   version: z.number().int().positive().optional(),
   selectedShippingServiceId: z.string().trim().min(1).optional(),
+  card: z
+    .object({
+      number: z.string().trim().min(12).max(24),
+      cvv: z.string().trim().min(3).max(4),
+      expiryMonth: z.string().trim().min(1).max(2),
+      expiryYear: z.string().trim().min(2).max(4),
+    })
+    .optional(),
 });
 
 export const checkoutSessionAccessSchema = z.object({

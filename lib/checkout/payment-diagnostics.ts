@@ -7,10 +7,12 @@ import {
   hasOpenPanelCredentials,
   type OpenPanelEventRecord,
 } from '@/lib/analytics/openpanel';
+import { getBankfulTransactionStatus } from '@/lib/checkout/bankful';
 import { getNowPaymentsPayment } from '@/lib/checkout/nowpayments';
 import { checkShieldClimbPaymentStatus } from '@/lib/checkout/shieldclimb';
 import { getSwellOrder } from '@/lib/checkout/swell-order-management';
 import {
+  isBankfulPayment,
   isInteracPayment,
   isNowPaymentsPayment,
   isShieldClimbPayment,
@@ -134,7 +136,7 @@ function paymentMethod(payment: CheckoutOrderPayment | null) {
   if (!payment) return null;
   if ('paymentMethod' in payment && payment.paymentMethod) return payment.paymentMethod;
   if (isNowPaymentsPayment(payment)) return 'crypto';
-  if (isShieldClimbPayment(payment)) return 'card_debit';
+  if (isShieldClimbPayment(payment) || isBankfulPayment(payment)) return 'card_debit';
   if (isInteracPayment(payment)) return 'interac';
   return null;
 }
@@ -193,6 +195,29 @@ function safePaymentSnapshot(payment: CheckoutOrderPayment | null) {
       txidInPresent: Boolean(payment.txidIn),
       txidOutPresent: Boolean(payment.txidOut),
       callbackVerifiedAt: payment.callbackVerifiedAt ?? null,
+      createdAt: payment.createdAt ?? null,
+      updatedAt: payment.updatedAt ?? null,
+      attemptAmount: payment.attemptAmount ?? null,
+      amountPaidToDate: payment.amountPaidToDate ?? null,
+    };
+  }
+
+  if (isBankfulPayment(payment)) {
+    return {
+      provider: payment.provider,
+      paymentMethod: payment.paymentMethod ?? 'card_debit',
+      status: payment.status,
+      bankfulStatus: payment.bankfulStatus ?? null,
+      requestAction: payment.requestAction ?? null,
+      transactionRequestId: payment.transactionRequestId ?? null,
+      transactionRecordId: payment.transactionRecordId ?? null,
+      transactionOrderId: payment.transactionOrderId ?? null,
+      xtlOrderId: payment.xtlOrderId ?? null,
+      transactionCurrency: payment.transactionCurrency ?? null,
+      cardLast4: payment.cardLast4 ?? null,
+      cardBrand: payment.cardBrand ?? null,
+      capturedAt: payment.capturedAt ?? null,
+      swellPaymentId: payment.swellPaymentId ?? null,
       createdAt: payment.createdAt ?? null,
       updatedAt: payment.updatedAt ?? null,
       attemptAmount: payment.attemptAmount ?? null,
@@ -422,6 +447,50 @@ async function checkProvider(order: CheckoutOrderRecord): Promise<PaymentDiagnos
     }
   }
 
+  if (isBankfulPayment(payment)) {
+    if (!payment.transactionRecordId) {
+      return {
+        provider: payment.provider,
+        checked: false,
+        status: payment.bankfulStatus ?? payment.status,
+        detail: 'Bankful transaction record id is missing.',
+        raw: null,
+        error: 'Missing transaction record id.',
+      };
+    }
+
+    try {
+      const result = await getBankfulTransactionStatus(payment.transactionRecordId);
+      return {
+        provider: payment.provider,
+        checked: true,
+        status: result.statusName,
+        detail: `Bankful reports ${result.statusName}.`,
+        raw: {
+          status: result.statusName,
+          requestAction: result.requestAction,
+          value: result.value ?? null,
+          currency: result.currency ?? null,
+          requestId: result.requestId ?? null,
+          recordId: result.recordId ?? null,
+          orderId: result.orderId ?? null,
+          xtlOrderId: result.xtlOrderId ?? null,
+          updatedAt: result.timestamp ?? null,
+        },
+        error: null,
+      };
+    } catch (error) {
+      return {
+        provider: payment.provider,
+        checked: false,
+        status: payment.bankfulStatus ?? payment.status,
+        detail: 'Unable to check Bankful.',
+        raw: null,
+        error: error instanceof Error ? error.message : 'Unable to check Bankful.',
+      };
+    }
+  }
+
   return {
     provider: payment.provider,
     checked: false,
@@ -570,6 +639,24 @@ function buildVerdict(args: {
       label: 'Unpaid hosted checkout',
       detail: 'ShieldClimb reports unpaid and Swell has no payment. The customer likely left before completing card checkout.',
     };
+  }
+
+  if (isBankfulPayment(payment)) {
+    if (['declined', 'failed', 'error'].includes(providerStatus) || ['declined', 'failed'].includes(localStatus)) {
+      return {
+        status: 'danger',
+        label: 'Bankful capture failed',
+        detail: 'Bankful/local state indicates the card capture was not approved.',
+      };
+    }
+
+    if (providerStatus && providerStatus !== localStatus && localStatus !== 'paid') {
+      return {
+        status: 'warning',
+        label: 'Bankful status needs review',
+        detail: `Bankful reports ${providerStatus}, while the local order is ${localStatus || 'unknown'}.`,
+      };
+    }
   }
 
   if (isInteracPayment(payment) && ['awaiting_transfer', 'submitted', 'under_review'].includes(localStatus)) {

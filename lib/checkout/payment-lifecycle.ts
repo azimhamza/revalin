@@ -6,7 +6,7 @@ import {
   updateCheckoutOrder,
 } from '@/lib/checkout/order-store';
 import { cancelSwellOrder } from '@/lib/checkout/swell-order-management';
-import { syncCheckoutOrderToSwell, syncInteracOrderToSwell, syncShieldClimbOrderToSwell } from '@/lib/checkout/swell-payment-sync';
+import { syncBankfulOrderToSwell, syncCheckoutOrderToSwell, syncInteracOrderToSwell, syncShieldClimbOrderToSwell } from '@/lib/checkout/swell-payment-sync';
 import { sendPaymentCompletedEvent, trackPurchaseFromOrder } from '@/lib/checkout/telemetry';
 import {
   sendOrderConfirmationEmail,
@@ -38,6 +38,7 @@ const paymentLifecycleDependencies: PaymentLifecycleDependencies = {
   updateCheckoutOrder,
   syncCheckoutOrderToSwell,
   syncShieldClimbOrderToSwell,
+  syncBankfulOrderToSwell,
   syncInteracOrderToSwell,
   sendPaymentCompletedEvent,
   trackPurchaseFromOrder,

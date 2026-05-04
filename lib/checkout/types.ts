@@ -135,6 +135,36 @@ export type ShieldClimbPaymentData = {
   supersededByOrderId?: string;
 };
 
+export type BankfulPaymentData = {
+  provider: 'bankful';
+  paymentMethod?: 'card_debit';
+  attemptId: string;
+  status: 'paid' | 'pending' | 'declined' | 'failed' | 'capture_unknown' | string;
+  bankfulStatus?: string | null;
+  requestAction?: string | null;
+  transactionValue?: string | null;
+  transactionRequestId?: string | null;
+  transactionRecordId?: string | null;
+  transactionOrderId?: string | null;
+  xtlOrderId?: string | null;
+  transactionCurrency?: string | null;
+  bankfulTimestamp?: string | null;
+  apiAdvice?: string | null;
+  serviceAdvice?: string | null;
+  processorAdvice?: string | null;
+  errorMessage?: string | null;
+  cardLast4?: string | null;
+  cardBrand?: string | null;
+  capturedAt?: string | null;
+  swellPaymentId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  amountPaidToDate?: string;
+  attemptAmount?: string;
+  carryoverRootOrderId?: string;
+  supersededByOrderId?: string;
+};
+
 export type InteracPaymentData = {
   provider: 'interac';
   paymentMethod?: 'interac';
@@ -181,6 +211,7 @@ export type InteracPaymentData = {
 export type CheckoutOrderPayment =
   | NowPaymentsPaymentData
   | ShieldClimbPaymentData
+  | BankfulPaymentData
   | InteracPaymentData;
 
 export type CheckoutPaymentCarryoverPublicData = {
@@ -216,9 +247,13 @@ export type ShieldClimbPublicPaymentData = {
   remainingBalanceAmount?: string;
 };
 
+export type BankfulPublicPaymentData =
+  BankfulPaymentData & CheckoutPaymentCarryoverPublicData;
+
 export type CheckoutOrderPublicPayment =
   | NowPaymentsPublicPaymentData
   | ShieldClimbPublicPaymentData
+  | BankfulPublicPaymentData
   | (InteracPaymentData & CheckoutPaymentCarryoverPublicData);
 
 export function isShieldClimbPayment(payment: CheckoutOrderPayment): payment is ShieldClimbPaymentData {
@@ -231,6 +266,10 @@ export function isNowPaymentsPayment(payment: CheckoutOrderPayment): payment is 
 
 export function isInteracPayment(payment: CheckoutOrderPayment): payment is InteracPaymentData {
   return payment.provider === 'interac';
+}
+
+export function isBankfulPayment(payment: CheckoutOrderPayment): payment is BankfulPaymentData {
+  return payment.provider === 'bankful';
 }
 
 export type CheckoutOrderSwell = {
@@ -345,6 +384,13 @@ function toPublicCheckoutPayment(
   payment: CheckoutOrderPayment,
   carryover?: CheckoutPaymentCarryoverPublicData,
 ): CheckoutOrderPublicPayment {
+  if (isBankfulPayment(payment)) {
+    return {
+      ...payment,
+      ...carryover,
+    };
+  }
+
   if (!isShieldClimbPayment(payment)) {
     return {
       ...payment,

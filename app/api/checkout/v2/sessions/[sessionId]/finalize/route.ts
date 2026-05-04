@@ -145,11 +145,13 @@ export const POST = createApiRoute({
     try {
       result = (await finalizeCheckoutSession({
         sessionId: session.sessionId,
+        sessionVersion: session.version,
         cartId: session.cartId,
         cartSnapshot: session.cartSnapshot,
         shippingAddress: session.shippingAddress,
         paymentMethod: session.paymentMethod,
         paymentCurrency: session.paymentCurrency,
+        card: body.card ?? null,
         sourceWalletAddress: session.sourceWalletAddress,
         interacSenderEmail: session.interacSenderEmail,
         interacSenderName: session.interacSenderName,

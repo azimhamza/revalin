@@ -10,7 +10,7 @@ import type {
   CheckoutShippingService,
   NowPaymentsPaymentData,
 } from './types.ts';
-import { isInteracPayment, isNowPaymentsPayment, isShieldClimbPayment } from './types.ts';
+import { isBankfulPayment, isInteracPayment, isNowPaymentsPayment, isShieldClimbPayment } from './types.ts';
 
 const IMMUTABLE_NON_SUCCESS_STATUSES = new Set([
   'cancelled',
@@ -36,13 +36,15 @@ export const CHECKOUT_PROCESSING_STEPS = [
 export type CheckoutProcessingStepName =
   (typeof CHECKOUT_PROCESSING_STEPS)[number];
 
-export type PaymentLifecycleProvider = 'nowpayments' | 'shieldclimb' | 'interac';
+export type PaymentLifecycleProvider = 'nowpayments' | 'shieldclimb' | 'interac' | 'bankful';
 
 export type PaymentLifecycleEventSource =
   | 'nowpayments_ipn'
   | 'nowpayments_poll'
   | 'shieldclimb_callback'
   | 'shieldclimb_poll'
+  | 'bankful_capture'
+  | 'bankful_poll'
   | 'interac_email'
   | 'interac_admin';
 
@@ -109,6 +111,7 @@ export type PaymentLifecycleDependencies = {
   syncShieldClimbOrderToSwell: (
     order: CheckoutOrderRecord
   ) => Promise<unknown>;
+  syncBankfulOrderToSwell: (order: CheckoutOrderRecord) => Promise<unknown>;
   syncInteracOrderToSwell: (order: CheckoutOrderRecord) => Promise<unknown>;
   sendPaymentCompletedEvent: (order: CheckoutOrderRecord) => Promise<unknown>;
   trackPurchaseFromOrder: (order: CheckoutOrderRecord) => Promise<unknown>;
@@ -225,6 +228,7 @@ function isProviderMatch(
 ) {
   if (provider === 'nowpayments') return isNowPaymentsPayment(order.payment);
   if (provider === 'interac') return isInteracPayment(order.payment);
+  if (provider === 'bankful') return isBankfulPayment(order.payment);
   return isShieldClimbPayment(order.payment);
 }
 
@@ -497,6 +501,11 @@ export function createPaymentLifecycle(
 
         if (isInteracPayment(order.payment)) {
           await dependencies.syncInteracOrderToSwell(order);
+          return { status: 'completed' };
+        }
+
+        if (isBankfulPayment(order.payment)) {
+          await dependencies.syncBankfulOrderToSwell(order);
           return { status: 'completed' };
         }
 

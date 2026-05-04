@@ -33,6 +33,7 @@ export function parseCheckoutResume(rawResume: string | null): CheckoutResume | 
     if (typeof parsed.accessKey !== 'string' || !parsed.accessKey.trim()) return null;
     if (
       parsed.provider !== 'shieldclimb' &&
+      parsed.provider !== 'bankful' &&
       parsed.provider !== 'nowpayments' &&
       parsed.provider !== 'interac'
     ) return null;

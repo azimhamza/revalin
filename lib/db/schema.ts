@@ -269,6 +269,48 @@ export const checkoutOrders = pgTable(
   ],
 );
 
+export const bankfulPaymentAttempts = pgTable(
+  "bankful_payment_attempts",
+  {
+    attemptId: varchar("attempt_id", { length: 96 }).primaryKey(),
+    checkoutSessionId: varchar("checkout_session_id", { length: 128 }).notNull(),
+    checkoutSessionVersion: integer("checkout_session_version").notNull(),
+    cartId: varchar("cart_id", { length: 128 }),
+    orderId: varchar("order_id", { length: 64 }).references(
+      () => checkoutOrders.orderId,
+      { onDelete: "set null" },
+    ),
+    email: varchar("email", { length: 256 }),
+    status: varchar("status", { length: 64 }).notNull(),
+    amount: varchar("amount", { length: 32 }).notNull(),
+    currencyCode: varchar("currency_code", { length: 8 }).notNull(),
+    customer: jsonb("customer").notNull(),
+    shippingAddress: jsonb("shipping_address").notNull(),
+    shippingService: jsonb("shipping_service"),
+    lines: jsonb("lines").notNull(),
+    totals: jsonb("totals").notNull(),
+    swell: jsonb("swell"),
+    bankful: jsonb("bankful"),
+    latestError: text("latest_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("bankful_payment_attempts_session_version_idx").on(
+      table.checkoutSessionId,
+      table.checkoutSessionVersion,
+    ),
+    index("bankful_payment_attempts_order_id_idx").on(table.orderId),
+    index("bankful_payment_attempts_email_idx").on(table.email),
+    index("bankful_payment_attempts_status_idx").on(table.status),
+    index("bankful_payment_attempts_updated_at_idx").on(table.updatedAt),
+  ],
+);
+
 export const researchAccessConsents = pgTable(
   "research_access_consents",
   {

@@ -14,7 +14,22 @@ import {
   getAffiliateCommissionSnapshot,
   getCommissionMonthKey,
 } from '@/lib/checkout/commission-service';
-import { buildInitialCheckoutOrderProcessing } from '@/lib/checkout/payment-lifecycle';
+import {
+  buildInitialCheckoutOrderProcessing,
+  runSuccessfulOrderProcessing,
+} from '@/lib/checkout/payment-lifecycle';
+import {
+  bankfulResponseSnapshot,
+  createBankfulSale,
+  mapBankfulStatus,
+  type BankfulCardInput,
+  type BankfulTransactionResponse,
+} from '@/lib/checkout/bankful';
+import {
+  claimBankfulPaymentAttemptCapture,
+  createBankfulPaymentAttempt,
+  updateBankfulPaymentAttempt,
+} from '@/lib/checkout/bankful-attempt-store';
 import {
   createNowPaymentsPayment,
   getNowPaymentsEstimate,
@@ -89,6 +104,7 @@ import type {
   CheckoutShippingAddress,
   CheckoutShippingService,
   InteracPaymentData,
+  BankfulPaymentData,
   NowPaymentsPaymentData,
   ShieldClimbPaymentData,
 } from '@/lib/checkout/types';
@@ -101,6 +117,7 @@ import {
 
 type FinalizeCheckoutInput = {
   sessionId: string;
+  sessionVersion: number;
   cartId?: string | null;
   cartSnapshot: {
     currencyCode: string;
@@ -121,6 +138,7 @@ type FinalizeCheckoutInput = {
   shippingAddress: CheckoutShippingAddress;
   paymentMethod: 'card' | 'crypto' | 'interac';
   paymentCurrency?: string | null;
+  card?: BankfulCardInput | null;
   sourceWalletAddress?: string | null;
   interacSenderEmail?: string | null;
   interacSenderName?: string | null;
@@ -166,6 +184,11 @@ export type FinalizeCheckoutDependencies = {
   getNowPaymentsEstimate: typeof getNowPaymentsEstimate;
   getNowPaymentsMinimumAmount: typeof getNowPaymentsMinimumAmount;
   createNowPaymentsPayment: typeof createNowPaymentsPayment;
+  createBankfulPaymentAttempt: typeof createBankfulPaymentAttempt;
+  claimBankfulPaymentAttemptCapture: typeof claimBankfulPaymentAttemptCapture;
+  updateBankfulPaymentAttempt: typeof updateBankfulPaymentAttempt;
+  createBankfulSale: typeof createBankfulSale;
+  runSuccessfulOrderProcessing: typeof runSuccessfulOrderProcessing;
   sendCheckoutPaymentInitiatedEvent: typeof sendCheckoutPaymentInitiatedEvent;
   trackCheckoutPaymentInitiated: typeof trackCheckoutPaymentInitiated;
 };
@@ -187,6 +210,17 @@ function createShieldClimbCallbackToken() {
 
 function createShieldClimbSessionId(ipnToken: string) {
   return `shieldclimb:${ipnToken}`;
+}
+
+function createBankfulAttemptId(sessionId: string, version: number) {
+  const digest = crypto
+    .createHash('sha256')
+    .update(`${sessionId}:${version}`)
+    .digest('hex')
+    .slice(0, 18)
+    .toUpperCase();
+
+  return `BF${digest}`;
 }
 
 function normalizeComparableValue(value?: string | null) {
@@ -258,13 +292,21 @@ function doesExistingOrderMatchCheckoutAttempt(args: {
   }
 
   const orderPaymentMethod =
-    args.existingOrder.payment.provider === 'shieldclimb'
+    args.existingOrder.payment.provider === 'shieldclimb' ||
+    args.existingOrder.payment.provider === 'bankful'
       ? 'card'
       : args.existingOrder.payment.provider === 'interac'
         ? 'interac'
         : 'crypto';
 
   if (orderPaymentMethod !== args.input.paymentMethod) {
+    return false;
+  }
+
+  if (
+    args.input.paymentMethod === 'card' &&
+    args.existingOrder.payment.provider !== 'bankful'
+  ) {
     return false;
   }
 
@@ -951,6 +993,122 @@ function buildShieldClimbOrderRecord(args: {
   };
 }
 
+function buildBankfulOrderRecord(args: {
+  orderId: string;
+  accessKey: string;
+  cartId: string;
+  userId?: string | null;
+  swellAccountId: string;
+  swellCartId: string;
+  swellOrderId: string;
+  swellOrderNumber?: string;
+  currencyCode: string;
+  lines: CheckoutOrderLine[];
+  shippingAddress: CheckoutShippingAddress;
+  shippingService: CheckoutShippingService;
+  orderSubtotal: number;
+  orderDiscountTotal: number;
+  discountCode?: string;
+  discounts?: CheckoutOrderRecord['totals']['discounts'];
+  orderTaxTotal: number;
+  orderGrandTotal: number;
+  orderShipmentTotal: number;
+  orderLandedCostTotal?: number;
+  landedCost?: CheckoutLandedCost | null;
+  attemptId: string;
+  bankful: BankfulTransactionResponse;
+  cardLast4?: string | null;
+  amountPaidToDate?: string;
+  attemptAmount?: string;
+  carryoverRootOrderId?: string;
+  nowIso?: string;
+}): CheckoutOrderRecord {
+  const now = args.nowIso ?? new Date().toISOString();
+  const shippingStatus = args.orderShipmentTotal <= 0.009 ? 'free' : 'quoted';
+  const paymentData: BankfulPaymentData = {
+    provider: 'bankful',
+    paymentMethod: 'card_debit',
+    attemptId: args.attemptId,
+    status: mapBankfulStatus(args.bankful.statusName),
+    bankfulStatus: args.bankful.statusName,
+    requestAction: args.bankful.requestAction,
+    transactionValue: args.bankful.value,
+    transactionRequestId: args.bankful.requestId,
+    transactionRecordId: args.bankful.recordId,
+    transactionOrderId: args.bankful.orderId,
+    xtlOrderId: args.bankful.xtlOrderId,
+    transactionCurrency: args.bankful.currency,
+    bankfulTimestamp: args.bankful.timestamp,
+    apiAdvice: args.bankful.apiAdvice,
+    serviceAdvice: args.bankful.serviceAdvice,
+    processorAdvice: args.bankful.processorAdvice,
+    errorMessage: args.bankful.errorMessage,
+    cardLast4: args.cardLast4 ?? null,
+    capturedAt: now,
+    createdAt: now,
+    updatedAt: now,
+    amountPaidToDate: args.amountPaidToDate,
+    attemptAmount: args.attemptAmount,
+    carryoverRootOrderId: args.carryoverRootOrderId,
+  };
+
+  return {
+    orderId: args.orderId,
+    accessKey: args.accessKey,
+    cartId: args.cartId,
+    userId: args.userId ?? null,
+    createdAt: now,
+    updatedAt: now,
+    currencyCode: args.currencyCode,
+    shippingAddress: args.shippingAddress,
+    shippingService: args.shippingService,
+    lines: args.lines,
+    totals: {
+      subtotalAmount: {
+        amount: args.orderSubtotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      discountAmount: {
+        amount: args.orderDiscountTotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      discountCode: args.discountCode,
+      discounts: args.discounts?.length ? args.discounts : undefined,
+      taxAmount: {
+        amount: args.orderTaxTotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      ...buildLandedCostTotalFields({
+        orderLandedCostTotal: args.orderLandedCostTotal,
+        currencyCode: args.currencyCode,
+        landedCost: args.landedCost,
+      }),
+      totalAmount: {
+        amount: args.orderGrandTotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      shippingAmount: {
+        amount: args.orderShipmentTotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      shippingThresholdAmount: {
+        amount: getFreeShippingThresholdForCurrency(args.currencyCode).toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      shippingStatus,
+    },
+    payment: paymentData,
+    swell: {
+      accountId: args.swellAccountId,
+      cartId: args.swellCartId,
+      orderId: args.swellOrderId,
+      orderNumber: args.swellOrderNumber,
+    },
+    processing: buildInitialCheckoutOrderProcessing(),
+    latestError: null,
+  };
+}
+
 function buildInteracOrderRecord(args: {
   orderId: string;
   accessKey: string;
@@ -1309,6 +1467,404 @@ export function createFinalizeCheckoutSession(
         },
       );
 
+      if (args.paymentMethod === 'card') {
+        if (!args.card) {
+          throw apiError.badRequest('Enter your card details before placing the order.');
+        }
+
+        const couponDiscountTotal = Number(
+          ratedCart.discount_total ?? ratedCart.item_discount ?? 0,
+        );
+        if (args.discountCode && couponDiscountTotal <= 0) {
+          throw apiError.badRequest(
+            'That discount code is invalid or has expired.',
+          );
+        }
+
+        const orderTaxTotal = Number(ratedCart.tax_total || 0);
+        const orderShipmentTotal = resolveOrderShipmentTotal({
+          selectedService,
+          swellShipmentTotal: ratedCart.shipment_total,
+        });
+        const orderCurrencyCode = ratedCart.currency || currencyCode;
+        const landedCost = await quoteZonosLandedCost({
+          shippingAddress: args.shippingAddress,
+          cartSnapshot: args.cartSnapshot,
+          service: {
+            ...selectedService,
+            price: {
+              amount: orderShipmentTotal.toFixed(2),
+              currencyCode: orderCurrencyCode,
+            },
+          },
+          currencyCode: orderCurrencyCode,
+        });
+        const orderLandedCostTotal = Number(landedCost?.amount.amount || 0);
+        const selectedServiceForOrder = landedCost
+          ? {
+              ...selectedService,
+              landedCostAmount: landedCost.amount,
+              landedCost,
+            }
+          : selectedService;
+        const orderSubtotalAmount = Number.isFinite(Number(ratedCart.sub_total))
+          ? Number(ratedCart.sub_total)
+          : subtotalAmount;
+        const appliedDiscountCode = args.discountCode || ratedCart.coupon_code;
+        const pricing = calculateCheckoutPricing({
+          currencyCode: orderCurrencyCode,
+          subtotalAmount: orderSubtotalAmount,
+          couponDiscountAmount: couponDiscountTotal,
+          couponCode: appliedDiscountCode,
+          shippingAmount: orderShipmentTotal,
+          taxAmount: orderTaxTotal,
+          landedCostAmount: orderLandedCostTotal,
+          paymentMethod: args.paymentMethod,
+        });
+        const orderDiscountTotal = pricing.discountTotalValue;
+        const orderTotal = pricing.totalValue;
+
+        if (!orderTotal || orderTotal <= 0 || !Number.isFinite(orderTotal)) {
+          throw apiError.badRequest('Order total must be greater than zero.', {
+            code: 'invalid_order_total',
+          });
+        }
+
+        const carryoverContext = buildCarryoverContext({
+          orders: cartOrders,
+          comparable: carryoverComparable,
+          orderTotal,
+        });
+
+        if (
+          carryoverContext.latestSuccessfulOrder &&
+          carryoverContext.creditedAmount + 0.01 >= orderTotal
+        ) {
+          await dependencies
+            .deleteSwellCheckoutCart(ratedCart.id)
+            .catch((error) => {
+              console.error('Unable to delete duplicate Swell cart after carryover reconciliation:', error);
+            });
+          temporaryCartId = undefined;
+
+          return {
+            accessKey: carryoverContext.latestSuccessfulOrder.accessKey,
+            order: toPublicCheckoutOrderWithCarryover(
+              carryoverContext.latestSuccessfulOrder,
+              cartOrders,
+            ),
+            redirectUrl:
+              carryoverContext.latestSuccessfulOrder.payment.provider ===
+              'shieldclimb'
+                ? carryoverContext.latestSuccessfulOrder.payment.redirectUrl
+                : null,
+          };
+        }
+
+        const amountAlreadyPaid = carryoverContext.creditedAmount;
+        const remainderPaymentAmount = amountAlreadyPaid > 0
+          ? Math.max(orderTotal - amountAlreadyPaid, 0.01)
+          : orderTotal;
+        const amountPaidToDate = amountAlreadyPaid > 0
+          ? amountAlreadyPaid.toFixed(2)
+          : undefined;
+        const attemptId = createBankfulAttemptId(args.sessionId, args.sessionVersion);
+        const orderId = dependencies.createOrderId();
+        const accessKey = dependencies.createAccessKey();
+        const carryoverRootOrderId =
+          carryoverContext.carryoverRootOrderId || orderId;
+        const session = await dependencies.optionalSession();
+        const userId = session?.user?.id ?? null;
+        const nowIso = dependencies.nowIso();
+        const shippingService = mapShippingService(
+          selectedServiceForOrder,
+          orderCurrencyCode,
+        );
+        const totals: CheckoutOrderRecord['totals'] = {
+          subtotalAmount: {
+            amount: orderSubtotalAmount.toFixed(2),
+            currencyCode: orderCurrencyCode,
+          },
+          discountAmount: {
+            amount: orderDiscountTotal.toFixed(2),
+            currencyCode: orderCurrencyCode,
+          },
+          discountCode: appliedDiscountCode,
+          discounts: pricing.discounts?.length ? pricing.discounts : undefined,
+          taxAmount: {
+            amount: orderTaxTotal.toFixed(2),
+            currencyCode: orderCurrencyCode,
+          },
+          ...buildLandedCostTotalFields({
+            orderLandedCostTotal,
+            currencyCode: orderCurrencyCode,
+            landedCost,
+          }),
+          totalAmount: {
+            amount: orderTotal.toFixed(2),
+            currencyCode: orderCurrencyCode,
+          },
+          shippingAmount: {
+            amount: orderShipmentTotal.toFixed(2),
+            currencyCode: orderCurrencyCode,
+          },
+          shippingThresholdAmount: {
+            amount: getFreeShippingThresholdForCurrency(orderCurrencyCode).toFixed(2),
+            currencyCode: orderCurrencyCode,
+          },
+          shippingStatus: orderShipmentTotal <= 0.009 ? 'free' : 'quoted',
+        };
+
+        await dependencies.createBankfulPaymentAttempt({
+          attemptId,
+          checkoutSessionId: args.sessionId,
+          checkoutSessionVersion: args.sessionVersion,
+          cartId: fallbackCartId,
+          email: args.shippingAddress.email,
+          amount: remainderPaymentAmount.toFixed(2),
+          currencyCode: orderCurrencyCode,
+          customer: {
+            firstName: args.shippingAddress.firstName,
+            lastName: args.shippingAddress.lastName,
+            email: args.shippingAddress.email,
+            phone: args.shippingAddress.phone,
+          },
+          shippingAddress: args.shippingAddress,
+          shippingService,
+          lines,
+          totals,
+          swell: {
+            accountId: account.id,
+            cartId: ratedCart.id,
+          },
+        });
+
+        const claimedAttempt =
+          await dependencies.claimBankfulPaymentAttemptCapture(attemptId);
+        if (!claimedAttempt) {
+          throw apiError.conflict(
+            'This card payment is already being processed. Refresh the checkout before trying again.',
+            { code: 'bankful_attempt_in_progress', attemptId },
+          );
+        }
+
+        let bankful: BankfulTransactionResponse;
+        try {
+          bankful = await dependencies.createBankfulSale({
+            amount: remainderPaymentAmount.toFixed(2),
+            currency: orderCurrencyCode,
+            xtlOrderId: attemptId,
+            card: args.card,
+            customer: {
+              firstName: args.shippingAddress.firstName,
+              lastName: args.shippingAddress.lastName,
+              email: args.shippingAddress.email,
+              phone: args.shippingAddress.phone,
+            },
+            billingAddress: {
+              address1: args.shippingAddress.address1,
+              city: args.shippingAddress.city,
+              province: args.shippingAddress.province,
+              postalCode: args.shippingAddress.postalCode,
+              country: args.shippingAddress.country,
+            },
+          });
+        } catch (captureError) {
+          await dependencies.updateBankfulPaymentAttempt(attemptId, {
+            status: 'capture_unknown',
+            latestError:
+              captureError instanceof Error
+                ? captureError.message
+                : 'Bankful capture failed before a trusted response was received.',
+          });
+          throw captureError;
+        }
+        const bankfulSnapshot = bankfulResponseSnapshot(bankful);
+        const bankfulStatus = mapBankfulStatus(bankful.statusName);
+
+        if (bankfulStatus !== 'paid') {
+          await dependencies.updateBankfulPaymentAttempt(attemptId, {
+            status:
+              bankfulStatus === 'pending'
+                ? 'pending'
+                : bankfulStatus === 'declined'
+                  ? 'declined'
+                  : 'failed',
+            bankful: bankfulSnapshot,
+            latestError:
+              bankful.errorMessage ||
+              bankful.processorAdvice ||
+              bankful.serviceAdvice ||
+              bankful.apiAdvice ||
+              'Bankful did not approve the card transaction.',
+          });
+
+          throw apiError.badRequest(
+            bankfulStatus === 'pending'
+              ? 'Your card payment is pending review. Contact support with your checkout email if it does not update.'
+              : bankful.errorMessage || 'Your card was declined. Use a different card or payment method.',
+            {
+              code: `bankful_${bankfulStatus}`,
+              attemptId,
+            },
+          );
+        }
+
+        await dependencies.updateBankfulPaymentAttempt(attemptId, {
+          status: 'paid',
+          bankful: bankfulSnapshot,
+          latestError: null,
+        });
+
+        let swellOrder: Awaited<ReturnType<typeof dependencies.convertSwellCartToOrder>> | null = null;
+        try {
+          swellOrder = await dependencies.convertSwellCartToOrder(ratedCart.id);
+          swellOrderId = swellOrder.id;
+          temporaryCartId = undefined;
+
+          const cardDigits = args.card.number.replace(/\D/g, '');
+          const bankfulOrderRecord = buildBankfulOrderRecord({
+            orderId,
+            accessKey,
+            cartId: fallbackCartId,
+            userId,
+            swellAccountId: account.id,
+            swellCartId: ratedCart.id,
+            swellOrderId: swellOrder.id,
+            swellOrderNumber: swellOrder.number,
+            currencyCode: orderCurrencyCode,
+            lines,
+            shippingAddress: args.shippingAddress,
+            shippingService,
+            orderSubtotal: orderSubtotalAmount,
+            orderDiscountTotal,
+            discountCode: appliedDiscountCode,
+            discounts: pricing.discounts,
+            orderTaxTotal,
+            orderGrandTotal: orderTotal,
+            orderShipmentTotal,
+            orderLandedCostTotal,
+            landedCost,
+            attemptId,
+            bankful,
+            cardLast4: cardDigits.slice(-4) || null,
+            amountPaidToDate,
+            attemptAmount: remainderPaymentAmount.toFixed(2),
+            carryoverRootOrderId,
+            nowIso,
+          });
+
+          const checkoutOrder = await dependencies.saveCheckoutOrder({
+            ...bankfulOrderRecord,
+            affiliate: affiliateData,
+            promoter: promoterData,
+          });
+          checkoutOrderId = checkoutOrder.orderId;
+          swellOrderId = undefined;
+
+          await dependencies.updateBankfulPaymentAttempt(attemptId, {
+            status: 'order_created',
+            orderId: checkoutOrder.orderId,
+            swell: {
+              accountId: account.id,
+              cartId: ratedCart.id,
+              orderId: swellOrder.id,
+              orderNumber: swellOrder.number,
+            },
+            latestError: null,
+          }).catch((attemptUpdateError) => {
+            console.error('Unable to link Bankful attempt to checkout order:', attemptUpdateError);
+          });
+
+          await supersedeCarryoverChainOrders({
+            checkoutOrder,
+            chainOrders: carryoverContext.chainOrders,
+            dependencies,
+          }).catch((supersedeError) => {
+            console.error('Unable to supersede Bankful carryover chain orders:', supersedeError);
+          });
+
+          await replaceSupersededOpenOrders({
+            checkoutOrder,
+            customerEmail: args.shippingAddress.email,
+            excludedOrderIds: new Set(
+              carryoverContext.chainOrders.map((order) => order.orderId),
+            ),
+            dependencies,
+          }).catch((replaceError) => {
+            console.error('Unable to replace open Bankful checkout orders:', replaceError);
+          });
+
+          const processedOrder =
+            (await dependencies
+              .runSuccessfulOrderProcessing(checkoutOrder.orderId)
+              .catch((processingError) => {
+                console.error('Unable to run Bankful successful order processing:', processingError);
+                return null;
+              })) ||
+            checkoutOrder;
+
+          const publicRelatedOrders =
+            await dependencies
+              .findCheckoutOrdersByCartId(fallbackCartId)
+              .catch((relatedOrdersError) => {
+                console.error('Unable to load related Bankful checkout orders:', relatedOrdersError);
+                return [processedOrder];
+              });
+
+          const initiationTelemetry = {
+            orderId,
+            userId,
+            currencyCode,
+            orderTotal: orderTotal.toFixed(2),
+            itemCount,
+            paymentProvider: 'bankful' as const,
+            paymentMethod: 'card' as const,
+            affiliateCode: resolvedAffiliate?.code ?? null,
+            affiliateSource,
+          };
+
+          dependencies
+            .sendCheckoutPaymentInitiatedEvent({
+              ...initiationTelemetry,
+              customerEmail: args.shippingAddress.email,
+            })
+            .catch(() => {});
+          dependencies
+            .trackCheckoutPaymentInitiated(initiationTelemetry)
+            .catch(() => {});
+
+          return {
+            accessKey,
+            order: toPublicCheckoutOrderWithCarryover(
+              processedOrder,
+              publicRelatedOrders,
+            ) satisfies CheckoutOrderPublic,
+          };
+        } catch (orderCreationError) {
+          const message =
+            orderCreationError instanceof Error
+              ? orderCreationError.message
+              : 'Unable to create order after approved Bankful payment.';
+          if (!checkoutOrderId) {
+            await dependencies.updateBankfulPaymentAttempt(attemptId, {
+              status: 'paid_order_creation_failed',
+              bankful: bankfulSnapshot,
+              swell: swellOrder
+                ? {
+                    accountId: account.id,
+                    cartId: ratedCart.id,
+                    orderId: swellOrder.id,
+                    orderNumber: swellOrder.number,
+                  }
+                : undefined,
+              latestError: message,
+            });
+          }
+          throw orderCreationError;
+        }
+      }
+
       const swellOrder = await dependencies.convertSwellCartToOrder(
         ratedCart.id,
       );
@@ -1430,249 +1986,8 @@ export function createFinalizeCheckoutSession(
       const accessKey = dependencies.createAccessKey();
       const carryoverRootOrderId =
         carryoverContext.carryoverRootOrderId || orderId;
-      const shieldClimbCallbackToken =
-        dependencies.createShieldClimbCallbackToken();
       const session = await dependencies.optionalSession();
       const userId = session?.user?.id ?? null;
-
-      if (args.paymentMethod === 'card') {
-        const publicCallbackOrigin = getPublicCallbackOrigin(requestUrl);
-
-        if (!publicCallbackOrigin) {
-          throw apiError.badRequest(
-            'Card checkout requires a public callback URL. Set `SHIELDCLIMB_CALLBACK_BASE_URL`, `NEXT_PUBLIC_SITE_URL`, or `SITE_URL` to your public app origin before using ShieldClimb from local development.',
-            { code: 'shieldclimb_callback_unavailable' },
-          );
-        }
-
-        const initializingOrder = await dependencies.saveCheckoutOrder({
-          ...buildShieldClimbOrderRecord({
-            orderId,
-            accessKey,
-            cartId: fallbackCartId,
-            userId,
-            swellAccountId: account.id,
-            swellCartId: ratedCart.id,
-            swellOrderId: swellOrder.id,
-            swellOrderNumber: swellOrder.number,
-            currencyCode: orderCurrencyCode,
-            lines,
-            shippingAddress: args.shippingAddress,
-            shippingService: mapShippingService(
-              selectedServiceForOrder,
-              orderCurrencyCode,
-            ),
-            orderSubtotal: orderSubtotalAmount,
-            orderDiscountTotal,
-            discountCode: appliedDiscountCode,
-            discounts: pricing.discounts,
-            orderTaxTotal,
-            orderGrandTotal: orderTotal,
-            orderShipmentTotal,
-            orderLandedCostTotal,
-            landedCost,
-            walletId: 'pending',
-            addressIn: '',
-            polygonAddressIn: '',
-            ipnToken: '',
-            callbackToken: shieldClimbCallbackToken,
-            redirectUrl: '',
-            paymentStatus: 'initializing',
-            amountPaidToDate,
-            attemptAmount: remainderPaymentAmount.toFixed(2),
-            carryoverRootOrderId,
-            nowIso: dependencies.nowIso(),
-          }),
-          affiliate: affiliateData,
-          promoter: promoterData,
-        });
-        checkoutOrderId = initializingOrder.orderId;
-
-        const callbackUrl = new URL(
-          '/api/providers/shieldclimb/callback',
-          publicCallbackOrigin,
-        );
-        callbackUrl.searchParams.set('orderId', orderId);
-        callbackUrl.searchParams.set('callbackToken', shieldClimbCallbackToken);
-
-        let paymentAmount = remainderPaymentAmount;
-        if (fiatCurrency !== 'usd') {
-          const converted = await dependencies.convertToUsd({
-            amount: remainderPaymentAmount,
-            fromCurrency: fiatCurrency.toUpperCase(),
-          });
-          paymentAmount = Number(converted.value_coin);
-        }
-
-        if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
-          throw apiError.providerUnavailable(
-            'ShieldClimb returned an invalid payment amount.',
-            { provider: 'shieldclimb', operation: 'convert-to-usd' },
-            false,
-          );
-        }
-
-        if (!isCardCheckoutMinimumMet(paymentAmount)) {
-          throw apiError.badRequest(getCardCheckoutMinimumMessage(), {
-            code: 'card_minimum_not_met',
-            totalUsd: paymentAmount.toFixed(2),
-          });
-        }
-
-        const expectedValueCoin = paymentAmount.toFixed(2);
-
-        const scWallet = await dependencies.createWalletForOrder({
-          callbackUrl: callbackUrl.toString(),
-        });
-        const shieldClimbSessionId = createShieldClimbSessionId(scWallet.ipn_token);
-
-        const redirectUrl = dependencies.buildShieldClimbPaymentUrl({
-          addressIn: scWallet.address_in,
-          amount: paymentAmount,
-          email: args.shippingAddress.email,
-          currency: 'USD',
-        });
-
-        await dependencies.updateSwellOrder(swellOrder.id, {
-          billing: {
-            ...(swellOrder.billing || {}),
-            method: manualMethod,
-            intent: {
-              provider: 'shieldclimb',
-              session_id: shieldClimbSessionId,
-              ipn_token: scWallet.ipn_token,
-              status: 'unpaid',
-            },
-          },
-          metadata: {
-            ...(swellOrder.metadata || {}),
-            checkout_reference: orderId,
-            coupon_code: appliedDiscountCode || null,
-            pricing: pricingMetadata,
-            landed_cost: landedCost ?? null,
-            shieldclimb: {
-              session_id: shieldClimbSessionId,
-              ipn_token: scWallet.ipn_token,
-              polygon_address_in: scWallet.polygon_address_in,
-              expected_value_coin: expectedValueCoin,
-              payment_currency: 'USD',
-              status: 'unpaid',
-            },
-            affiliate: resolvedAffiliate
-              ? {
-                  ...affiliateData,
-                  paymentProvider: 'shieldclimb',
-                  status: 'pending',
-                }
-              : null,
-            promoter: promoterData
-              ? {
-                  ...promoterData,
-                  paymentProvider: 'shieldclimb',
-                  status: 'pending',
-                }
-              : null,
-          },
-        });
-
-        const scOrderRecord = buildShieldClimbOrderRecord({
-            orderId,
-            accessKey,
-            cartId: fallbackCartId,
-            userId,
-            swellAccountId: account.id,
-            swellCartId: ratedCart.id,
-            swellOrderId: swellOrder.id,
-            swellOrderNumber: swellOrder.number,
-            currencyCode: orderCurrencyCode,
-            lines,
-            shippingAddress: args.shippingAddress,
-            shippingService: mapShippingService(
-              selectedServiceForOrder,
-              orderCurrencyCode,
-            ),
-            orderSubtotal: orderSubtotalAmount,
-            orderDiscountTotal,
-            discountCode: appliedDiscountCode,
-            discounts: pricing.discounts,
-            orderTaxTotal,
-            orderGrandTotal: orderTotal,
-            orderShipmentTotal,
-            orderLandedCostTotal,
-            landedCost,
-            walletId: shieldClimbSessionId,
-            addressIn: scWallet.address_in,
-            polygonAddressIn: scWallet.polygon_address_in,
-            ipnToken: scWallet.ipn_token,
-            callbackUrl: scWallet.callback_url,
-            callbackToken: shieldClimbCallbackToken,
-            redirectUrl,
-            expectedValueCoin,
-            paymentCurrency: 'USD',
-            paymentStatus: 'unpaid',
-            amountPaidToDate,
-            attemptAmount: remainderPaymentAmount.toFixed(2),
-            carryoverRootOrderId,
-            nowIso: dependencies.nowIso(),
-          });
-
-        const checkoutOrder = await dependencies.saveCheckoutOrder({
-          ...scOrderRecord,
-          affiliate: affiliateData,
-          promoter: promoterData,
-        });
-        checkoutOrderId = checkoutOrder.orderId;
-
-        await supersedeCarryoverChainOrders({
-          checkoutOrder,
-          chainOrders: carryoverContext.chainOrders,
-          dependencies,
-        });
-
-        await replaceSupersededOpenOrders({
-          checkoutOrder,
-          customerEmail: args.shippingAddress.email,
-          excludedOrderIds: new Set(
-            carryoverContext.chainOrders.map((order) => order.orderId),
-          ),
-          dependencies,
-        });
-
-        const publicRelatedOrders = await dependencies.findCheckoutOrdersByCartId(
-          fallbackCartId,
-        );
-
-        const initiationTelemetry = {
-          orderId,
-          userId,
-          currencyCode,
-          orderTotal: orderTotal.toFixed(2),
-          itemCount,
-          paymentProvider: 'shieldclimb' as const,
-          paymentMethod: 'card' as const,
-          affiliateCode: resolvedAffiliate?.code ?? null,
-          affiliateSource,
-        };
-
-        dependencies
-          .sendCheckoutPaymentInitiatedEvent({
-            ...initiationTelemetry,
-            customerEmail: args.shippingAddress.email,
-          })
-          .catch(() => {});
-        dependencies
-          .trackCheckoutPaymentInitiated(initiationTelemetry)
-          .catch(() => {});
-
-        return {
-          accessKey,
-          redirectUrl,
-          order: toPublicCheckoutOrderWithCarryover(
-            checkoutOrder,
-            publicRelatedOrders,
-          ) satisfies CheckoutOrderPublic,
-        };
-      }
 
       if (args.paymentMethod === 'interac') {
         const expectedSenderEmail = args.interacSenderEmail?.trim();
@@ -2105,6 +2420,11 @@ export const finalizeCheckoutSession = createFinalizeCheckoutSession({
   getNowPaymentsEstimate,
   getNowPaymentsMinimumAmount,
   createNowPaymentsPayment,
+  createBankfulPaymentAttempt,
+  claimBankfulPaymentAttemptCapture,
+  updateBankfulPaymentAttempt,
+  createBankfulSale,
+  runSuccessfulOrderProcessing,
   sendCheckoutPaymentInitiatedEvent,
   trackCheckoutPaymentInitiated,
 });

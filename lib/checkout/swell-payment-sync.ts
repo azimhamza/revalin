@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { CheckoutOrderRecord } from '@/lib/checkout/types';
-import { isInteracPayment, isShieldClimbPayment } from '@/lib/checkout/types';
+import { isBankfulPayment, isInteracPayment, isShieldClimbPayment } from '@/lib/checkout/types';
 import { createSwellOrderPayment, getSwellManualPaymentMethod, updateSwellOrder } from '@/lib/checkout/swell-order-management';
 import type { NowPaymentsPaymentResponse } from '@/lib/checkout/nowpayments';
 import { isNowPaymentsPayment } from '@/lib/checkout/types';
@@ -176,6 +176,92 @@ export async function syncShieldClimbOrderToSwell(order: CheckoutOrderRecord) {
   // Update order with swell payment ID
   await updateCheckoutOrder(order.orderId, current => {
     if (!isShieldClimbPayment(current.payment)) return current;
+    return {
+      ...current,
+      payment: {
+        ...current.payment,
+        swellPaymentId: swellPayment.id,
+      },
+    };
+  });
+
+  return swellPayment;
+}
+
+export async function syncBankfulOrderToSwell(order: CheckoutOrderRecord) {
+  if (!isBankfulPayment(order.payment)) {
+    return null;
+  }
+
+  const manualMethod = getSwellManualPaymentMethod('card');
+
+  await updateSwellOrder(order.swell.orderId, {
+    // Suppress Swell's built-in emails — all emails sent via Loops.
+    $notify: false,
+    billing: {
+      method: manualMethod,
+      intent: {
+        provider: 'bankful',
+        attempt_id: order.payment.attemptId,
+        transaction_record_id: order.payment.transactionRecordId,
+        transaction_order_id: order.payment.transactionOrderId,
+        status: order.payment.status,
+      },
+    },
+    metadata: {
+      checkout_reference: order.orderId,
+      pricing: buildCheckoutPricingMetadata({
+        currencyCode: order.currencyCode,
+        subtotalAmount: order.totals.subtotalAmount.amount,
+        shippingAmount: order.totals.shippingAmount?.amount,
+        taxAmount: order.totals.taxAmount?.amount,
+        landedCostAmount: order.totals.landedCostAmount?.amount,
+        totalAmount: order.totals.totalAmount.amount,
+        discounts: order.totals.discounts,
+        discountAmount: order.totals.discountAmount?.amount,
+        discountCode: order.totals.discountCode,
+        paymentMethod: 'card',
+      }),
+      bankful: {
+        attempt_id: order.payment.attemptId,
+        request_action: order.payment.requestAction ?? null,
+        bankful_status: order.payment.bankfulStatus ?? null,
+        transaction_request_id: order.payment.transactionRequestId ?? null,
+        transaction_record_id: order.payment.transactionRecordId ?? null,
+        transaction_order_id: order.payment.transactionOrderId ?? null,
+        xtl_order_id: order.payment.xtlOrderId ?? null,
+        transaction_value: order.payment.transactionValue ?? null,
+        transaction_currency: order.payment.transactionCurrency ?? null,
+        captured_at: order.payment.capturedAt ?? null,
+      },
+    },
+  });
+
+  if (order.payment.status !== 'paid') {
+    return null;
+  }
+
+  if (order.payment.swellPaymentId) {
+    return null;
+  }
+
+  const swellPayment = await createSwellOrderPayment({
+    account_id: order.swell.accountId,
+    order_id: order.swell.orderId,
+    amount: Number(order.totals.totalAmount.amount),
+    currency: order.currencyCode,
+    method: manualMethod,
+    transaction_id:
+      order.payment.transactionRecordId ||
+      order.payment.transactionRequestId ||
+      order.payment.attemptId,
+    authorized: true,
+    captured: true,
+  });
+
+  await updateCheckoutOrder(order.orderId, current => {
+    if (!isBankfulPayment(current.payment)) return current;
+    if (current.payment.swellPaymentId) return current;
     return {
       ...current,
       payment: {

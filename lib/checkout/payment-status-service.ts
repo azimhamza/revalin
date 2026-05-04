@@ -1,6 +1,7 @@
 import { apiError } from '@/lib/api/errors';
 import { SHIELDCLIMB_PUBLIC_POLLING_ID } from '@/lib/checkout/constants';
 import { getNowPaymentsPayment } from '@/lib/checkout/nowpayments';
+import { getBankfulTransactionStatus, mapBankfulStatus } from '@/lib/checkout/bankful';
 import { getCheckoutOrder } from '@/lib/checkout/order-store';
 import { buildPublicCheckoutOrder } from '@/lib/checkout/public-order';
 import { applyVerifiedPaymentStatus } from '@/lib/checkout/payment-lifecycle';
@@ -8,6 +9,7 @@ import {
   isNowPaymentsPayment,
   isInteracPayment,
   isShieldClimbPayment,
+  isBankfulPayment,
 } from '@/lib/checkout/types';
 import { verifyAndFinalizeShieldClimbPayment } from '@/lib/checkout/shieldclimb-payment-verification';
 import { sendPaymentFailedEvent } from '@/lib/email/marketing-events';
@@ -88,6 +90,56 @@ export async function refreshCheckoutPaymentStatus(args: {
           console.error('Payment failed event error:', error),
         );
       }
+
+      return buildPublicCheckoutOrder(result.order || order);
+    }
+
+    if (isBankfulPayment(order.payment)) {
+      if (
+        args.paymentId !== order.payment.transactionRecordId &&
+        args.paymentId !== order.payment.attemptId
+      ) {
+        throw apiError.notFound('Checkout session not found.');
+      }
+
+      if (!order.payment.transactionRecordId) {
+        return buildPublicCheckoutOrder(order);
+      }
+
+      const payment = await getBankfulTransactionStatus(
+        order.payment.transactionRecordId,
+      );
+      const targetStatus = mapBankfulStatus(payment.statusName);
+      const result = await applyVerifiedPaymentStatus({
+        orderId: args.orderId,
+        provider: 'bankful',
+        targetStatus,
+        source: 'bankful_poll',
+        paymentUpdater: (current) => {
+          if (!isBankfulPayment(current.payment)) {
+            return current.payment;
+          }
+
+          return {
+            ...current.payment,
+            status: targetStatus,
+            bankfulStatus: payment.statusName,
+            requestAction: payment.requestAction,
+            transactionValue: payment.value,
+            transactionRequestId: payment.requestId,
+            transactionRecordId: payment.recordId,
+            transactionOrderId: payment.orderId,
+            xtlOrderId: payment.xtlOrderId,
+            transactionCurrency: payment.currency,
+            bankfulTimestamp: payment.timestamp,
+            apiAdvice: payment.apiAdvice,
+            serviceAdvice: payment.serviceAdvice,
+            processorAdvice: payment.processorAdvice,
+            errorMessage: payment.errorMessage,
+            updatedAt: new Date().toISOString(),
+          };
+        },
+      });
 
       return buildPublicCheckoutOrder(result.order || order);
     }

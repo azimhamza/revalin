@@ -44,6 +44,7 @@ import type {
   CheckoutShippingAddress,
   CheckoutShippingService,
   InteracPaymentData,
+  BankfulPublicPaymentData,
   ShieldClimbPublicPaymentData,
   NowPaymentsPublicPaymentData,
 } from '@/lib/checkout/types';
@@ -545,9 +546,14 @@ function isInteracOrder(payment: CheckoutOrderPublic['payment']): payment is Int
   return payment.provider === 'interac';
 }
 
+function isBankfulOrder(payment: CheckoutOrderPublic['payment']): payment is BankfulPublicPaymentData {
+  return payment.provider === 'bankful';
+}
+
 function getPollingId(payment: CheckoutOrderPublic['payment']): string | undefined {
   if (isShieldClimbOrder(payment)) return SHIELDCLIMB_PUBLIC_POLLING_ID;
   if (isNowPaymentsOrder(payment)) return payment.paymentId;
+  if (isBankfulOrder(payment)) return payment.transactionRecordId || payment.attemptId;
   if (isInteracOrder(payment)) return payment.messageCode || 'interac';
   return undefined;
 }
@@ -557,6 +563,36 @@ function formatTicker(value: string) {
   if (normalized === 'USDTTRC20') return 'USDT TRC20';
   if (normalized === 'USDCMATIC') return 'USDC Polygon';
   return normalized;
+}
+
+function normalizeCardNumberInput(value: string) {
+  return value
+    .replace(/\D/g, '')
+    .slice(0, 19)
+    .replace(/(.{4})/g, '$1 ')
+    .trim();
+}
+
+function normalizeCardExpiryInput(value: string) {
+  const digits = value.replace(/\D/g, '').slice(0, 4);
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+}
+
+function parseCardExpiry(value: string) {
+  const digits = value.replace(/\D/g, '');
+  const month = digits.slice(0, 2);
+  const year = digits.slice(2, 4);
+  if (month.length < 1 || year.length !== 2) return null;
+  const monthNumber = Number(month);
+  if (!Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 12) {
+    return null;
+  }
+
+  return {
+    expiryMonth: month.padStart(2, '0'),
+    expiryYear: year,
+  };
 }
 
 function normalizeCarrierBrandKey(value?: string | null) {
@@ -982,6 +1018,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const [interacSecurityAnswer, setInteracSecurityAnswer] = useState('');
   const [isSubmittingInterac, setIsSubmittingInterac] = useState(false);
   const [isUploadingInteracScreenshot, setIsUploadingInteracScreenshot] = useState(false);
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
   const [discountCode, setDiscountCode] = useState(initialDiscountCode);
   const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
   const [ageVerified, setAgeVerified] = useState(false);
@@ -2546,7 +2585,12 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     shouldAutoApplyDiscount,
   ]);
 
-  const submitCheckoutPayment = useCallback(async () => {
+  const submitCheckoutPayment = useCallback(async (cardInput?: {
+    number: string;
+    cvv: string;
+    expiryMonth: string;
+    expiryYear: string;
+  }) => {
     if (!selectedShippingServiceId) {
       setError('Select a shipping method before creating the payment.');
       return;
@@ -2585,6 +2629,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
             },
             body: JSON.stringify({
               ...finalizePayload,
+              ...(paymentMethod === 'card' && cardInput ? { card: cardInput } : {}),
               sessionKey: targetSession.sessionKey,
               version: targetSession.version,
             }),
@@ -2672,6 +2717,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       } else {
         setSourceWalletAddress('');
       }
+      if (isBankfulOrder(data.order.payment)) {
+        setCardNumber('');
+        setCardExpiry('');
+        setCardCvv('');
+      }
       if (data.order.totals.discountCode) {
         setDiscountCode(data.order.totals.discountCode);
       }
@@ -2680,8 +2730,6 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
       updateCheckoutUrl(data.order.orderId, data.accessKey);
 
-      // ShieldClimb card payments open in a separate tab so the
-      // Revalin checkout page can stay visible and auto-update.
       if (data.redirectUrl) {
         setIsCardCheckoutOpen(false);
 
@@ -2759,22 +2807,22 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const continueToCardCheckout = useCallback(async () => {
     if (isCreatingPayment) return;
 
-    if (
-      shieldClimbPaymentWindow.current &&
-      !shieldClimbPaymentWindow.current.closed
-    ) {
-      shieldClimbPaymentWindow.current.close();
-    }
+    const parsedExpiry = parseCardExpiry(cardExpiry);
+    const normalizedNumber = cardNumber.replace(/\D/g, '');
+    const normalizedCvv = cardCvv.replace(/\D/g, '');
 
-    const paymentWindow = window.open('', '_blank');
-    if (!paymentWindow) {
-      setError('Allow pop-ups for Revalin so we can open the secure payment page in a new tab.');
+    if (normalizedNumber.length < 12 || !parsedExpiry || normalizedCvv.length < 3) {
+      setError('Enter valid card number, expiry, and CVV.');
       return;
     }
 
-    shieldClimbPaymentWindow.current = paymentWindow;
-    await submitCheckoutPayment();
-  }, [isCreatingPayment, submitCheckoutPayment]);
+    await submitCheckoutPayment({
+      number: normalizedNumber,
+      cvv: normalizedCvv,
+      expiryMonth: parsedExpiry.expiryMonth,
+      expiryYear: parsedExpiry.expiryYear,
+    });
+  }, [cardCvv, cardExpiry, cardNumber, isCreatingPayment, submitCheckoutPayment]);
 
   const refreshStatus = async () => {
     if (!pollingId || !checkoutSession) return;
@@ -4473,7 +4521,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         </div>
       </div>
 
-      {/* ── Card checkout info overlay ── */}
+      {/* ── Card checkout overlay ── */}
       <Dialog open={isCardCheckoutOpen} onOpenChange={() => {}}>
         <DialogContent className="max-w-[380px] gap-0 rounded-[26px] border border-border/70 bg-card p-0 shadow-[0_20px_48px_rgba(11,46,47,0.08)] [&>button]:hidden">
           <DialogHeader className="sr-only">
@@ -4487,35 +4535,58 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                 <Lock className="size-[18px] text-[#F4F1EA]" />
               </div>
               <div>
-                <p className="text-[15px] font-semibold tracking-tight text-[#0B2E2F]">Connecting to payment</p>
-                <p className="text-xs text-foreground/50">Secure hosted checkout</p>
+                <p className="text-[15px] font-semibold tracking-tight text-[#0B2E2F]">Card payment</p>
+                <p className="text-xs text-foreground/50">Processed securely by Bankful</p>
               </div>
             </div>
             <div className="mt-4 rounded-xl border border-border/60 bg-background px-4 py-3.5">
-              <p className="text-[13px] leading-5 text-foreground/70">We&apos;ll open the secure payment page in a <span className="font-medium text-foreground">new tab</span>. Keep this tab open so Revalin can confirm your payment and finish the order automatically.</p>
+              <p className="text-[13px] leading-5 text-foreground/70">Your order is created only after the card is approved. Card number, expiry, and CVV are sent directly to the payment processor and are not stored.</p>
             </div>
           </div>
 
-          {/* Info items */}
+          {/* Card fields */}
           <div className="px-6 pb-5">
-            <div className="divide-y divide-border/50 rounded-xl border border-border/60 bg-background">
-              <div className="flex items-start gap-3 px-4 py-3.5">
-                <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F]">
-                  <CreditCard className="size-3 text-[#F4F1EA]" />
-                </div>
-                <p className="text-[13px] leading-5 text-foreground/70">Your card details stay with the payment provider and are <span className="font-medium text-foreground">never stored by Revalin</span>.</p>
+            <div className="space-y-3">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/50">Card number</span>
+                <Input
+                  inputMode="numeric"
+                  autoComplete="cc-number"
+                  value={cardNumber}
+                  onChange={event => setCardNumber(normalizeCardNumberInput(event.target.value))}
+                  placeholder="1234 1234 1234 1234"
+                  className="h-11 rounded-xl border-border bg-background"
+                />
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/50">Expiry</span>
+                  <Input
+                    inputMode="numeric"
+                    autoComplete="cc-exp"
+                    value={cardExpiry}
+                    onChange={event => setCardExpiry(normalizeCardExpiryInput(event.target.value))}
+                    placeholder="MM/YY"
+                    className="h-11 rounded-xl border-border bg-background"
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/50">CVV</span>
+                  <Input
+                    inputMode="numeric"
+                    autoComplete="cc-csc"
+                    value={cardCvv}
+                    onChange={event => setCardCvv(event.target.value.replace(/\D/g, '').slice(0, 4))}
+                    placeholder="123"
+                    className="h-11 rounded-xl border-border bg-background"
+                  />
+                </label>
               </div>
-              <div className="flex items-start gap-3 px-4 py-3.5">
-                <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F]">
-                  <UserCheck className="size-3 text-[#F4F1EA]" />
-                </div>
-                <p className="text-[13px] leading-5 text-foreground/70">The provider may ask to <span className="font-medium text-foreground">verify your identity</span> — this is a standard security step.</p>
-              </div>
-              <div className="flex items-start gap-3 px-4 py-3.5">
-                <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F]">
-                  <RefreshCw className="size-3 text-[#F4F1EA]" />
-                </div>
-                <p className="text-[13px] leading-5 text-foreground/70">If you close the payment tab and come back later, Revalin will try to <span className="font-medium text-foreground">resume and re-check</span> your pending checkout automatically.</p>
+              <div className="flex items-start gap-2 rounded-xl border border-border/60 bg-background px-3.5 py-3">
+                <Lock className="mt-0.5 size-3.5 shrink-0 text-[#0B2E2F]" />
+                <p className="text-[12px] leading-5 text-foreground/60">
+                  Revalin stores only the Bankful transaction IDs and card last four digits after approval.
+                </p>
               </div>
             </div>
           </div>
@@ -4536,7 +4607,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                   </>
                 ) : (
                   <>
-                    Continue to secure payment
+                    Pay securely
                     <ArrowRight className="size-4" />
                   </>
                 )}

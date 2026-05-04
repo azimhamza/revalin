@@ -3,6 +3,7 @@ import {
   BellRing,
   BookOpen,
   CreditCard,
+  FileText,
   Handshake,
   LayoutDashboard,
   Landmark,
@@ -55,6 +56,12 @@ export const ADMIN_NAVIGATION_ITEMS: AdminNavigationItem[] = [
     href: "/admin/interac",
     description: "Review e-Transfer matches, screenshots, and exceptions.",
     icon: Landmark,
+  },
+  {
+    title: "Invoices",
+    href: "/admin/invoices",
+    description: "Review Bankful card invoices, captures, and failed order promotions.",
+    icon: FileText,
   },
   {
     title: "Payment Diagnostics",

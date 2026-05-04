@@ -26,7 +26,9 @@ export const POST = createApiRoute({
     }
 
     const targetStatus =
-      order.payment.provider === 'shieldclimb' || order.payment.provider === 'interac'
+      order.payment.provider === 'shieldclimb' ||
+      order.payment.provider === 'bankful' ||
+      order.payment.provider === 'interac'
         ? 'paid'
         : 'finished';
 

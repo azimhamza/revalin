@@ -5,7 +5,12 @@ import { apiError } from '@/lib/api/errors';
 import { getCheckoutOrder } from '@/lib/checkout/order-store';
 import { buildPublicCheckoutOrder } from '@/lib/checkout/public-order';
 import { applyVerifiedPaymentStatus } from '@/lib/checkout/payment-lifecycle';
-import { isInteracPayment, isNowPaymentsPayment, isShieldClimbPayment } from '@/lib/checkout/types';
+import {
+  isBankfulPayment,
+  isInteracPayment,
+  isNowPaymentsPayment,
+  isShieldClimbPayment,
+} from '@/lib/checkout/types';
 import { sendPaymentFailedEvent } from '@/lib/email/marketing-events';
 
 const bodySchema = z.object({
@@ -25,17 +30,30 @@ const handler = createApiRoute({
 
     const isNowPayments = isNowPaymentsPayment(order.payment);
     const isShieldClimb = isShieldClimbPayment(order.payment);
+    const isBankful = isBankfulPayment(order.payment);
     const isInterac = isInteracPayment(order.payment);
 
-    if (!isNowPayments && !isShieldClimb && !isInterac) {
+    if (!isNowPayments && !isShieldClimb && !isBankful && !isInterac) {
       throw apiError.badRequest('Order has an unknown payment provider.');
     }
 
-    const provider = isNowPayments ? 'nowpayments' : isInterac ? 'interac' : 'shieldclimb';
+    const provider = isNowPayments
+      ? 'nowpayments'
+      : isInterac
+        ? 'interac'
+        : isBankful
+          ? 'bankful'
+          : 'shieldclimb';
 
     if (body.action === 'complete') {
       const targetStatus = isNowPayments ? 'finished' : 'paid';
-      const source = isNowPayments ? 'nowpayments_poll' : isInterac ? 'interac_admin' : 'shieldclimb_poll';
+      const source = isNowPayments
+        ? 'nowpayments_poll'
+        : isInterac
+          ? 'interac_admin'
+          : isBankful
+            ? 'bankful_poll'
+            : 'shieldclimb_poll';
 
       const result = await applyVerifiedPaymentStatus({
         orderId: body.orderId,
@@ -66,7 +84,13 @@ const handler = createApiRoute({
 
     // action === 'fail'
     const targetStatus = 'failed';
-    const source = isNowPayments ? 'nowpayments_poll' : isInterac ? 'interac_admin' : 'shieldclimb_poll';
+    const source = isNowPayments
+      ? 'nowpayments_poll'
+      : isInterac
+        ? 'interac_admin'
+        : isBankful
+          ? 'bankful_poll'
+          : 'shieldclimb_poll';
 
     const result = await applyVerifiedPaymentStatus({
       orderId: body.orderId,

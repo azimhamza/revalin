@@ -5,6 +5,7 @@ type ProviderName =
   | 'shipengine'
   | 'zonos'
   | 'shieldclimb'
+  | 'bankful'
   | 'nowpayments'
   | 'loops'
   | 'blob';
@@ -22,6 +23,7 @@ const PROVIDER_TIMEOUTS: Record<ProviderName, number> = {
   shipengine: 3_000,
   zonos: 5_000,
   shieldclimb: 4_000,
+  bankful: 8_000,
   nowpayments: 4_000,
   loops: 3_000,
   blob: 4_000,
