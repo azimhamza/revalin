@@ -1,4 +1,6 @@
 import { listFulfillmentOrders } from '@/lib/checkout/fulfillment-service';
+import { getShippoConfigStatus } from '@/lib/checkout/shippo';
+import { getShippoFulfillmentSettings } from '@/lib/checkout/shippo-fulfillment-settings';
 import { FulfillmentTable, type FulfillmentTabKey } from './_components/fulfillment-table';
 
 export const metadata = {
@@ -31,11 +33,14 @@ export default async function FulfillmentPage({
   const status =
     validStatuses.find((s) => s === statusParam) || 'all';
 
-  const result = await listFulfillmentOrders({
-    status: status as Parameters<typeof listFulfillmentOrders>[0]['status'],
-    page: 1,
-    pageSize: 100,
-  });
+  const [result, shippoSettings] = await Promise.all([
+    listFulfillmentOrders({
+      status: status as Parameters<typeof listFulfillmentOrders>[0]['status'],
+      page: 1,
+      pageSize: 100,
+    }),
+    getShippoFulfillmentSettings(),
+  ]);
 
   return (
     <FulfillmentTable
@@ -43,6 +48,8 @@ export default async function FulfillmentPage({
       initialTotal={result.total}
       initialStatus={status as FulfillmentTabKey}
       isDev={isDev}
+      initialShippoSettings={shippoSettings}
+      shippoConfig={getShippoConfigStatus()}
     />
   );
 }

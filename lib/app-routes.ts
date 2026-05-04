@@ -45,6 +45,9 @@ export const ACCOUNT_ADMIN_ROUTE: NavItem = {
 export const ADMIN_NAV_ROUTES: NavItem[] = [
   { href: "/admin", label: "Overview" },
   { href: "/admin/product-notifications", label: "Restock Alerts" },
+  { href: "/admin/inventory", label: "Inventory" },
+  { href: "/admin/purchasing", label: "Purchasing" },
+  { href: "/admin/fulfillment", label: "Fulfillment" },
   { href: "/admin/interac", label: "Interac" },
   { href: "/admin/invoices", label: "Invoices" },
   { href: "/admin/payment-diagnostics", label: "Payment Diagnostics" },

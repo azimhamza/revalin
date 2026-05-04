@@ -2,7 +2,9 @@ import {
   COMPLIMENTARY_SHIPPING_ENABLED,
   getFreeShippingThresholdForCurrency,
 } from '@/lib/checkout/constants';
+import { getShippoFulfillmentSettings } from '@/lib/checkout/shippo-fulfillment-settings';
 import { quoteShipEngineRates, type ShipEngineCheckoutRate } from '@/lib/checkout/shipengine';
+import { quoteShippoRates, type ShippoCheckoutRate } from '@/lib/checkout/shippo';
 import type { CheckoutAppliedDiscount, CheckoutLandedCost, CheckoutShippingAddress } from '@/lib/checkout/types';
 import type { StorefrontCartSnapshot, SwellShipmentService } from '@/lib/checkout/swell-order-management';
 
@@ -14,9 +16,13 @@ export type CheckoutRatedService = {
   carrierCode?: string;
   serviceCode?: string;
   shipengineRateId?: string;
+  shippoRateId?: string;
+  shippoShipmentId?: string;
+  shippoCarrierAccountId?: string;
+  carrierPreferenceRank?: number;
   pickup?: boolean;
   estimatedDays?: number | null;
-  source: 'shipengine' | 'swell';
+  source: 'shipengine' | 'shippo' | 'swell';
   price: {
     amount: string;
     currencyCode: string;
@@ -52,6 +58,15 @@ const SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS =
 
 function sortServicesByPrice<T extends CheckoutRatedService>(services: T[]) {
   return [...services].sort((left, right) => Number(left.price.amount) - Number(right.price.amount));
+}
+
+function sortServicesByPreference<T extends CheckoutRatedService>(services: T[]) {
+  return [...services].sort((left, right) => {
+    const leftRank = left.carrierPreferenceRank ?? Number.POSITIVE_INFINITY;
+    const rightRank = right.carrierPreferenceRank ?? Number.POSITIVE_INFINITY;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return Number(left.price.amount) - Number(right.price.amount);
+  });
 }
 
 function getComparableEstimatedDays(service: CheckoutRatedService) {
@@ -108,6 +123,7 @@ function curateCheckoutServices(services: CheckoutRatedService[]) {
 
   const cheapest = sortedByPrice[0];
   const fastest = sortedBySpeed[0];
+  const preferred = sortServicesByPreference(sortedByPrice)[0];
   const bestValue = sortedByPrice
     .filter(service => service.id !== cheapest?.id && service.id !== fastest?.id)
     .sort((left, right) => {
@@ -118,12 +134,13 @@ function curateCheckoutServices(services: CheckoutRatedService[]) {
       return Number(left.price.amount) - Number(right.price.amount);
     })[0];
 
+  pushService(preferred, preferred?.id === cheapest?.id ? 'cheapest' : 'best_value');
   pushService(cheapest, 'cheapest');
   pushService(bestValue, 'best_value');
   pushService(fastest, 'fastest');
 
   for (const service of sortedByPrice) {
-    if (curated.length >= 3) break;
+    if (curated.length >= 4) break;
     pushService(service, undefined);
   }
 
@@ -157,7 +174,7 @@ export function applyFreeShipping(services: CheckoutRatedService[], subtotalAmou
 }
 
 export function selectCheckoutShippingService(services: CheckoutRatedService[]) {
-  return sortServicesByPrice(services)[0] || null;
+  return sortServicesByPreference(services)[0] || null;
 }
 
 export function findCheckoutShippingService(services: CheckoutRatedService[], selectedShippingServiceId: string) {
@@ -170,6 +187,31 @@ export function findCheckoutShippingService(services: CheckoutRatedService[], se
 
 function isUsShippingAddress(shippingAddress: CheckoutShippingAddress) {
   return shippingAddress.country.trim().toUpperCase() === 'US';
+}
+
+function isCanadaShippingAddress(shippingAddress: CheckoutShippingAddress) {
+  return shippingAddress.country.trim().toUpperCase() === 'CA';
+}
+
+function getShippoCarrierPreferenceRank(args: {
+  shippingAddress: CheckoutShippingAddress;
+  carrier?: string;
+  carrierCode?: string;
+}) {
+  const carrierIdentity = `${args.carrier || ''} ${args.carrierCode || ''}`.toLowerCase();
+
+  if (isUsShippingAddress(args.shippingAddress) && /\bups\b|united parcel/.test(carrierIdentity)) {
+    return 0;
+  }
+
+  if (
+    isCanadaShippingAddress(args.shippingAddress) &&
+    (/canada\s*post/.test(carrierIdentity) || /\bcapost\b/.test(carrierIdentity))
+  ) {
+    return 0;
+  }
+
+  return undefined;
 }
 
 function isPreferredUsShipEngineCarrier(service: ShipEngineCheckoutRate) {
@@ -290,6 +332,33 @@ function mapShipEngineRatedServices(services: ShipEngineCheckoutRate[]): Checkou
   }));
 }
 
+function mapShippoRatedServices(args: {
+  services: ShippoCheckoutRate[];
+  shippingAddress: CheckoutShippingAddress;
+}): CheckoutRatedService[] {
+  return args.services.map(service => ({
+    id: service.id,
+    name: service.name,
+    carrier: service.carrier,
+    carrierCode: service.carrierCode,
+    serviceCode: service.serviceCode,
+    shippoRateId: service.shippoRateId,
+    shippoShipmentId: service.shippoShipmentId,
+    shippoCarrierAccountId: service.shippoCarrierAccountId,
+    carrierPreferenceRank: getShippoCarrierPreferenceRank({
+      shippingAddress: args.shippingAddress,
+      carrier: service.carrier,
+      carrierCode: service.carrierCode,
+    }),
+    estimatedDays: service.estimatedDays,
+    source: 'shippo',
+    price: {
+      amount: toFixedAmount(service.price),
+      currencyCode: service.currencyCode,
+    },
+  }));
+}
+
 export function getCartSnapshotItemCount(cartSnapshot?: StorefrontCartSnapshot) {
   if (!cartSnapshot) return 0;
   return cartSnapshot.lines.reduce((total, line) => total + line.quantity, 0);
@@ -323,7 +392,7 @@ export function getStorefrontCartSubtotal(cart?: { cost?: { subtotalAmount?: { a
   return Number(cart?.cost?.subtotalAmount?.amount || 0);
 }
 
-export async function getShipEngineCheckoutServices(args: {
+async function getLegacyShipEngineCheckoutServices(args: {
   shippingAddress: CheckoutShippingAddress;
   currencyCode: string;
   subtotalAmount: number;
@@ -347,3 +416,53 @@ export async function getShipEngineCheckoutServices(args: {
 
   return mapShipEngineRatedServices(preferredRates);
 }
+
+export async function getShippoCheckoutServices(args: {
+  shippingAddress: CheckoutShippingAddress;
+  currencyCode: string;
+  subtotalAmount: number;
+  itemCount: number;
+  orderId?: string;
+}) {
+  const customsSettings = await getShippoFulfillmentSettings();
+  const result = await quoteShippoRates({
+    shippingAddress: args.shippingAddress,
+    itemCount: args.itemCount,
+    currencyCode: args.currencyCode,
+    orderId: args.orderId,
+    customsSettings,
+  });
+
+  if (!result || result.rates.length === 0) {
+    return [];
+  }
+
+  return mapShippoRatedServices({
+    services: result.rates,
+    shippingAddress: args.shippingAddress,
+  });
+}
+
+export async function getLiveCheckoutShippingServices(args: {
+  shippingAddress: CheckoutShippingAddress;
+  currencyCode: string;
+  subtotalAmount: number;
+  itemCount: number;
+  orderId?: string;
+}) {
+  try {
+    const shippoServices = await getShippoCheckoutServices(args);
+    if (shippoServices.length > 0) {
+      return shippoServices;
+    }
+  } catch (error) {
+    console.warn(
+      'Unable to fetch Shippo checkout rates. Falling back to legacy carrier rates.',
+      error,
+    );
+  }
+
+  return getLegacyShipEngineCheckoutServices(args);
+}
+
+export const getShipEngineCheckoutServices = getLiveCheckoutShippingServices;

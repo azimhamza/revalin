@@ -20,7 +20,7 @@ const shippingAddressSchema = z.object({
 const bodySchema = z.object({
   swellOrderId: z.string().trim().min(1, 'Swell order ID is required.'),
   shippingAddress: shippingAddressSchema,
-  selectedShippingServiceId: z.string().trim().min(1, 'Select a ShipEngine rate.'),
+  selectedShippingServiceId: z.string().trim().min(1, 'Select a live shipping rate.'),
   payoutMethod: z.string().trim().optional(),
   notes: z.string().trim().optional(),
 });
@@ -71,10 +71,10 @@ export const POST = createApiRoute({
         data: {
           orderId: order.orderId,
           fulfillmentStatus: order.fulfillmentStatus,
-          hasLabel: Boolean(order.shipengine?.labelUrl),
-          trackingCode: order.shipengine?.trackingCode || null,
-          labelUrl: order.shipengine?.labelUrl || null,
-          labelError: order.shipengine?.labelError || null,
+          hasLabel: Boolean(order.fulfillment?.labelUrl || order.shipengine?.labelUrl),
+          trackingCode: order.fulfillment?.trackingCode || order.shipengine?.trackingCode || null,
+          labelUrl: order.fulfillment?.labelUrl || order.shipengine?.labelUrl || null,
+          labelError: order.fulfillment?.labelError || order.shipengine?.labelError || null,
         },
       };
     } catch (error) {

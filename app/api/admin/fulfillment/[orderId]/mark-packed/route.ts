@@ -10,8 +10,11 @@ export const POST = createApiRoute({
   route: 'admin/fulfillment/mark-packed',
   access: 'admin',
   paramsSchema,
-  handler: async ({ params }) => {
-    const order = await markOrderPacked(params.orderId);
+  handler: async ({ params, session }) => {
+    const order = await markOrderPacked({
+      orderId: params.orderId,
+      adminUserId: session.user.id,
+    });
     return { data: { orderId: params.orderId, fulfillmentStatus: order?.fulfillmentStatus } };
   },
 });

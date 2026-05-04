@@ -4,7 +4,18 @@ import { db } from '@/lib/db';
 import { checkoutOrders } from '@/lib/db/schema';
 import { getCheckoutOrder, saveCheckoutOrder, updateCheckoutOrder } from './order-store';
 import { retryFailedLabelPurchase } from './payment-lifecycle';
-import { purchaseShipEngineLabel } from './shipengine';
+import {
+  buildShippoCustomsSnapshot,
+  getShippoConfigStatus,
+  isShippoConfigured,
+  purchaseShippoLabel,
+  quoteShippoRates,
+  validateShippoCustomsSnapshot,
+  type ShippoCustomsOverride,
+  type ShippoCustomsSnapshot,
+  type ShippoCheckoutRate,
+} from './shippo';
+import { getShippoFulfillmentSettings } from './shippo-fulfillment-settings';
 import { sendOrderShippedEmail, sendShippingLabelEmail } from '@/lib/email/order-emails';
 import {
   createSwellShipment,
@@ -12,9 +23,14 @@ import {
 } from './swell-order-management';
 import {
   findCheckoutShippingService,
-  getShipEngineCheckoutServices,
+  getLiveCheckoutShippingServices,
   type CheckoutRatedService,
 } from './shipping-rates';
+import {
+  consumeInventoryForFulfillment,
+  getFulfillmentInventoryConsumptionForOrders,
+  type FulfillmentInventoryConsumption,
+} from '@/lib/inventory-management/service';
 import type {
   CheckoutOrderLine,
   CheckoutOrderRecord,
@@ -43,6 +59,38 @@ function resolveFulfillmentStatus(
     : null;
 }
 
+function resolveOrderFulfillment(order: Pick<CheckoutOrderRecord, 'fulfillment' | 'shipengine'>) {
+  return order.fulfillment || order.shipengine || null;
+}
+
+function mirrorFulfillmentToLegacyShipengine(
+  fulfillment: CheckoutOrderRecord['fulfillment'],
+): CheckoutOrderRecord['shipengine'] {
+  if (!fulfillment) return undefined;
+
+  return {
+    trackingCode: fulfillment.trackingCode,
+    labelUrl: fulfillment.labelUrl,
+    carrier: fulfillment.carrier,
+    service: fulfillment.service,
+    publicTrackingUrl: fulfillment.publicTrackingUrl,
+    labelPurchasedAt: fulfillment.labelPurchasedAt,
+    labelError: fulfillment.labelError,
+    handedToCarrierAt: fulfillment.handedToCarrierAt,
+    packedAt: fulfillment.packedAt,
+    shippedEmailSentAt: fulfillment.shippedEmailSentAt,
+    swellShipmentId: fulfillment.swellShipmentId,
+    markedShippedByUserId: fulfillment.markedShippedByUserId,
+  };
+}
+
+function getOrderItemCount(order: Pick<CheckoutOrderRecord, 'lines'>) {
+  return Math.max(
+    1,
+    order.lines.reduce((total, line) => total + Math.max(1, Number(line.quantity || 1)), 0),
+  );
+}
+
 export type FulfillmentOrderListItem = {
   orderId: string;
   orderNumber: string;
@@ -57,12 +105,15 @@ export type FulfillmentOrderListItem = {
   itemCount: number;
   carrier: string | null;
   service: string | null;
+  fulfillmentProvider: string | null;
   trackingCode: string | null;
   labelUrl: string | null;
+  commercialInvoiceUrl: string | null;
   publicTrackingUrl: string | null;
   labelPurchasedAt: string | null;
   handedToCarrierAt: string | null;
   packedAt: string | null;
+  inventoryConsumption: FulfillmentInventoryConsumption[];
   labelError: string | null;
   supportsLabelPurchase: boolean;
   createdAt: string;
@@ -103,8 +154,19 @@ export type ManualSwellFulfillmentQuote = {
   rates: CheckoutRatedService[];
 };
 
+export type FulfillmentLabelPreview = {
+  orderId: string;
+  shippingAddress: CheckoutShippingAddress;
+  rates: CheckoutRatedService[];
+  selectedShippingServiceId: string;
+  customs: ShippoCustomsSnapshot | null;
+  shippoConfig: ReturnType<typeof getShippoConfigStatus>;
+};
+
 function rowToListItem(row: FulfillmentOrderRow): FulfillmentOrderListItem {
   const shipengine = row.shipengine as CheckoutOrderRecord['shipengine'];
+  const fulfillment = (row.fulfillment as CheckoutOrderRecord['fulfillment']) || null;
+  const fulfillmentDetails = fulfillment || shipengine || null;
   const shippingAddress = row.shippingAddress as CheckoutOrderRecord['shippingAddress'];
   const shippingService = row.shippingService as CheckoutOrderRecord['shippingService'];
   const totals = row.totals as CheckoutOrderRecord['totals'];
@@ -128,16 +190,19 @@ function rowToListItem(row: FulfillmentOrderRow): FulfillmentOrderListItem {
     currencyCode: row.currencyCode,
     totalAmount: totals?.totalAmount?.amount || '0',
     itemCount: lines?.reduce((sum: number, l: { quantity: number }) => sum + l.quantity, 0) || 0,
-    carrier: shipengine?.carrier || shippingService?.carrier || null,
-    service: shipengine?.service || shippingService?.name || null,
-    trackingCode: shipengine?.trackingCode || null,
-    labelUrl: shipengine?.labelUrl || null,
-    publicTrackingUrl: shipengine?.publicTrackingUrl || null,
-    labelPurchasedAt: shipengine?.labelPurchasedAt || null,
-    handedToCarrierAt: shipengine?.handedToCarrierAt || null,
-    packedAt: shipengine?.packedAt || null,
-    labelError: shipengine?.labelError || null,
-    supportsLabelPurchase: shippingService?.source === 'shipengine',
+    carrier: fulfillmentDetails?.carrier || shippingService?.carrier || null,
+    service: fulfillmentDetails?.service || shippingService?.name || null,
+    fulfillmentProvider: fulfillment?.provider || (shipengine ? 'shipengine' : shippingService?.source || null),
+    trackingCode: fulfillmentDetails?.trackingCode || null,
+    labelUrl: fulfillmentDetails?.labelUrl || null,
+    commercialInvoiceUrl: fulfillment?.commercialInvoiceUrl || null,
+    publicTrackingUrl: fulfillmentDetails?.publicTrackingUrl || null,
+    labelPurchasedAt: fulfillmentDetails?.labelPurchasedAt || null,
+    handedToCarrierAt: fulfillmentDetails?.handedToCarrierAt || null,
+    packedAt: fulfillmentDetails?.packedAt || null,
+    inventoryConsumption: [],
+    labelError: fulfillmentDetails?.labelError || null,
+    supportsLabelPurchase: isShippoConfigured(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -232,6 +297,10 @@ function mapRatedServiceToCheckoutService(
     carrierCode: service.carrierCode,
     serviceCode: service.serviceCode,
     shipengineRateId: service.shipengineRateId,
+    shippoRateId: service.shippoRateId,
+    shippoShipmentId: service.shippoShipmentId,
+    shippoCarrierAccountId: service.shippoCarrierAccountId,
+    carrierPreferenceRank: service.carrierPreferenceRank,
     estimatedDays: service.estimatedDays,
     pickup: service.pickup,
     price: service.price,
@@ -239,6 +308,55 @@ function mapRatedServiceToCheckoutService(
     taxAmount: service.taxAmount,
     landedCostAmount: service.landedCostAmount,
     landedCost: service.landedCost,
+  };
+}
+
+function getCarrierPreferenceRank(args: {
+  shippingAddress: CheckoutShippingAddress;
+  carrier?: string;
+  carrierCode?: string;
+}) {
+  const destinationCountry = args.shippingAddress.country.trim().toUpperCase();
+  const carrierIdentity = `${args.carrier || ''} ${args.carrierCode || ''}`.toLowerCase();
+
+  if (destinationCountry === 'US' && /\bups\b|united parcel/.test(carrierIdentity)) {
+    return 0;
+  }
+
+  if (
+    destinationCountry === 'CA' &&
+    (/canada\s*post/.test(carrierIdentity) || /\bcapost\b/.test(carrierIdentity))
+  ) {
+    return 0;
+  }
+
+  return undefined;
+}
+
+function mapShippoPreviewRate(args: {
+  rate: ShippoCheckoutRate;
+  shippingAddress: CheckoutShippingAddress;
+}): CheckoutRatedService {
+  return {
+    id: args.rate.id,
+    name: args.rate.name,
+    carrier: args.rate.carrier,
+    carrierCode: args.rate.carrierCode,
+    serviceCode: args.rate.serviceCode,
+    shippoRateId: args.rate.shippoRateId,
+    shippoShipmentId: args.rate.shippoShipmentId,
+    shippoCarrierAccountId: args.rate.shippoCarrierAccountId,
+    carrierPreferenceRank: getCarrierPreferenceRank({
+      shippingAddress: args.shippingAddress,
+      carrier: args.rate.carrier,
+      carrierCode: args.rate.carrierCode,
+    }),
+    estimatedDays: args.rate.estimatedDays,
+    source: 'shippo',
+    price: {
+      amount: Number(args.rate.price || 0).toFixed(2),
+      currencyCode: args.rate.currencyCode,
+    },
   };
 }
 
@@ -326,7 +444,7 @@ async function loadManualSwellFulfillmentQuote(args: {
   const subtotalAmount = Number(order.sub_total || 0);
   const totalAmount = Number(order.grand_total || order.sub_total || 0);
   const itemCount = getSwellOrderItemCount(order);
-  const rates = await getShipEngineCheckoutServices({
+  const rates = await getLiveCheckoutShippingServices({
     shippingAddress: args.shippingAddress,
     currencyCode,
     subtotalAmount,
@@ -334,7 +452,7 @@ async function loadManualSwellFulfillmentQuote(args: {
   });
 
   if (rates.length === 0) {
-    throw new Error('ShipEngine returned no rates for this address.');
+    throw new Error('No live shipping rates were returned for this address.');
   }
 
   return {
@@ -387,11 +505,11 @@ export async function createManualSwellFulfillmentOrder(
   );
 
   if (!selectedRate) {
-    throw new Error('Select a valid ShipEngine rate before creating fulfillment.');
+    throw new Error('Select a valid live shipping rate before creating fulfillment.');
   }
 
-  if (selectedRate.source !== 'shipengine') {
-    throw new Error('Manual fulfillment labels must use a ShipEngine rate.');
+  if (selectedRate.source !== 'shippo' && selectedRate.source !== 'shipengine') {
+    throw new Error('Manual fulfillment labels must use a live carrier rate.');
   }
 
   const now = new Date();
@@ -443,6 +561,15 @@ export async function createManualSwellFulfillmentOrder(
     shipengine: {
       labelError: undefined,
     },
+    fulfillment: {
+      provider: selectedRate.source === 'shippo' ? 'shippo' : 'shipengine',
+      carrier: selectedRate.carrier,
+      service: selectedRate.name,
+      shippoRateId: selectedRate.shippoRateId,
+      shippoShipmentId: selectedRate.shippoShipmentId,
+      shippoCarrierAccountId: selectedRate.shippoCarrierAccountId,
+      labelError: undefined,
+    },
     affiliate: null,
     promoter: null,
     ipnEvents: [],
@@ -450,74 +577,7 @@ export async function createManualSwellFulfillmentOrder(
     latestError: null,
   };
 
-  await saveCheckoutOrder(record);
-
-  try {
-    const labelResult = await purchaseShipEngineLabel({
-      shippingAddress: input.shippingAddress,
-      itemCount: quote.itemCount,
-      customsValueAmount: subtotalAmount,
-      customsCurrencyCode: currencyCode,
-      selectedShippingService: shippingService,
-      orderCreatedAt: nowIso,
-    });
-
-    if (!labelResult.labelUrl) {
-      throw new Error('ShipEngine purchased the rate but did not return a label URL.');
-    }
-
-    const updatedOrder = await updateCheckoutOrder(orderId, (current) => ({
-      ...current,
-      fulfillmentStatus: 'label_ready',
-      shipengine: {
-        ...current.shipengine,
-        trackingCode: labelResult.trackingCode || undefined,
-        labelUrl: labelResult.labelUrl || undefined,
-        carrier: labelResult.carrier || selectedRate.carrier,
-        service: labelResult.service || selectedRate.name,
-        publicTrackingUrl: labelResult.publicTrackingUrl || undefined,
-        labelPurchasedAt: new Date().toISOString(),
-        labelError: undefined,
-      },
-    }));
-
-    if (!updatedOrder) {
-      throw new Error(`Failed to update label details for order ${orderId}.`);
-    }
-
-    try {
-      await sendShippingLabelEmail({
-        order: updatedOrder,
-        labelUrl: updatedOrder.shipengine?.labelUrl || labelResult.labelUrl,
-        labelResult: {
-          carrier: updatedOrder.shipengine?.carrier,
-          service: updatedOrder.shipengine?.service,
-          trackingCode: updatedOrder.shipengine?.trackingCode,
-          publicTrackingUrl: updatedOrder.shipengine?.publicTrackingUrl,
-        },
-      });
-    } catch (emailError) {
-      console.error(
-        `[fulfillment] Failed to send manual label email for ${orderId}:`,
-        emailError,
-      );
-    }
-
-    return updatedOrder;
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : 'Unknown label purchase error';
-    const updatedOrder = await updateCheckoutOrder(orderId, (current) => ({
-      ...current,
-      fulfillmentStatus: 'error',
-      shipengine: {
-        ...current.shipengine,
-        labelError: message,
-      },
-    }));
-
-    return updatedOrder || record;
-  }
+  return saveCheckoutOrder(record);
 }
 
 export async function createManualFulfillmentOrder(
@@ -635,6 +695,27 @@ export async function createManualFulfillmentOrder(
                 status === 'handed_to_carrier' ? now.toISOString() : undefined,
             }
           : null,
+      fulfillment:
+        carrier || service || trackingCode || labelUrl || publicTrackingUrl
+          ? {
+              provider: 'manual',
+              carrier,
+              service,
+              trackingCode,
+              labelUrl,
+              publicTrackingUrl,
+              labelPurchasedAt:
+                status === 'label_ready' || status === 'packed' || status === 'handed_to_carrier'
+                  ? now.toISOString()
+                  : undefined,
+              packedAt:
+                status === 'packed' || status === 'handed_to_carrier'
+                  ? now.toISOString()
+                  : undefined,
+              handedToCarrierAt:
+                status === 'handed_to_carrier' ? now.toISOString() : undefined,
+            }
+          : null,
       affiliate: null,
       promoter: null,
       ipnEvents: null,
@@ -708,34 +789,62 @@ export async function listFulfillmentOrders(args: {
       .where(whereClause),
   ]);
 
+  const items = rows.map(rowToListItem);
+  const consumptionByOrder = await getFulfillmentInventoryConsumptionForOrders(
+    items.map((item) => item.orderId),
+  );
+
   return {
-    data: rows.map(rowToListItem),
+    data: items.map((item) => ({
+      ...item,
+      inventoryConsumption: consumptionByOrder.get(item.orderId) || [],
+    })),
     page,
     pageSize,
     total: totalResult[0]?.count || 0,
   };
 }
 
-export async function markOrderPacked(orderId: string) {
-  const order = await getCheckoutOrder(orderId);
+export async function markOrderPacked(args: {
+  orderId: string;
+  adminUserId?: string | null;
+}) {
+  const order = await getCheckoutOrder(args.orderId);
   if (!order) {
-    throw new Error(`Order ${orderId} not found.`);
+    throw new Error(`Order ${args.orderId} not found.`);
   }
 
   if (order.fulfillmentStatus !== 'label_ready') {
     throw new Error(
-      `Order ${orderId} cannot be marked as packed (current status: ${order.fulfillmentStatus}).`,
+      `Order ${args.orderId} cannot be marked as packed (current status: ${order.fulfillmentStatus}).`,
     );
   }
 
-  return updateCheckoutOrder(orderId, (current) => ({
+  const inventoryResult = await consumeInventoryForFulfillment({
+    order,
+    adminUserId: args.adminUserId,
+  });
+
+  const updatedOrder = await updateCheckoutOrder(args.orderId, (current) => ({
     ...current,
     fulfillmentStatus: 'packed',
+    fulfillment: {
+      ...(current.fulfillment || current.shipengine),
+      packedAt: new Date().toISOString(),
+    },
     shipengine: {
       ...current.shipengine,
       packedAt: new Date().toISOString(),
     },
   }));
+
+  if (inventoryResult.warnings.length > 0) {
+    console.warn(
+      `[fulfillment] Inventory warnings for ${args.orderId}: ${inventoryResult.warnings.join('; ')}`,
+    );
+  }
+
+  return updatedOrder;
 }
 
 export async function markOrderShipped(args: {
@@ -756,7 +865,9 @@ export async function markOrderShipped(args: {
     );
   }
 
-  if (!order.shipengine?.trackingCode || !order.shipengine?.labelUrl) {
+  const fulfillment = resolveOrderFulfillment(order);
+
+  if (!fulfillment?.trackingCode || !fulfillment?.labelUrl) {
     throw new Error(
       `Order ${args.orderId} is missing label or tracking information.`,
     );
@@ -779,9 +890,9 @@ export async function markOrderShipped(args: {
 
     const shipment = await createSwellShipment({
       order_id: order.swell.orderId,
-      tracking_code: order.shipengine.trackingCode,
-      carrier_name: order.shipengine.carrier,
-      service_name: order.shipengine.service,
+      tracking_code: fulfillment.trackingCode,
+      carrier_name: fulfillment.carrier,
+      service_name: fulfillment.service,
       items: shipmentItems,
     });
 
@@ -798,6 +909,12 @@ export async function markOrderShipped(args: {
   const updatedOrder = await updateCheckoutOrder(args.orderId, (current) => ({
     ...current,
     fulfillmentStatus: 'handed_to_carrier',
+    fulfillment: {
+      ...(current.fulfillment || current.shipengine),
+      handedToCarrierAt: now,
+      markedShippedByUserId: args.adminUserId,
+      swellShipmentId,
+    },
     shipengine: {
       ...current.shipengine,
       handedToCarrierAt: now,
@@ -816,6 +933,10 @@ export async function markOrderShipped(args: {
 
     await updateCheckoutOrder(args.orderId, (current) => ({
       ...current,
+      fulfillment: {
+        ...(current.fulfillment || current.shipengine),
+        shippedEmailSentAt: new Date().toISOString(),
+      },
       shipengine: {
         ...current.shipengine,
         shippedEmailSentAt: new Date().toISOString(),
@@ -837,7 +958,8 @@ export async function resendLabelEmail(orderId: string) {
     throw new Error(`Order ${orderId} not found.`);
   }
 
-  const labelUrl = order.shipengine?.labelUrl;
+  const fulfillment = resolveOrderFulfillment(order);
+  const labelUrl = fulfillment?.labelUrl;
   if (!labelUrl) {
     throw new Error(`Order ${orderId} has no shipping label.`);
   }
@@ -846,10 +968,10 @@ export async function resendLabelEmail(orderId: string) {
     order,
     labelUrl,
     labelResult: {
-      carrier: order.shipengine?.carrier,
-      service: order.shipengine?.service,
-      trackingCode: order.shipengine?.trackingCode,
-      publicTrackingUrl: order.shipengine?.publicTrackingUrl,
+      carrier: fulfillment?.carrier,
+      service: fulfillment?.service,
+      trackingCode: fulfillment?.trackingCode,
+      publicTrackingUrl: fulfillment?.publicTrackingUrl,
     },
   });
 }
@@ -878,9 +1000,116 @@ export async function retryOrderLabelPurchase(orderId: string) {
   return order;
 }
 
+function selectPreviewRate(args: {
+  rates: CheckoutRatedService[];
+  selectedShippingService?: CheckoutShippingService;
+}) {
+  const selected = args.selectedShippingService;
+  if (selected) {
+    const exact = args.rates.find(rate => rate.id === selected.id);
+    if (exact) return exact;
+
+    const byShippoRate = selected.shippoRateId
+      ? args.rates.find(rate => rate.shippoRateId === selected.shippoRateId)
+      : null;
+    if (byShippoRate) return byShippoRate;
+
+    const byCarrierService = args.rates.find(rate =>
+      rate.carrier?.trim().toLowerCase() === selected.carrier?.trim().toLowerCase() &&
+      (
+        rate.serviceCode?.trim().toLowerCase() === selected.serviceCode?.trim().toLowerCase() ||
+        rate.name.trim().toLowerCase() === selected.name.trim().toLowerCase()
+      )
+    );
+    if (byCarrierService) return byCarrierService;
+  }
+
+  return [...args.rates].sort((left, right) => {
+    const leftRank = left.carrierPreferenceRank ?? Number.POSITIVE_INFINITY;
+    const rightRank = right.carrierPreferenceRank ?? Number.POSITIVE_INFINITY;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return Number(left.price.amount) - Number(right.price.amount);
+  })[0] || null;
+}
+
+export async function getOrderLabelPreview(args: {
+  orderId: string;
+  shippingAddress?: CheckoutShippingAddress;
+  customs?: ShippoCustomsOverride;
+}): Promise<FulfillmentLabelPreview> {
+  const order = await getCheckoutOrder(args.orderId);
+  if (!order) {
+    throw new Error(`Order ${args.orderId} not found.`);
+  }
+
+  const shippoConfig = getShippoConfigStatus();
+  const shippingAddress = args.shippingAddress || order.shippingAddress;
+  const itemCount = getOrderItemCount(order);
+  const destinationCountry = shippingAddress.country.trim().toUpperCase();
+  const isInternational =
+    Boolean(destinationCountry && shippoConfig.originCountry) &&
+    destinationCountry !== shippoConfig.originCountry;
+  const customsSettings = await getShippoFulfillmentSettings();
+  const customs = isInternational
+    ? buildShippoCustomsSnapshot({
+        settings: customsSettings,
+        itemCount,
+        orderId: order.orderId,
+        overrides: args.customs,
+        valueMode: args.customs?.valueAmount || args.customs?.unitValueAmount ? 'midpoint' : 'random',
+      })
+    : null;
+
+  if (!shippoConfig.configured) {
+    return {
+      orderId: order.orderId,
+      shippingAddress,
+      rates: [],
+      selectedShippingServiceId: '',
+      customs,
+      shippoConfig,
+    };
+  }
+
+  if (customs) {
+    const missing = validateShippoCustomsSnapshot(customs);
+    if (missing.length > 0) {
+      throw new Error(`Shippo customs configuration is missing: ${missing.join(', ')}.`);
+    }
+  }
+
+  const quote = await quoteShippoRates({
+    shippingAddress,
+    itemCount,
+    currencyCode: order.currencyCode,
+    orderId: order.orderId,
+    customsSettings,
+    customsSnapshot: customs,
+  });
+  const rates = (quote?.rates || []).map(rate => mapShippoPreviewRate({
+    rate,
+    shippingAddress,
+  }));
+  const selectedRate = selectPreviewRate({
+    rates,
+    selectedShippingService: order.shippingService,
+  });
+
+  return {
+    orderId: order.orderId,
+    shippingAddress,
+    rates,
+    selectedShippingServiceId: selectedRate?.id || rates[0]?.id || '',
+    customs,
+    shippoConfig,
+  };
+}
+
 export async function updateShippingAddressAndPurchaseLabel(args: {
   orderId: string;
   shippingAddress: CheckoutShippingAddress;
+  selectedShippingServiceId?: string;
+  customs?: ShippoCustomsOverride;
 }) {
   const order = await getCheckoutOrder(args.orderId);
   if (!order) {
@@ -891,30 +1120,23 @@ export async function updateShippingAddressAndPurchaseLabel(args: {
     throw new Error(`Order ${args.orderId} has not been paid yet.`);
   }
 
-  if (order.shipengine?.labelUrl) {
+  const existingFulfillment = resolveOrderFulfillment(order);
+  if (existingFulfillment?.labelUrl) {
     throw new Error(`Order ${args.orderId} already has a shipping label.`);
   }
 
-  if (!order.shippingService) {
-    throw new Error(
-      'Manual review required: the order is missing the selected shipping service.',
-    );
+  if (!isShippoConfigured()) {
+    throw new Error(`Shippo is not fully configured: ${getShippoConfigStatus().missing.join(', ')}.`);
   }
-
-  if (order.shippingService.source !== 'shipengine') {
-    throw new Error(
-      'Manual review required: the selected checkout shipping service was not sourced from ShipEngine.',
-    );
-  }
-  const selectedShippingService = {
-    ...order.shippingService,
-    shipengineRateId: undefined,
-  };
 
   const addressUpdatedOrder = await updateCheckoutOrder(args.orderId, (current) => ({
     ...current,
     shippingAddress: args.shippingAddress,
     fulfillmentStatus: current.fulfillmentStatus ?? 'pending',
+    fulfillment: {
+      ...(current.fulfillment || current.shipengine),
+      labelError: undefined,
+    },
     shipengine: {
       ...current.shipengine,
       labelError: undefined,
@@ -925,42 +1147,54 @@ export async function updateShippingAddressAndPurchaseLabel(args: {
     throw new Error(`Failed to update order ${args.orderId}.`);
   }
 
-  const itemCount = addressUpdatedOrder.lines.reduce(
-    (total, line) => total + line.quantity,
-    0,
-  );
-  const customsValueAmount = addressUpdatedOrder.lines.reduce(
-    (total, line) => total + Number(line.lineTotal.amount || 0),
-    0,
-  );
-
   try {
-    const labelResult = await purchaseShipEngineLabel({
+    const preview = await getOrderLabelPreview({
+      orderId: args.orderId,
       shippingAddress: addressUpdatedOrder.shippingAddress,
-      itemCount,
-      customsValueAmount,
-      customsCurrencyCode: addressUpdatedOrder.currencyCode,
-      selectedShippingService,
-      orderCreatedAt: addressUpdatedOrder.createdAt,
+      customs: args.customs,
+    });
+    const selectedRate =
+      findCheckoutShippingService(preview.rates, args.selectedShippingServiceId || preview.selectedShippingServiceId) ||
+      preview.rates[0] ||
+      null;
+
+    if (!selectedRate?.shippoRateId) {
+      throw new Error('Select a valid Shippo rate before buying the label.');
+    }
+
+    const labelResult = await purchaseShippoLabel({
+      rateId: selectedRate.shippoRateId,
+      orderId: addressUpdatedOrder.orderId,
     });
 
     if (!labelResult.labelUrl) {
-      throw new Error('ShipEngine purchased the rate but did not return a label URL.');
+      throw new Error('Shippo purchased the rate but did not return a label URL.');
     }
+
+    const shippingService = mapRatedServiceToCheckoutService(selectedRate);
+    const fulfillment: CheckoutOrderRecord['fulfillment'] = {
+      provider: 'shippo',
+      trackingCode: labelResult.trackingCode || undefined,
+      labelUrl: labelResult.labelUrl || undefined,
+      carrier: labelResult.carrier || selectedRate.carrier,
+      service: labelResult.service || selectedRate.name,
+      publicTrackingUrl: labelResult.publicTrackingUrl || undefined,
+      labelPurchasedAt: new Date().toISOString(),
+      labelError: undefined,
+      shippoTransactionId: labelResult.shippoTransactionId || undefined,
+      shippoRateId: labelResult.shippoRateId || selectedRate.shippoRateId,
+      shippoShipmentId: selectedRate.shippoShipmentId,
+      shippoCarrierAccountId: labelResult.shippoCarrierAccountId || selectedRate.shippoCarrierAccountId,
+      commercialInvoiceUrl: labelResult.commercialInvoiceUrl || undefined,
+      customs: preview.customs || undefined,
+    };
 
     const updatedOrder = await updateCheckoutOrder(args.orderId, (current) => ({
       ...current,
       fulfillmentStatus: 'label_ready',
-      shipengine: {
-        ...current.shipengine,
-        trackingCode: labelResult.trackingCode || undefined,
-        labelUrl: labelResult.labelUrl || undefined,
-        carrier: labelResult.carrier || undefined,
-        service: labelResult.service || undefined,
-        publicTrackingUrl: labelResult.publicTrackingUrl || undefined,
-        labelPurchasedAt: new Date().toISOString(),
-        labelError: undefined,
-      },
+      shippingService,
+      fulfillment,
+      shipengine: mirrorFulfillmentToLegacyShipengine(fulfillment),
     }));
 
     if (!updatedOrder) {
@@ -973,10 +1207,10 @@ export async function updateShippingAddressAndPurchaseLabel(args: {
           order: updatedOrder,
           labelUrl: updatedOrder.shipengine.labelUrl,
           labelResult: {
-            carrier: updatedOrder.shipengine.carrier,
-            service: updatedOrder.shipengine.service,
-            trackingCode: updatedOrder.shipengine.trackingCode,
-            publicTrackingUrl: updatedOrder.shipengine.publicTrackingUrl,
+            carrier: fulfillment.carrier,
+            service: fulfillment.service,
+            trackingCode: fulfillment.trackingCode,
+            publicTrackingUrl: fulfillment.publicTrackingUrl,
           },
         });
       } catch (error) {
@@ -995,6 +1229,10 @@ export async function updateShippingAddressAndPurchaseLabel(args: {
     await updateCheckoutOrder(args.orderId, (current) => ({
       ...current,
       fulfillmentStatus: 'error',
+      fulfillment: {
+        ...(current.fulfillment || current.shipengine),
+        labelError: message,
+      },
       shipengine: {
         ...current.shipengine,
         labelError: message,

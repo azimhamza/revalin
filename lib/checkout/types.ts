@@ -65,11 +65,15 @@ export type CheckoutShippingService = {
   id: string;
   name: string;
   quoteCategory?: 'cheapest' | 'best_value' | 'fastest';
-  source?: 'shipengine' | 'swell';
+  source?: 'shipengine' | 'shippo' | 'swell';
   carrier?: string;
   carrierCode?: string;
   serviceCode?: string;
   shipengineRateId?: string;
+  shippoRateId?: string;
+  shippoShipmentId?: string;
+  shippoCarrierAccountId?: string;
+  carrierPreferenceRank?: number;
   estimatedDays?: number | null;
   price: Money;
   originalPrice?: Money;
@@ -301,6 +305,28 @@ export type CheckoutOrderShipEngine = {
   markedShippedByUserId?: string;
 };
 
+export type CheckoutOrderFulfillment = {
+  provider?: 'shippo' | 'shipengine' | 'manual';
+  trackingCode?: string;
+  labelUrl?: string;
+  carrier?: string;
+  service?: string;
+  publicTrackingUrl?: string;
+  labelPurchasedAt?: string;
+  labelError?: string;
+  handedToCarrierAt?: string;
+  packedAt?: string;
+  shippedEmailSentAt?: string;
+  swellShipmentId?: string;
+  markedShippedByUserId?: string;
+  shippoTransactionId?: string;
+  shippoRateId?: string;
+  shippoShipmentId?: string;
+  shippoCarrierAccountId?: string;
+  commercialInvoiceUrl?: string;
+  customs?: Record<string, unknown>;
+};
+
 export type CheckoutProcessingStepStatus =
   | 'pending'
   | 'processing'
@@ -367,6 +393,7 @@ export type CheckoutOrderRecord = {
   payment: CheckoutOrderPayment;
   swell: CheckoutOrderSwell;
   shipengine?: CheckoutOrderShipEngine;
+  fulfillment?: CheckoutOrderFulfillment;
   affiliate?: CheckoutOrderAffiliate | null;
   promoter?: CheckoutOrderPromoter | null;
   processing?: CheckoutOrderProcessing;

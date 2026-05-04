@@ -32,7 +32,7 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `NOW_PUBLIC_KEY` or `NOWPAYMENTS_IPN_SECRET` (NOWPayments webhook signing secret; `NOW_PUBLIC_KEY` is accepted as an alias)
 - `NEXT_PUBLIC_NOWPAYMENTS_QUICK_CURRENCIES` (optional comma-separated checkout currency chips, e.g. `btc,eth,sol,ltc,usdttrc20,trx`)
 - `CHECKOUT_ORDER_STORAGE_PATH` (optional path for persisting checkout order snapshots outside the default local store)
-- `SHIPENGINE_API_KEY` (optional; enables live ShipEngine rates and automatic label purchase after payment)
+- `SHIPENGINE_API_KEY` (legacy compatibility only; existing ShipEngine labels remain readable during cutover)
 - `SHIPENGINE_ORIGIN_STREET1`, `SHIPENGINE_ORIGIN_ZIP` (required to activate ShipEngine live rates / labels)
 - `SHIPENGINE_ORIGIN_CITY`, `SHIPENGINE_ORIGIN_STATE`, `SHIPENGINE_ORIGIN_COUNTRY`, `SHIPENGINE_ORIGIN_NAME`, `SHIPENGINE_ORIGIN_COMPANY_NAME`, `SHIPENGINE_ORIGIN_PHONE` (optional origin fields used for rating and labels; company name falls back to `SHIPENGINE_ORIGIN_NAME`)
 - `SHIPENGINE_CARRIER_IDS` (optional comma-separated carrier IDs; otherwise carriers are auto-discovered)
@@ -46,9 +46,12 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `ZONOS_DEFAULT_SERVICE_LEVEL_CODE` (optional; set to the Zonos service-level code from your Zonos dashboard if ShipEngine/Swell service codes do not match Zonos)
 - `ZONOS_DEFAULT_ITEM_COUNTRY_OF_ORIGIN` (optional; defaults to the ShipEngine customs origin or `CA`)
 - `ZONOS_REQUIRE_LANDED_COST=true` (optional; if enabled, non-domestic checkout fails instead of omitting duties when Zonos cannot return a quote)
-- `SHIPPO_API_TOKEN` (optional; enables live Shippo rate quotes before order creation)
-- `SHIPPO_ORIGIN_STREET1`, `SHIPPO_ORIGIN_ZIP` (required to activate Shippo live rates)
-- `SHIPPO_ORIGIN_CITY`, `SHIPPO_ORIGIN_STATE`, `SHIPPO_ORIGIN_COUNTRY`, `SHIPPO_ORIGIN_NAME` (optional origin fields; defaults assume Waterloo, ON, CA)
+- `SHIPPO_API_TOKEN` (server-only; enables live Shippo checkout rates and admin label purchase)
+- `SHIPPO_ORIGIN_NAME`, `SHIPPO_ORIGIN_EMAIL`, `SHIPPO_ORIGIN_PHONE`, `SHIPPO_ORIGIN_STREET1`, `SHIPPO_ORIGIN_CITY`, `SHIPPO_ORIGIN_STATE`, `SHIPPO_ORIGIN_ZIP`, `SHIPPO_ORIGIN_COUNTRY` (required to activate Shippo live rates / labels)
+- `SHIPPO_API_BASE` (optional; defaults to `https://api.goshippo.com`)
+- `SHIPPO_API_VERSION` (optional; defaults to `2018-02-08`)
+- `SHIPPO_LABEL_FILE_TYPE` (optional; defaults to `PDF_4x6`)
+- `SHIPPO_WEBHOOK_SECRET` (optional; reserved for Shippo webhooks)
 - `SHIPPO_PARCEL_LENGTH_IN`, `SHIPPO_PARCEL_WIDTH_IN`, `SHIPPO_PARCEL_HEIGHT_IN`, `SHIPPO_DEFAULT_ITEM_WEIGHT_OZ` (optional parcel defaults for small-vial shipments)
 - `LOOPS_API_KEY` (optional; enables Loops events + transactional emails)
 - `LOOPS_TRANSACTIONAL_ORDER_CONFIRMATION` (optional Loops template ID for customer order confirmation)
@@ -76,7 +79,15 @@ creates a NOWPayments payment for that Swell order total. For that flow to work:
 
 - `SWELL_SECRET_KEY` must be present
 - `SWELL_CRYPTO_PAYMENT_METHOD`, `SWELL_CARD_DEBIT_PAYMENT_METHOD`, and `SWELL_INTERAC_PAYMENT_METHOD` must match manual payment methods configured in your Swell dashboard
-- Either Swell shipping services must be configured, or ShipEngine / Shippo must be configured with API credentials plus origin street/postal code
+- Either Swell shipping services must be configured, or Shippo must be configured with API credentials plus the required origin fields
+
+## Shippo fulfillment
+
+Checkout quotes live Shippo rates first and falls back to legacy ShipEngine/Swell services when needed. Paid orders stay pending in `/admin/fulfillment` until an admin opens Buy Label, refreshes the latest Shippo rates, reviews the destination/customs data, and purchases the label.
+
+Customs defaults are edited in `/admin/fulfillment`, not through environment variables. The current defaults include the massage oil description, `0.3` unit weight, `CN` origin country, HS/HTS `3304.99`, `EAR99`, and the Anhui Yaotong manufacturer notes. SKU is intentionally not supported for Shippo customs: the app never sends `sku_code` in Shippo payloads.
+
+Shippo API secrets are server-only and must not be exposed through `NEXT_PUBLIC_*` variables or edited in admin.
 
 ## Deployment
 

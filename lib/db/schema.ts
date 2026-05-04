@@ -120,6 +120,40 @@ export const researchPaperStatusEnum = pgEnum("research_paper_status", [
   "archived",
 ]);
 
+export const inventoryItemTypeEnum = pgEnum("inventory_item_type", [
+  "sellable_product",
+  "packaging",
+  "label",
+  "sticker",
+  "card",
+  "insert",
+  "supply",
+  "other",
+]);
+
+export const inventoryMovementTypeEnum = pgEnum("inventory_movement_type", [
+  "initial_stock",
+  "purchase_received",
+  "manual_adjustment",
+  "fulfillment_consumed",
+]);
+
+export const purchaseOrderStatusEnum = pgEnum("purchase_order_status", [
+  "draft",
+  "ordered",
+  "partially_received",
+  "received",
+  "cancelled",
+]);
+
+export const purchasePaymentStatusEnum = pgEnum("purchase_payment_status", [
+  "unpaid",
+  "partially_paid",
+  "paid",
+  "refunded",
+  "void",
+]);
+
 // ── better-auth tables ──
 
 export const user = pgTable("user", {
@@ -239,6 +273,7 @@ export const checkoutOrders = pgTable(
     payment: jsonb("payment").notNull(),
     swell: jsonb("swell").notNull(),
     shipengine: jsonb("shipengine"),
+    fulfillment: jsonb("fulfillment"),
     affiliate: jsonb("affiliate"),
     promoter: jsonb("promoter"),
     ipnEvents: jsonb("ipn_events"),
@@ -268,6 +303,20 @@ export const checkoutOrders = pgTable(
     ),
   ],
 );
+
+export const appSettings = pgTable("app_settings", {
+  key: varchar("key", { length: 128 }).primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedByUserId: text("updated_by_user_id").references(() => user.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
 
 export const bankfulPaymentAttempts = pgTable(
   "bankful_payment_attempts",
@@ -308,6 +357,340 @@ export const bankfulPaymentAttempts = pgTable(
     index("bankful_payment_attempts_email_idx").on(table.email),
     index("bankful_payment_attempts_status_idx").on(table.status),
     index("bankful_payment_attempts_updated_at_idx").on(table.updatedAt),
+  ],
+);
+
+export const inventoryCategories = pgTable(
+  "inventory_categories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: varchar("name", { length: 128 }).notNull(),
+    code: varchar("code", { length: 64 }).notNull(),
+    description: text("description"),
+    sortOrder: integer("sort_order").default(0).notNull(),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("inventory_categories_code_idx").on(table.code),
+    index("inventory_categories_active_idx").on(table.active),
+    index("inventory_categories_sort_order_idx").on(table.sortOrder),
+  ],
+);
+
+export const inventoryVendors = pgTable(
+  "inventory_vendors",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: varchar("name", { length: 256 }).notNull(),
+    code: varchar("code", { length: 64 }).notNull(),
+    contactName: varchar("contact_name", { length: 256 }),
+    email: varchar("email", { length: 256 }),
+    phone: varchar("phone", { length: 64 }),
+    website: text("website"),
+    paymentTerms: varchar("payment_terms", { length: 128 }),
+    notes: text("notes"),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("inventory_vendors_code_idx").on(table.code),
+    index("inventory_vendors_name_idx").on(table.name),
+    index("inventory_vendors_active_idx").on(table.active),
+  ],
+);
+
+export const inventoryItems = pgTable(
+  "inventory_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    categoryId: uuid("category_id").references(() => inventoryCategories.id, {
+      onDelete: "set null",
+    }),
+    defaultVendorId: uuid("default_vendor_id").references(
+      () => inventoryVendors.id,
+      { onDelete: "set null" },
+    ),
+    name: varchar("name", { length: 256 }).notNull(),
+    code: varchar("code", { length: 96 }).notNull(),
+    sku: varchar("sku", { length: 128 }),
+    barcode: varchar("barcode", { length: 128 }),
+    itemType: inventoryItemTypeEnum("item_type").default("supply").notNull(),
+    unit: varchar("unit", { length: 32 }).default("unit").notNull(),
+    location: varchar("location", { length: 256 }),
+    reorderPoint: integer("reorder_point").default(0).notNull(),
+    swellProductId: varchar("swell_product_id", { length: 128 }),
+    swellVariantId: varchar("swell_variant_id", { length: 128 }),
+    productHandle: varchar("product_handle", { length: 256 }),
+    notes: text("notes"),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("inventory_items_code_idx").on(table.code),
+    index("inventory_items_category_id_idx").on(table.categoryId),
+    index("inventory_items_vendor_id_idx").on(table.defaultVendorId),
+    index("inventory_items_type_idx").on(table.itemType),
+    index("inventory_items_sku_idx").on(table.sku),
+    index("inventory_items_barcode_idx").on(table.barcode),
+    index("inventory_items_swell_product_idx").on(table.swellProductId),
+    index("inventory_items_swell_variant_idx").on(table.swellVariantId),
+    index("inventory_items_product_handle_idx").on(table.productHandle),
+    index("inventory_items_active_idx").on(table.active),
+  ],
+);
+
+export const inventoryConsumptionRules = pgTable(
+  "inventory_consumption_rules",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: varchar("name", { length: 256 }).notNull(),
+    consumedItemId: uuid("consumed_item_id")
+      .notNull()
+      .references(() => inventoryItems.id, { onDelete: "cascade" }),
+    appliesToItemId: uuid("applies_to_item_id").references(
+      () => inventoryItems.id,
+      { onDelete: "cascade" },
+    ),
+    appliesToSwellProductId: varchar("applies_to_swell_product_id", {
+      length: 128,
+    }),
+    appliesToSwellVariantId: varchar("applies_to_swell_variant_id", {
+      length: 128,
+    }),
+    appliesToProductHandle: varchar("applies_to_product_handle", {
+      length: 256,
+    }),
+    quantityPerOrder: integer("quantity_per_order").default(1).notNull(),
+    active: boolean("active").default(true).notNull(),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("inventory_consumption_rules_consumed_item_idx").on(
+      table.consumedItemId,
+    ),
+    index("inventory_consumption_rules_applies_item_idx").on(
+      table.appliesToItemId,
+    ),
+    index("inventory_consumption_rules_swell_product_idx").on(
+      table.appliesToSwellProductId,
+    ),
+    index("inventory_consumption_rules_swell_variant_idx").on(
+      table.appliesToSwellVariantId,
+    ),
+    index("inventory_consumption_rules_handle_idx").on(
+      table.appliesToProductHandle,
+    ),
+    index("inventory_consumption_rules_active_idx").on(table.active),
+  ],
+);
+
+export const purchaseOrders = pgTable(
+  "purchase_orders",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    poNumber: varchar("po_number", { length: 96 }).notNull(),
+    vendorId: uuid("vendor_id").references(() => inventoryVendors.id, {
+      onDelete: "set null",
+    }),
+    status: purchaseOrderStatusEnum("status").default("draft").notNull(),
+    paymentStatus: purchasePaymentStatusEnum("payment_status")
+      .default("unpaid")
+      .notNull(),
+    currencyCode: varchar("currency_code", { length: 8 })
+      .default("USD")
+      .notNull(),
+    totalAmount: varchar("total_amount", { length: 32 })
+      .default("0.00")
+      .notNull(),
+    amountPaid: varchar("amount_paid", { length: 32 })
+      .default("0.00")
+      .notNull(),
+    paymentMethod: varchar("payment_method", { length: 64 }),
+    paymentReference: varchar("payment_reference", { length: 256 }),
+    proofUrls: jsonb("proof_urls").$type<string[]>().default([]).notNull(),
+    expectedAt: timestamp("expected_at", { withTimezone: true }),
+    orderedAt: timestamp("ordered_at", { withTimezone: true }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    notes: text("notes"),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("purchase_orders_po_number_idx").on(table.poNumber),
+    index("purchase_orders_vendor_id_idx").on(table.vendorId),
+    index("purchase_orders_status_idx").on(table.status),
+    index("purchase_orders_payment_status_idx").on(table.paymentStatus),
+    index("purchase_orders_updated_at_idx").on(table.updatedAt),
+  ],
+);
+
+export const purchaseOrderLines = pgTable(
+  "purchase_order_lines",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    purchaseOrderId: uuid("purchase_order_id")
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: "cascade" }),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => inventoryItems.id),
+    quantityOrdered: integer("quantity_ordered").notNull(),
+    quantityReceived: integer("quantity_received").default(0).notNull(),
+    unitCost: varchar("unit_cost", { length: 32 }).default("0.00").notNull(),
+    lineTotal: varchar("line_total", { length: 32 }).default("0.00").notNull(),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("purchase_order_lines_order_id_idx").on(table.purchaseOrderId),
+    index("purchase_order_lines_item_id_idx").on(table.itemId),
+  ],
+);
+
+export const purchaseReceipts = pgTable(
+  "purchase_receipts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    purchaseOrderId: uuid("purchase_order_id")
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: "cascade" }),
+    receiptNumber: varchar("receipt_number", { length: 96 }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    receivedByUserId: text("received_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    proofUrls: jsonb("proof_urls").$type<string[]>().default([]).notNull(),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("purchase_receipts_receipt_number_idx").on(
+      table.receiptNumber,
+    ),
+    index("purchase_receipts_order_id_idx").on(table.purchaseOrderId),
+    index("purchase_receipts_received_at_idx").on(table.receivedAt),
+  ],
+);
+
+export const purchaseReceiptLines = pgTable(
+  "purchase_receipt_lines",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    receiptId: uuid("receipt_id")
+      .notNull()
+      .references(() => purchaseReceipts.id, { onDelete: "cascade" }),
+    purchaseOrderLineId: uuid("purchase_order_line_id")
+      .notNull()
+      .references(() => purchaseOrderLines.id, { onDelete: "cascade" }),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => inventoryItems.id),
+    quantityReceived: integer("quantity_received").notNull(),
+    unitCost: varchar("unit_cost", { length: 32 }).default("0.00").notNull(),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("purchase_receipt_lines_receipt_id_idx").on(table.receiptId),
+    index("purchase_receipt_lines_order_line_idx").on(
+      table.purchaseOrderLineId,
+    ),
+    index("purchase_receipt_lines_item_id_idx").on(table.itemId),
+  ],
+);
+
+export const inventoryMovements = pgTable(
+  "inventory_movements",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => inventoryItems.id),
+    movementType: inventoryMovementTypeEnum("movement_type").notNull(),
+    quantityDelta: integer("quantity_delta").notNull(),
+    quantityAfter: integer("quantity_after").notNull(),
+    unitCost: varchar("unit_cost", { length: 32 }),
+    purchaseOrderId: uuid("purchase_order_id").references(
+      () => purchaseOrders.id,
+      { onDelete: "set null" },
+    ),
+    purchaseReceiptId: uuid("purchase_receipt_id").references(
+      () => purchaseReceipts.id,
+      { onDelete: "set null" },
+    ),
+    purchaseReceiptLineId: uuid("purchase_receipt_line_id").references(
+      () => purchaseReceiptLines.id,
+      { onDelete: "set null" },
+    ),
+    checkoutOrderId: varchar("checkout_order_id", { length: 64 }).references(
+      () => checkoutOrders.orderId,
+      { onDelete: "set null" },
+    ),
+    checkoutOrderNumber: varchar("checkout_order_number", { length: 96 }),
+    sourceType: varchar("source_type", { length: 64 }),
+    sourceId: varchar("source_id", { length: 128 }),
+    idempotencyKey: varchar("idempotency_key", { length: 180 }),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    notes: text("notes"),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("inventory_movements_idempotency_key_idx")
+      .on(table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} IS NOT NULL`),
+    index("inventory_movements_item_id_idx").on(table.itemId),
+    index("inventory_movements_type_idx").on(table.movementType),
+    index("inventory_movements_purchase_order_idx").on(table.purchaseOrderId),
+    index("inventory_movements_purchase_receipt_idx").on(
+      table.purchaseReceiptId,
+    ),
+    index("inventory_movements_checkout_order_idx").on(table.checkoutOrderId),
+    index("inventory_movements_created_at_idx").on(table.createdAt),
   ],
 );
 

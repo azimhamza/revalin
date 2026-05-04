@@ -1,7 +1,8 @@
 'use client';
 
-import { type FormEvent, useCallback, useRef, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   ChevronDown,
   ExternalLink,
   FileText,
@@ -14,7 +15,10 @@ import {
   Truck,
   Zap,
 } from 'lucide-react';
-import type { FulfillmentOrderListItem } from '@/lib/checkout/fulfillment-service';
+import type {
+  FulfillmentLabelPreview,
+  FulfillmentOrderListItem,
+} from '@/lib/checkout/fulfillment-service';
 
 type Props = {
   order: FulfillmentOrderListItem;
@@ -58,6 +62,43 @@ async function postActionBody(
 }
 
 type ManualLabelForm = FulfillmentOrderListItem['shippingAddress'];
+type ManualLabelCustoms = NonNullable<FulfillmentLabelPreview['customs']>;
+type ManualLabelPayload = {
+  shippingAddress: ManualLabelForm;
+  selectedShippingServiceId: string;
+  customs?: ManualLabelCustoms | null;
+};
+
+function formatRatePrice(rate: FulfillmentLabelPreview['rates'][number]) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: rate.price.currencyCode,
+    minimumFractionDigits: 2,
+  }).format(Number(rate.price.amount));
+}
+
+function normalizeManualLabelAddress(form: ManualLabelForm): ManualLabelForm {
+  return {
+    ...form,
+    country: form.country.trim().toUpperCase(),
+    address2: form.address2?.trim() || undefined,
+    notes: form.notes?.trim() || undefined,
+  };
+}
+
+function isManualLabelAddressReady(form: ManualLabelForm) {
+  return Boolean(
+    form.firstName?.trim() &&
+      form.lastName?.trim() &&
+      form.email?.trim() &&
+      form.phone?.trim() &&
+      form.address1?.trim() &&
+      form.city?.trim() &&
+      form.province?.trim() &&
+      form.postalCode?.trim() &&
+      form.country?.trim().length === 2,
+  );
+}
 
 function ManualLabelModal({
   order,
@@ -66,7 +107,7 @@ function ManualLabelModal({
   loading,
 }: {
   order: FulfillmentOrderListItem;
-  onSubmit: (shippingAddress: ManualLabelForm) => Promise<void>;
+  onSubmit: (payload: ManualLabelPayload) => Promise<void>;
   onCancel: () => void;
   loading: boolean;
 }) {
@@ -83,19 +124,130 @@ function ManualLabelModal({
     country: order.shippingAddress.country || 'CA',
     notes: order.shippingAddress.notes || '',
   });
+  const [preview, setPreview] = useState<FulfillmentLabelPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [selectedShippingServiceId, setSelectedShippingServiceId] =
+    useState('');
+  const [customs, setCustoms] = useState<ManualLabelCustoms | null>(null);
+  const initialPreviewRequested = useRef(false);
 
   const updateField = (field: keyof ManualLabelForm, value: string) => {
     setForm((current) => ({
       ...current,
       [field]: value,
     }));
+    setPreview(null);
+    setSelectedShippingServiceId('');
+    setPreviewError(null);
   };
+
+  const updateCustomsField = (
+    field: keyof ManualLabelCustoms,
+    value: string | number,
+  ) => {
+    setCustoms((current) =>
+      current
+        ? ({
+            ...current,
+            [field]: value,
+          } as ManualLabelCustoms)
+        : current,
+    );
+    setPreview(null);
+    setSelectedShippingServiceId('');
+    setPreviewError(null);
+  };
+
+  const fetchPreview = useCallback(async () => {
+    if (!isManualLabelAddressReady(form)) {
+      setPreview(null);
+      setSelectedShippingServiceId('');
+      setPreviewError('Complete the destination address before getting rates.');
+      return;
+    }
+
+    setPreviewLoading(true);
+    setPreviewError(null);
+
+    try {
+      const response = await fetch(
+        `/api/admin/fulfillment/${encodeURIComponent(order.orderId)}/label-preview`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shippingAddress: normalizeManualLabelAddress(form),
+            customs: customs || undefined,
+          }),
+        },
+      );
+      const body = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          body?.error?.message || `Failed to get Shippo rates (${response.status}).`,
+        );
+      }
+
+      const nextPreview = body?.data?.preview as
+        | FulfillmentLabelPreview
+        | undefined;
+      if (!nextPreview) {
+        throw new Error('Shippo did not return a label preview.');
+      }
+
+      setPreview(nextPreview);
+      setCustoms(nextPreview.customs);
+      setSelectedShippingServiceId((current) => {
+        if (nextPreview.rates.some((rate) => rate.id === current)) {
+          return current;
+        }
+
+        return nextPreview.selectedShippingServiceId || nextPreview.rates[0]?.id || '';
+      });
+    } catch (error) {
+      setPreview(null);
+      setSelectedShippingServiceId('');
+      setPreviewError(
+        error instanceof Error ? error.message : 'Failed to get Shippo rates.',
+      );
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [customs, form, order.orderId]);
+
+  useEffect(() => {
+    if (initialPreviewRequested.current) return;
+    initialPreviewRequested.current = true;
+    void fetchPreview();
+  }, [fetchPreview]);
+
+  const selectedRate =
+    preview?.rates.find((rate) => rate.id === selectedShippingServiceId) || null;
+
+  const canBuy =
+    !loading &&
+    !previewLoading &&
+    Boolean(preview?.shippoConfig.configured) &&
+    Boolean(selectedRate) &&
+    isManualLabelAddressReady(form);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!preview) {
+      setPreviewError('Refresh Shippo rates before buying the label.');
+      return;
+    }
+    if (!selectedRate) {
+      setPreviewError('Select a Shippo rate before buying the label.');
+      return;
+    }
+
     void onSubmit({
-      ...form,
-      country: form.country.trim().toUpperCase(),
+      shippingAddress: normalizeManualLabelAddress(form),
+      selectedShippingServiceId: selectedRate.id,
+      customs,
     });
   };
 
@@ -103,14 +255,14 @@ function ManualLabelModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <form
         onSubmit={handleSubmit}
-        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+        className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
       >
         <h3 className="text-lg font-semibold text-[#0B2E2F]">
-          Address + Label
+          Buy Shippo Label
         </h3>
         <p className="mt-2 text-sm text-[#0B2E2F]/60">
-          Update the destination address and purchase a ShipEngine label for
-          {` ${order.orderNumber}`}.
+          Review the destination, latest rates, and customs declaration for
+          {` ${order.orderNumber}`} before purchasing.
         </p>
 
         <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -159,6 +311,334 @@ function ManualLabelModal({
           </label>
         </div>
 
+        <div className="mt-5 rounded-xl border border-[#0B2E2F]/10 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h4 className="text-sm font-semibold text-[#0B2E2F]">
+                Latest Shippo rates
+              </h4>
+              <p className="mt-0.5 text-xs text-[#0B2E2F]/50">
+                Refresh after changing the address or customs values.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void fetchPreview()}
+              disabled={previewLoading || loading}
+              className="flex items-center gap-1.5 rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-xs font-semibold text-[#0B2E2F] transition-colors hover:bg-[#0B2E2F]/5 disabled:opacity-40"
+            >
+              {previewLoading ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3.5" />
+              )}
+              Refresh rates
+            </button>
+          </div>
+
+          {previewError ? (
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              <span>{previewError}</span>
+            </div>
+          ) : null}
+
+          {preview && !preview.shippoConfig.configured ? (
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                Shippo env is incomplete:
+                {' '}
+                {preview.shippoConfig.missing.join(', ')}
+              </span>
+            </div>
+          ) : null}
+
+          {preview?.rates.length ? (
+            <div className="mt-3 grid gap-2 md:grid-cols-3">
+              {preview.rates.map((rate) => (
+                <label
+                  key={rate.id}
+                  className={`cursor-pointer rounded-xl border bg-white p-3 transition-colors ${
+                    selectedShippingServiceId === rate.id
+                      ? 'border-[#0B2E2F] ring-1 ring-[#0B2E2F]'
+                      : 'border-[#0B2E2F]/10 hover:border-[#0B2E2F]/30'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="shippo-label-rate"
+                    value={rate.id}
+                    checked={selectedShippingServiceId === rate.id}
+                    onChange={(event) =>
+                      setSelectedShippingServiceId(event.target.value)
+                    }
+                    className="sr-only"
+                  />
+                  <span className="block text-xs font-semibold text-[#0B2E2F]/60">
+                    {rate.carrier || 'Shippo'}
+                  </span>
+                  <span className="mt-1 block text-sm font-semibold text-[#0B2E2F]">
+                    {rate.name}
+                  </span>
+                  <span className="mt-2 block text-sm text-[#0B2E2F]/70">
+                    {formatRatePrice(rate)}
+                    {rate.estimatedDays ? ` · ${rate.estimatedDays}d` : ''}
+                  </span>
+                </label>
+              ))}
+            </div>
+          ) : previewLoading ? (
+            <p className="mt-3 text-xs text-[#0B2E2F]/50">
+              Fetching live rates from Shippo...
+            </p>
+          ) : (
+            <p className="mt-3 text-xs text-[#0B2E2F]/45">
+              No rate has been selected yet.
+            </p>
+          )}
+        </div>
+
+        <div className="mt-5 rounded-xl border border-[#0B2E2F]/10 p-4">
+          <h4 className="text-sm font-semibold text-[#0B2E2F]">
+            Customs review
+          </h4>
+          {customs ? (
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label className="space-y-1.5 sm:col-span-3">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Description
+                </span>
+                <input
+                  value={customs.description}
+                  onChange={(event) =>
+                    updateCustomsField('description', event.target.value)
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Quantity
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  value={customs.quantity}
+                  onChange={(event) =>
+                    updateCustomsField(
+                      'quantity',
+                      Number(event.target.value) || 1,
+                    )
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Unit weight
+                </span>
+                <input
+                  value={customs.unitWeight}
+                  onChange={(event) =>
+                    updateCustomsField('unitWeight', event.target.value)
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Mass unit
+                </span>
+                <select
+                  value={customs.massUnit}
+                  onChange={(event) =>
+                    updateCustomsField('massUnit', event.target.value)
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 bg-white px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                >
+                  {['kg', 'g', 'oz', 'lb'].map((unit) => (
+                    <option key={unit} value={unit}>
+                      {unit}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Net weight
+                </span>
+                <input
+                  value={customs.netWeight}
+                  onChange={(event) =>
+                    updateCustomsField('netWeight', event.target.value)
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Unit value
+                </span>
+                <input
+                  value={customs.unitValueAmount}
+                  onChange={(event) =>
+                    updateCustomsField('unitValueAmount', event.target.value)
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Total value
+                </span>
+                <input
+                  value={customs.valueAmount}
+                  onChange={(event) =>
+                    updateCustomsField('valueAmount', event.target.value)
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Currency
+                </span>
+                <input
+                  value={customs.valueCurrency}
+                  maxLength={3}
+                  onChange={(event) =>
+                    updateCustomsField(
+                      'valueCurrency',
+                      event.target.value.toUpperCase(),
+                    )
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal uppercase outline-none focus:border-[#0B2E2F]"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Origin country
+                </span>
+                <input
+                  value={customs.originCountry}
+                  maxLength={2}
+                  onChange={(event) =>
+                    updateCustomsField(
+                      'originCountry',
+                      event.target.value.toUpperCase(),
+                    )
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal uppercase outline-none focus:border-[#0B2E2F]"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  HS/HTS
+                </span>
+                <input
+                  value={customs.hsCode}
+                  onChange={(event) =>
+                    updateCustomsField('hsCode', event.target.value)
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  ECCN / EAR99
+                </span>
+                <input
+                  value={customs.eccnEar99 || ''}
+                  onChange={(event) =>
+                    updateCustomsField('eccnEar99', event.target.value)
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Certify signer
+                </span>
+                <input
+                  value={customs.certifySigner}
+                  onChange={(event) =>
+                    updateCustomsField('certifySigner', event.target.value)
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Non-delivery
+                </span>
+                <select
+                  value={customs.nonDeliveryOption}
+                  onChange={(event) =>
+                    updateCustomsField('nonDeliveryOption', event.target.value)
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 bg-white px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                >
+                  <option value="RETURN">RETURN</option>
+                  <option value="ABANDON">ABANDON</option>
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Contents type
+                </span>
+                <select
+                  value={customs.contentsType}
+                  onChange={(event) =>
+                    updateCustomsField('contentsType', event.target.value)
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 bg-white px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                >
+                  <option value="MERCHANDISE">MERCHANDISE</option>
+                  <option value="SAMPLE">SAMPLE</option>
+                  <option value="GIFT">GIFT</option>
+                  <option value="DOCUMENTS">DOCUMENTS</option>
+                  <option value="RETURN_MERCHANDISE">RETURN_MERCHANDISE</option>
+                  <option value="HUMANITARIAN_DONATION">HUMANITARIAN_DONATION</option>
+                  <option value="OTHER">OTHER</option>
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Incoterm
+                </span>
+                <select
+                  value={customs.incoterm}
+                  onChange={(event) =>
+                    updateCustomsField('incoterm', event.target.value)
+                  }
+                  className="w-full rounded-lg border border-[#0B2E2F]/15 bg-white px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                >
+                  <option value="DDU">DDU</option>
+                  <option value="DDP">DDP</option>
+                </select>
+              </label>
+              <label className="space-y-1.5 sm:col-span-3">
+                <span className="text-xs font-semibold text-[#0B2E2F]/60">
+                  Manufacturer notes
+                </span>
+                <textarea
+                  value={customs.manufacturerNotes || ''}
+                  onChange={(event) =>
+                    updateCustomsField('manufacturerNotes', event.target.value)
+                  }
+                  rows={3}
+                  className="w-full resize-none rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm font-normal outline-none focus:border-[#0B2E2F]"
+                />
+              </label>
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-[#0B2E2F]/50">
+              Domestic shipment. Shippo customs data is not required for this label.
+            </p>
+          )}
+        </div>
+
         <div className="mt-5 flex justify-end gap-2">
           <button
             type="button"
@@ -170,7 +650,7 @@ function ManualLabelModal({
           </button>
           <button
             type="submit"
-            disabled={loading}
+            disabled={!canBuy}
             className="flex items-center gap-2 rounded-lg bg-[#0B2E2F] px-4 py-2 text-sm font-semibold text-[#F4F1EA] transition-colors hover:bg-[#0B2E2F]/90 disabled:opacity-40"
           >
             {loading ? (
@@ -308,12 +788,14 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
   );
 
   const handleManualLabel = useCallback(
-    async (shippingAddress: ManualLabelForm) => {
+    async (payload: ManualLabelPayload) => {
       setLoading('manual-label');
       setError(null);
       try {
         await postActionBody(order.orderId, 'manual-label', {
-          shippingAddress,
+          shippingAddress: payload.shippingAddress,
+          selectedShippingServiceId: payload.selectedShippingServiceId,
+          customs: payload.customs || undefined,
         });
         setShowManualLabelModal(false);
         onActionComplete();
@@ -352,6 +834,7 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
   const canRetryLabel =
     order.fulfillmentStatus === 'error' &&
     !order.labelUrl &&
+    order.fulfillmentProvider === 'shipengine' &&
     (order.paymentStatus === 'finished' || order.paymentStatus === 'paid');
   const canManualLabel =
     order.supportsLabelPurchase &&
@@ -408,20 +891,20 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
           </button>
         ) : null}
 
-        {/* Manual Address + Label */}
+        {/* Buy Shippo label */}
         {canManualLabel ? (
           <button
             onClick={() => setShowManualLabelModal(true)}
             disabled={loading !== null}
             className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 transition-colors hover:bg-emerald-100 disabled:opacity-40"
-            title="Edit destination address and purchase a label"
+            title="Review latest rates and purchase a label"
           >
             {loading === 'manual-label' ? (
               <Loader2 className="size-3.5 animate-spin" />
             ) : (
               <MapPin className="size-3.5" />
             )}
-            Address + Label
+            Buy Label
           </button>
         ) : null}
 
@@ -453,6 +936,19 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
           >
             <FileText className="size-3.5" />
             Label
+          </a>
+        ) : null}
+
+        {order.commercialInvoiceUrl ? (
+          <a
+            href={order.commercialInvoiceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 rounded-lg bg-[#0B2E2F]/5 px-2.5 py-1.5 text-xs font-medium text-[#0B2E2F] transition-colors hover:bg-[#0B2E2F]/10"
+            title="Open commercial invoice"
+          >
+            <FileText className="size-3.5" />
+            Invoice
           </a>
         ) : null}
 

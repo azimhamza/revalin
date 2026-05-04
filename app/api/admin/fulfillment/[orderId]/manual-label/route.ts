@@ -22,6 +22,33 @@ const shippingAddressSchema = z.object({
 
 const bodySchema = z.object({
   shippingAddress: shippingAddressSchema,
+  selectedShippingServiceId: z.string().trim().optional(),
+  customs: z.object({
+    description: z.string().trim().optional(),
+    quantity: z.coerce.number().int().positive().optional(),
+    unitWeight: z.string().trim().optional(),
+    netWeight: z.string().trim().optional(),
+    massUnit: z.enum(['g', 'kg', 'lb', 'oz']).optional(),
+    unitValueAmount: z.string().trim().optional(),
+    valueAmount: z.string().trim().optional(),
+    valueCurrency: z.string().trim().length(3).optional(),
+    originCountry: z.string().trim().length(2).optional(),
+    hsCode: z.string().trim().optional(),
+    eccnEar99: z.string().trim().optional(),
+    manufacturerNotes: z.string().trim().optional(),
+    certifySigner: z.string().trim().optional(),
+    contentsType: z.enum([
+      'DOCUMENTS',
+      'GIFT',
+      'SAMPLE',
+      'MERCHANDISE',
+      'HUMANITARIAN_DONATION',
+      'RETURN_MERCHANDISE',
+      'OTHER',
+    ]).optional(),
+    nonDeliveryOption: z.enum(['RETURN', 'ABANDON']).optional(),
+    incoterm: z.enum(['DDU', 'DDP']).optional(),
+  }).optional(),
 });
 
 export const POST = createApiRoute({
@@ -38,16 +65,19 @@ export const POST = createApiRoute({
         address2: body.shippingAddress.address2 || undefined,
         notes: body.shippingAddress.notes || undefined,
       },
+      selectedShippingServiceId: body.selectedShippingServiceId,
+      customs: body.customs,
     });
+    const fulfillment = order.fulfillment || order.shipengine || null;
 
     return {
       data: {
         orderId: params.orderId,
         fulfillmentStatus: order.fulfillmentStatus,
-        hasLabel: Boolean(order.shipengine?.labelUrl),
-        trackingCode: order.shipengine?.trackingCode || null,
-        labelUrl: order.shipengine?.labelUrl || null,
-        labelError: order.shipengine?.labelError || null,
+        hasLabel: Boolean(fulfillment?.labelUrl),
+        trackingCode: fulfillment?.trackingCode || null,
+        labelUrl: fulfillment?.labelUrl || null,
+        labelError: fulfillment?.labelError || null,
       },
     };
   },

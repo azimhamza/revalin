@@ -519,11 +519,6 @@ function PaymentBrandIcons({ className }: { className?: string }) {
       <img src="https://cdn.brandfetch.io/idhem73aId/theme/dark/logo.svg?c=1dxbfHSJFAPEGdCLU4o5B" alt="Visa" className="h-3 max-w-[28px] object-contain" />
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src="https://cdn.brandfetch.io/idFw8DodCr/theme/dark/symbol.svg?c=1dxbfHSJFAPEGdCLU4o5B" alt="Mastercard" className="h-3.5 max-w-[22px] object-contain" />
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="https://cdn.brandfetch.io/idnrCPuv87/theme/dark/logo.svg?c=1dxbfHSJFAPEGdCLU4o5B" alt="Apple Pay" className="h-3 max-w-[14px] object-contain" />
-      <span className="text-[10px] font-medium text-foreground/40">Apple Pay</span>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="https://cdn.brandfetch.io/idWNFFMbfp/w/400/h/400/theme/dark/icon.png?c=1dxbfHSJFAPEGdCLU4o5B" alt="Google Pay" className="h-3.5 max-w-[22px] object-contain" />
     </div>
   );
 }

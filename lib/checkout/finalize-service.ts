@@ -619,6 +619,10 @@ function mapShippingService(
     carrierCode: service.carrierCode?.trim() || undefined,
     serviceCode: service.serviceCode?.trim() || undefined,
     shipengineRateId: service.shipengineRateId?.trim() || undefined,
+    shippoRateId: service.shippoRateId?.trim() || undefined,
+    shippoShipmentId: service.shippoShipmentId?.trim() || undefined,
+    shippoCarrierAccountId: service.shippoCarrierAccountId?.trim() || undefined,
+    carrierPreferenceRank: service.carrierPreferenceRank,
     estimatedDays: service.estimatedDays,
     pickup: service.pickup,
     price: {
@@ -1393,7 +1397,7 @@ export function createFinalizeCheckoutSession(
         : subtotalAmount;
 
       let availableServices: CheckoutRatedService[] = [];
-      let shipEngineErrorMessage: string | null = null;
+      let liveShippingErrorMessage: string | null = null;
 
       try {
         availableServices = await dependencies.getShipEngineCheckoutServices({
@@ -1402,14 +1406,14 @@ export function createFinalizeCheckoutSession(
           subtotalAmount: checkoutSubtotalAmount,
           itemCount,
         });
-      } catch (shipEngineError) {
-        shipEngineErrorMessage =
-          shipEngineError instanceof Error
-            ? shipEngineError.message
+      } catch (liveShippingError) {
+        liveShippingErrorMessage =
+          liveShippingError instanceof Error
+            ? liveShippingError.message
             : 'Unable to validate the shipping address.';
         console.error(
-          'Unable to fetch ShipEngine rates for payment creation, falling back to Swell:',
-          shipEngineError,
+          'Unable to fetch live shipping rates for payment creation, falling back to Swell:',
+          liveShippingError,
         );
       }
 
@@ -1420,8 +1424,8 @@ export function createFinalizeCheckoutSession(
         );
       }
 
-      if (availableServices.length === 0 && shipEngineErrorMessage) {
-        throw apiError.badRequest(shipEngineErrorMessage, {
+      if (availableServices.length === 0 && liveShippingErrorMessage) {
+        throw apiError.badRequest(liveShippingErrorMessage, {
           code: 'address_validation_failed',
         });
       }

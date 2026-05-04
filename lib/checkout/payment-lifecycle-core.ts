@@ -572,9 +572,9 @@ export function createPaymentLifecycle(
       case 'affiliatePayout':
         return !order.affiliate?.id;
       case 'labelPurchase':
-        return Boolean(order.shipengine?.labelUrl);
+        return true;
       case 'shippingLabelEmail':
-        return !order.shipengine?.labelUrl;
+        return true;
       case 'shippedEmail':
         return true; // Now triggered manually by admin via fulfillment page
       default:

@@ -3,14 +3,17 @@
 import { useCallback, useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  AlertTriangle,
   Check,
   Copy,
   Loader2,
   Plus,
   RefreshCw,
+  Save,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { FulfillmentOrderListItem } from '@/lib/checkout/fulfillment-service';
+import type { ShippoFulfillmentSettings } from '@/lib/checkout/shippo-fulfillment-settings';
 import { FulfillmentActions } from './fulfillment-actions';
 
 export type FulfillmentTabKey =
@@ -81,6 +84,15 @@ type Props = {
   initialTotal: number;
   initialStatus: FulfillmentTabKey;
   isDev?: boolean;
+  initialShippoSettings: ShippoFulfillmentSettings;
+  shippoConfig: {
+    configured: boolean;
+    missing: readonly string[];
+    apiBaseUrl: string;
+    apiVersion: string;
+    labelFileType: string;
+    originCountry: string;
+  };
 };
 
 type ManualAddressForm = {
@@ -101,6 +113,7 @@ type ManualRate = {
   id: string;
   name: string;
   carrier?: string;
+  source?: 'shippo' | 'shipengine' | 'swell';
   estimatedDays?: number | null;
   price: {
     amount: string;
@@ -137,6 +150,8 @@ export function FulfillmentTable({
   initialTotal,
   initialStatus,
   isDev,
+  initialShippoSettings,
+  shippoConfig: initialShippoConfig,
 }: Props) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<FulfillmentTabKey>(initialStatus);
@@ -149,6 +164,11 @@ export function FulfillmentTable({
   const [manualError, setManualError] = useState<string | null>(null);
   const [manualQuote, setManualQuote] = useState<ManualQuote | null>(null);
   const [manualConfirmed, setManualConfirmed] = useState(false);
+  const [shippoSettings, setShippoSettings] = useState(initialShippoSettings);
+  const [shippoConfig, setShippoConfig] = useState(initialShippoConfig);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [manualForm, setManualForm] = useState({
     swellOrderId: '',
     payoutMethod: '',
@@ -162,6 +182,11 @@ export function FulfillmentTable({
     setOrders(initialOrders);
     setTotal(initialTotal);
   }, [initialOrders, initialStatus, initialTotal]);
+
+  useEffect(() => {
+    setShippoSettings(initialShippoSettings);
+    setShippoConfig(initialShippoConfig);
+  }, [initialShippoSettings, initialShippoConfig]);
 
   const visibleTabs = TABS.filter((tab) => !tab.devOnly || isDev);
 
@@ -227,6 +252,56 @@ export function FulfillmentTable({
     setManualError(null);
   }, []);
 
+  const updateShippoSetting = useCallback(
+    (field: keyof ShippoFulfillmentSettings, value: string) => {
+      setShippoSettings((current) => ({
+        ...current,
+        [field]: value,
+      }));
+      setSettingsMessage(null);
+      setSettingsError(null);
+    },
+    [],
+  );
+
+  const saveShippoSettings = useCallback(async () => {
+    setSettingsSaving(true);
+    setSettingsError(null);
+    setSettingsMessage(null);
+
+    try {
+      const response = await fetch('/api/admin/fulfillment/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(shippoSettings),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error?.message ||
+            `Failed to save Shippo settings (${response.status}).`,
+        );
+      }
+
+      if (payload?.data?.settings) {
+        setShippoSettings(payload.data.settings as ShippoFulfillmentSettings);
+      }
+      if (payload?.data?.shippoConfig) {
+        setShippoConfig(payload.data.shippoConfig);
+      }
+      setSettingsMessage('Shippo customs settings saved.');
+    } catch (error) {
+      setSettingsError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to save Shippo settings.',
+      );
+    } finally {
+      setSettingsSaving(false);
+    }
+  }, [shippoSettings]);
+
   const quoteManualRates = useCallback(async () => {
     setManualLoading(true);
     setManualError(null);
@@ -250,13 +325,13 @@ export function FulfillmentTable({
       if (!response.ok) {
         throw new Error(
           payload?.error?.message ||
-            `Failed to quote ShipEngine rates (${response.status}).`,
+            `Failed to quote live shipping rates (${response.status}).`,
         );
       }
 
       const quote = payload?.data?.quote as ManualQuote | undefined;
       if (!quote?.rates?.length) {
-        throw new Error('ShipEngine returned no rates for this order.');
+        throw new Error('No live shipping rates were returned for this order.');
       }
 
       setManualQuote(quote);
@@ -268,7 +343,7 @@ export function FulfillmentTable({
       setManualError(
         error instanceof Error
           ? error.message
-          : 'Failed to quote ShipEngine rates.',
+          : 'Failed to quote live shipping rates.',
       );
     } finally {
       setManualLoading(false);
@@ -361,13 +436,190 @@ export function FulfillmentTable({
       </div>
 
       <div className="rounded-xl border border-[#0B2E2F]/10 bg-white p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-[#0B2E2F]">
+              Shippo customs settings
+            </h2>
+            <p className="mt-1 text-xs text-[#0B2E2F]/50">
+              These defaults are shown again before any label is purchased.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={saveShippoSettings}
+            disabled={settingsSaving}
+            className="flex items-center gap-1.5 rounded-lg bg-[#0B2E2F] px-3 py-2 text-xs font-semibold text-[#F4F1EA] transition-colors hover:bg-[#0B2E2F]/90 disabled:opacity-40"
+          >
+            {settingsSaving ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Save className="size-3.5" />
+            )}
+            Save settings
+          </button>
+        </div>
+
+        {!shippoConfig.configured ? (
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              Shippo label purchase is blocked until env is configured:
+              {' '}
+              {shippoConfig.missing.join(', ')}
+            </span>
+          </div>
+        ) : null}
+
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <label className="space-y-1.5 md:col-span-2">
+            <span className="text-xs font-semibold text-[#0B2E2F]/60">
+              Description
+            </span>
+            <input
+              value={shippoSettings.customsDescription}
+              onChange={(event) => updateShippoSetting('customsDescription', event.target.value)}
+              className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none focus:border-[#0B2E2F]"
+            />
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-xs font-semibold text-[#0B2E2F]/60">
+              Unit weight
+            </span>
+            <input
+              value={shippoSettings.unitWeight}
+              onChange={(event) => updateShippoSetting('unitWeight', event.target.value)}
+              className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none focus:border-[#0B2E2F]"
+            />
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-xs font-semibold text-[#0B2E2F]/60">
+              Mass unit
+            </span>
+            <select
+              value={shippoSettings.massUnit}
+              onChange={(event) => updateShippoSetting('massUnit', event.target.value)}
+              className="w-full rounded-lg border border-[#0B2E2F]/15 bg-white px-3 py-2 text-sm text-[#0B2E2F] outline-none focus:border-[#0B2E2F]"
+            >
+              {['kg', 'g', 'oz', 'lb'].map((unit) => (
+                <option key={unit} value={unit}>{unit}</option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-xs font-semibold text-[#0B2E2F]/60">
+              Value min
+            </span>
+            <input
+              value={shippoSettings.unitValueMinAmount}
+              onChange={(event) => updateShippoSetting('unitValueMinAmount', event.target.value)}
+              className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none focus:border-[#0B2E2F]"
+            />
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-xs font-semibold text-[#0B2E2F]/60">
+              Value max
+            </span>
+            <input
+              value={shippoSettings.unitValueMaxAmount}
+              onChange={(event) => updateShippoSetting('unitValueMaxAmount', event.target.value)}
+              className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none focus:border-[#0B2E2F]"
+            />
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-xs font-semibold text-[#0B2E2F]/60">
+              Currency
+            </span>
+            <input
+              value={shippoSettings.valueCurrency}
+              onChange={(event) => updateShippoSetting('valueCurrency', event.target.value.toUpperCase())}
+              maxLength={3}
+              className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none focus:border-[#0B2E2F]"
+            />
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-xs font-semibold text-[#0B2E2F]/60">
+              Origin country
+            </span>
+            <input
+              value={shippoSettings.originCountry}
+              onChange={(event) => updateShippoSetting('originCountry', event.target.value.toUpperCase())}
+              maxLength={2}
+              className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none focus:border-[#0B2E2F]"
+            />
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-xs font-semibold text-[#0B2E2F]/60">
+              HS/HTS code
+            </span>
+            <input
+              value={shippoSettings.hsCode}
+              onChange={(event) => updateShippoSetting('hsCode', event.target.value)}
+              className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none focus:border-[#0B2E2F]"
+            />
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-xs font-semibold text-[#0B2E2F]/60">
+              ECCN / EAR99
+            </span>
+            <input
+              value={shippoSettings.eccnEar99}
+              onChange={(event) => updateShippoSetting('eccnEar99', event.target.value)}
+              className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none focus:border-[#0B2E2F]"
+            />
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-xs font-semibold text-[#0B2E2F]/60">
+              Certify signer
+            </span>
+            <input
+              value={shippoSettings.certifySigner}
+              onChange={(event) => updateShippoSetting('certifySigner', event.target.value)}
+              className="w-full rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none focus:border-[#0B2E2F]"
+            />
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-xs font-semibold text-[#0B2E2F]/60">
+              Non-delivery
+            </span>
+            <select
+              value={shippoSettings.nonDeliveryOption}
+              onChange={(event) => updateShippoSetting('nonDeliveryOption', event.target.value)}
+              className="w-full rounded-lg border border-[#0B2E2F]/15 bg-white px-3 py-2 text-sm text-[#0B2E2F] outline-none focus:border-[#0B2E2F]"
+            >
+              <option value="RETURN">RETURN</option>
+              <option value="ABANDON">ABANDON</option>
+            </select>
+          </label>
+          <label className="space-y-1.5 md:col-span-4">
+            <span className="text-xs font-semibold text-[#0B2E2F]/60">
+              Manufacturer notes
+            </span>
+            <textarea
+              value={shippoSettings.manufacturerNotes}
+              onChange={(event) => updateShippoSetting('manufacturerNotes', event.target.value)}
+              rows={3}
+              className="w-full resize-none rounded-lg border border-[#0B2E2F]/15 px-3 py-2 text-sm text-[#0B2E2F] outline-none focus:border-[#0B2E2F]"
+            />
+          </label>
+        </div>
+
+        {settingsMessage ? (
+          <p className="mt-3 text-xs text-emerald-700">{settingsMessage}</p>
+        ) : null}
+        {settingsError ? (
+          <p className="mt-3 text-xs text-red-600">{settingsError}</p>
+        ) : null}
+      </div>
+
+      <div className="rounded-xl border border-[#0B2E2F]/10 bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-[#0B2E2F]">
               Manual fulfillment
             </h2>
             <p className="mt-1 text-xs text-[#0B2E2F]/50">
-              Import a Swell order, quote ShipEngine rates, then buy the label.
+              Import a Swell order, quote live carrier rates, then add it to the label queue.
             </p>
           </div>
           <button
@@ -483,7 +735,7 @@ export function FulfillmentTable({
                     </p>
                   </div>
                   <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-[#0B2E2F]/60">
-                    {manualQuote.rates.length} ShipEngine rate
+                    {manualQuote.rates.length} live rate
                     {manualQuote.rates.length === 1 ? '' : 's'}
                   </span>
                 </div>
@@ -514,7 +766,7 @@ export function FulfillmentTable({
                         className="sr-only"
                       />
                       <span className="block text-xs font-semibold text-[#0B2E2F]/60">
-                        {rate.carrier || 'ShipEngine'}
+                        {rate.carrier || 'Carrier'}
                       </span>
                       <span className="mt-1 block text-sm font-semibold text-[#0B2E2F]">
                         {rate.name}
@@ -535,7 +787,7 @@ export function FulfillmentTable({
                     className="mt-0.5 size-4 rounded border-[#0B2E2F]/30 accent-[#0B2E2F]"
                   />
                   <span className="text-xs text-[#0B2E2F]/70">
-                    I verified the Swell order ID, destination address, and selected ShipEngine rate.
+                    I verified the Swell order ID, destination address, and selected carrier rate.
                   </span>
                 </label>
               </div>
@@ -587,7 +839,7 @@ export function FulfillmentTable({
                 ) : (
                   <Plus className="size-3.5" />
                 )}
-                Create label
+                Create fulfillment
               </button>
             </div>
           </div>
@@ -605,6 +857,7 @@ export function FulfillmentTable({
               <th className="px-4 py-3">Items</th>
               <th className="px-4 py-3">Carrier / Service</th>
               <th className="px-4 py-3">Tracking</th>
+              <th className="px-4 py-3">Inventory</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Age</th>
               <th className="px-4 py-3 text-right">Actions</th>
@@ -614,7 +867,7 @@ export function FulfillmentTable({
             {orders.length === 0 ? (
               <tr>
                 <td
-                  colSpan={9}
+                  colSpan={10}
                   className="px-4 py-12 text-center text-[#0B2E2F]/40"
                 >
                   No orders in this queue.
@@ -709,6 +962,30 @@ export function FulfillmentTable({
                     </div>
                   ) : (
                     <span className="text-[#0B2E2F]/30">—</span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  {order.inventoryConsumption.length > 0 ? (
+                    <div className="flex max-w-[220px] flex-wrap gap-1">
+                      {order.inventoryConsumption.slice(0, 4).map((item) => (
+                        <span
+                          key={item.movementId}
+                          className="inline-flex rounded-none border border-[#0B2E2F]/10 bg-[#0B2E2F]/[0.03] px-1.5 py-0.5 text-[10px] font-semibold text-[#0B2E2F]/70"
+                          title={`${item.itemName} after ${item.quantityAfter}`}
+                        >
+                          {item.itemCode} {item.quantityDelta}
+                        </span>
+                      ))}
+                      {order.inventoryConsumption.length > 4 ? (
+                        <span className="text-[10px] text-[#0B2E2F]/40">
+                          +{order.inventoryConsumption.length - 4}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <span className="text-[11px] text-[#0B2E2F]/35">
+                      Not posted
+                    </span>
                   )}
                 </td>
                 <td className="px-4 py-3">

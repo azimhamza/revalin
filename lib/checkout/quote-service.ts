@@ -19,6 +19,7 @@ import {
 } from '@/lib/checkout/swell-order-management';
 import type { CheckoutShippingAddress } from '@/lib/checkout/types';
 import { getShipEngineMissingConfig, isShipEngineConfigured } from '@/lib/checkout/shipengine';
+import { getShippoMissingConfig, isShippoConfigured } from '@/lib/checkout/shippo';
 import { applyZonosLandedCostToServices } from '@/lib/checkout/zonos';
 
 type CheckoutSessionCartSnapshot = {
@@ -127,31 +128,31 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
   const currencyCode = args.cartSnapshot.currencyCode;
   const subtotalAmount = getCartSnapshotSubtotal(args.cartSnapshot);
   const itemCount = getCartSnapshotItemCount(args.cartSnapshot);
-  let shipEngineErrorMessage: string | null = null;
+  let liveShippingErrorMessage: string | null = null;
   let swellCartId: string | null = null;
 
   try {
     let preferredServices: CheckoutRatedService[] = [];
 
     try {
-      const shipEngineServices = await getShipEngineCheckoutServices({
+      const liveShippingServices = await getShipEngineCheckoutServices({
         shippingAddress: args.shippingAddress,
         currencyCode,
         subtotalAmount,
         itemCount,
       });
 
-      if (shipEngineServices.length > 0) {
-        preferredServices = shipEngineServices;
+      if (liveShippingServices.length > 0) {
+        preferredServices = liveShippingServices;
       }
-    } catch (shipEngineError) {
-      shipEngineErrorMessage =
-        shipEngineError instanceof Error
-          ? shipEngineError.message
+    } catch (liveShippingError) {
+      liveShippingErrorMessage =
+        liveShippingError instanceof Error
+          ? liveShippingError.message
           : 'Unable to validate the shipping address.';
       console.error(
-        'Unable to fetch ShipEngine rates, falling back to Swell:',
-        shipEngineError,
+        'Unable to fetch live shipping rates, falling back to Swell:',
+        liveShippingError,
       );
     }
 
@@ -279,7 +280,8 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
             .filter((message): message is string => Boolean(message))
         : [];
       const hasShipmentRating = Boolean(swellCart.shipment_rating);
-      const hasShipEngineFallback = isShipEngineConfigured();
+      const hasLiveShippingFallback =
+        isShippoConfigured() || isShipEngineConfigured();
 
       console.error('No shipping services available for checkout quote.', {
         cartId: swellCart.id,
@@ -287,22 +289,25 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
         state: swellShipping.state,
         hasShipmentRating,
         ratingErrors,
-        hasShipEngineFallback,
+        hasLiveShippingFallback,
       });
 
-      if (!hasShipmentRating && !hasShipEngineFallback) {
-        const missingShipEngineConfig = getShipEngineMissingConfig();
+      if (!hasShipmentRating && !hasLiveShippingFallback) {
+        const missingLiveConfig = [
+          ...getShippoMissingConfig(),
+          ...getShipEngineMissingConfig(),
+        ];
         throw apiError.providerUnavailable(
-          missingShipEngineConfig.length > 0
-            ? `Shipping quotes are unavailable because Swell returned no rates and ShipEngine is missing: ${missingShipEngineConfig.join(', ')}.`
-            : 'Shipping quotes are unavailable because no shipping provider is configured. Configure Swell shipping services or complete the ShipEngine fallback settings.',
+          missingLiveConfig.length > 0
+            ? `Shipping quotes are unavailable because Swell returned no rates and live shipping is missing: ${missingLiveConfig.join(', ')}.`
+            : 'Shipping quotes are unavailable because no shipping provider is configured. Configure Swell shipping services or complete the live shipping settings.',
           { provider: 'shipping' },
           false,
         );
       }
 
-      if (shipEngineErrorMessage) {
-        throw apiError.badRequest(shipEngineErrorMessage);
+      if (liveShippingErrorMessage) {
+        throw apiError.badRequest(liveShippingErrorMessage);
       }
 
       throw apiError.badRequest(

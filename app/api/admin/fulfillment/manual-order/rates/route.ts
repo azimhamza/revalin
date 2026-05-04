@@ -24,14 +24,14 @@ const bodySchema = z.object({
 
 function normalizeRateQuoteError(error: unknown) {
   if (!(error instanceof Error)) {
-    return apiError.internal('Failed to quote ShipEngine rates.');
+    return apiError.internal('Failed to quote live shipping rates.');
   }
 
   if (/already in fulfillment/i.test(error.message)) {
     return apiError.conflict(error.message);
   }
 
-  if (/required|not found|no rates|address|shipengine|shipping/i.test(error.message)) {
+  if (/required|not found|no rates|address|shipengine|shippo|shipping/i.test(error.message)) {
     return apiError.badRequest(error.message);
   }
 

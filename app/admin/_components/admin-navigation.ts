@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   BellRing,
   BookOpen,
+  Boxes,
   CreditCard,
   FileText,
   Handshake,
@@ -9,6 +10,7 @@ import {
   Landmark,
   Megaphone,
   Package,
+  ReceiptText,
   Users,
   Wallet,
 } from "lucide-react";
@@ -38,6 +40,18 @@ export const ADMIN_NAVIGATION_ITEMS: AdminNavigationItem[] = [
     href: "/admin/product-notifications",
     description: "Review variant demand, charts, and send restock emails.",
     icon: BellRing,
+  },
+  {
+    title: "Inventory",
+    href: "/admin/inventory",
+    description: "Track internal stock, supplies, packaging, and fulfillment usage.",
+    icon: Boxes,
+  },
+  {
+    title: "Purchasing",
+    href: "/admin/purchasing",
+    description: "Manage vendors, purchase orders, receiving, and payment proof.",
+    icon: ReceiptText,
   },
   {
     title: "Research",
