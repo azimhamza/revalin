@@ -37,7 +37,7 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `SHIPENGINE_ORIGIN_CITY`, `SHIPENGINE_ORIGIN_STATE`, `SHIPENGINE_ORIGIN_COUNTRY`, `SHIPENGINE_ORIGIN_NAME`, `SHIPENGINE_ORIGIN_COMPANY_NAME`, `SHIPENGINE_ORIGIN_PHONE` (optional origin fields used for rating and labels; company name falls back to `SHIPENGINE_ORIGIN_NAME`)
 - `SHIPENGINE_CARRIER_IDS` (optional comma-separated carrier IDs; otherwise carriers are auto-discovered)
 - `SHIPENGINE_US_PREFERRED_CARRIERS` (optional comma-separated carrier name/code matchers for US ShipEngine quotes; defaults to `fedex,dhl`)
-- `SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS` (optional; defaults to `true`, so US ShipEngine quotes return no rates unless a preferred carrier is available. Set to `false` only if your postal carrier setup can create US labels.)
+- `SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS=true` (optional; when enabled, US ShipEngine quotes return no rates unless a preferred carrier is available. By default, checkout falls back to all returned ShipEngine rates so customers are not blocked when FedEx/DHL are unavailable.)
 - `SHIPENGINE_PARCEL_LENGTH_IN`, `SHIPENGINE_PARCEL_WIDTH_IN`, `SHIPENGINE_PARCEL_HEIGHT_IN`, `SHIPENGINE_DEFAULT_ITEM_WEIGHT_OZ` (optional parcel defaults for small-vial shipments)
 - `ZONOS_CREDENTIAL_TOKEN` (optional; enables Zonos landed-cost duties, import taxes, and fees on non-domestic checkout shipping)
 - Canada Post US labels require a separate Zonos Account Key configured in your Canada Post / ShipStation / ShipEngine carrier settings. `ZONOS_CREDENTIAL_TOKEN` is not that account key and is not forwarded to Canada Post by this app.

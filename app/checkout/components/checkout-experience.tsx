@@ -12,12 +12,6 @@ import { useCart } from '@/components/cart/cart-context';
 import { AddToCartButton } from '@/components/cart/add-to-cart';
 import { VariantOptionSelectorComponent, useProductImages } from '@/components/products/variant-selector';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -1035,7 +1029,6 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const [isLoadingOrder, setIsLoadingOrder] = useState(false);
   const [isLoadingQuote, setIsLoadingQuote] = useState(false);
   const [isCreatingPayment, setIsCreatingPayment] = useState(false);
-  const [isCardCheckoutOpen, setIsCardCheckoutOpen] = useState(false);
   const [isRefreshingStatus, setIsRefreshingStatus] = useState(false);
   const [isReleasingOrder, setIsReleasingOrder] = useState(false);
   const [releaseAction, setReleaseAction] = useState<'edit' | 'switch' | null>(null);
@@ -2023,7 +2016,6 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     if (paymentMethod !== 'card' || !isCardCheckoutDisabled) return;
 
     setPaymentMethod('crypto');
-    setIsCardCheckoutOpen(false);
   }, [activeOrder, isCardCheckoutDisabled, paymentMethod]);
 
   const pollingId = checkoutSession?.order.payment ? getPollingId(checkoutSession.order.payment) : undefined;
@@ -2598,7 +2590,6 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
     if (paymentMethod === 'card' && isCardCheckoutDisabled) {
       setError(cardCheckoutMinimumMessage);
-      setIsCardCheckoutOpen(false);
       return;
     }
 
@@ -2731,8 +2722,6 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       updateCheckoutUrl(data.order.orderId, data.accessKey);
 
       if (data.redirectUrl) {
-        setIsCardCheckoutOpen(false);
-
         const paymentWindow = shieldClimbPaymentWindow.current;
         shieldClimbPaymentWindow.current = null;
 
@@ -2765,7 +2754,6 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       }
       shieldClimbPaymentWindow.current = null;
       setError(submitError instanceof Error ? submitError.message : 'Unable to create payment.');
-      setIsCardCheckoutOpen(false);
     } finally {
       paymentSubmitInFlight.current = false;
       setIsCreatingPayment(false);
@@ -2792,12 +2780,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
     if (paymentMethod === 'card' && isCardCheckoutDisabled) {
       setError(cardCheckoutMinimumMessage);
-      setIsCardCheckoutOpen(false);
       return;
     }
 
     if (paymentMethod === 'card') {
-      setIsCardCheckoutOpen(true);
+      await continueToCardCheckout();
       return;
     }
 
@@ -3730,10 +3717,96 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                         ) : null}
                       </div>
                     ) : (
-                      <div className="mt-3 space-y-2">
-                        <p className="px-1 text-xs text-foreground/45">
-                          Want to save 5%? Choose <button type="button" onClick={() => selectPaymentMethod('crypto')} className="font-semibold text-[#0B2E2F] underline underline-offset-2">Direct Crypto</button> above and pay from your wallet.
-                        </p>
+                      <div className="mt-3 rounded-2xl border border-border/70 bg-background/60 px-4 py-4">
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F]/8 text-[#0B2E2F]">
+                            <Lock className="size-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold">Card details</p>
+                            <p className="mt-1 text-xs leading-5 text-foreground/50">
+                              Encrypted. Revalin never stores your card details. Only transaction IDs and card last four digits are stored after approval.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-4 space-y-3">
+                          <label className="flex flex-col gap-1.5" htmlFor="checkout-card-number">
+                            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">Card number</span>
+                            <Input
+                              id="checkout-card-number"
+                              name="cc-number"
+                              type="text"
+                              inputMode="numeric"
+                              autoComplete="cc-number"
+                              autoCapitalize="off"
+                              autoCorrect="off"
+                              required={paymentMethod === 'card'}
+                              minLength={12}
+                              maxLength={23}
+                              value={cardNumber}
+                              onChange={event => {
+                                setCardNumber(normalizeCardNumberInput(event.target.value));
+                                if (error === 'Enter valid card number, expiry, and CVV.') {
+                                  setError(null);
+                                }
+                              }}
+                              placeholder="1234 1234 1234 1234"
+                              className="h-11 rounded-xl border-border bg-white"
+                            />
+                          </label>
+                          <div className="grid grid-cols-2 gap-3">
+                            <label className="flex flex-col gap-1.5" htmlFor="checkout-card-expiry">
+                              <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">Expiry</span>
+                              <Input
+                                id="checkout-card-expiry"
+                                name="cc-exp"
+                                type="text"
+                                inputMode="numeric"
+                                autoComplete="cc-exp"
+                                autoCapitalize="off"
+                                autoCorrect="off"
+                                required={paymentMethod === 'card'}
+                                maxLength={5}
+                                value={cardExpiry}
+                                onChange={event => {
+                                  setCardExpiry(normalizeCardExpiryInput(event.target.value));
+                                  if (error === 'Enter valid card number, expiry, and CVV.') {
+                                    setError(null);
+                                  }
+                                }}
+                                placeholder="MM/YY"
+                                className="h-11 rounded-xl border-border bg-white"
+                              />
+                            </label>
+                            <label className="flex flex-col gap-1.5" htmlFor="checkout-card-cvv">
+                              <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">CVV</span>
+                              <Input
+                                id="checkout-card-cvv"
+                                name="cc-csc"
+                                type="text"
+                                inputMode="numeric"
+                                autoComplete="cc-csc"
+                                autoCapitalize="off"
+                                autoCorrect="off"
+                                required={paymentMethod === 'card'}
+                                minLength={3}
+                                maxLength={4}
+                                value={cardCvv}
+                                onChange={event => {
+                                  setCardCvv(event.target.value.replace(/\D/g, '').slice(0, 4));
+                                  if (error === 'Enter valid card number, expiry, and CVV.') {
+                                    setError(null);
+                                  }
+                                }}
+                                placeholder="123"
+                                className="h-11 rounded-xl border-border bg-white"
+                              />
+                            </label>
+                          </div>
+                          <p className="px-1 text-xs text-foreground/45">
+                            Want to save 5%? Choose <button type="button" onClick={() => selectPaymentMethod('crypto')} className="font-semibold text-[#0B2E2F] underline underline-offset-2">Direct Crypto</button> above and pay from your wallet.
+                          </p>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -3848,7 +3921,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                       ) : (
                         <>
                           <Lock className="size-4" />
-                          Place Order — Secure
+                          {paymentMethod === 'card' ? 'Place Order & Pay' : 'Place Order — Secure'}
                         </>
                       )}
                     </Button>
@@ -4521,114 +4594,6 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         </div>
       </div>
 
-      {/* ── Card checkout overlay ── */}
-      <Dialog open={isCardCheckoutOpen} onOpenChange={() => {}}>
-        <DialogContent className="max-w-[380px] gap-0 rounded-[26px] border border-border/70 bg-card p-0 shadow-[0_20px_48px_rgba(11,46,47,0.08)] [&>button]:hidden">
-          <DialogHeader className="sr-only">
-            <DialogTitle>Secure checkout</DialogTitle>
-          </DialogHeader>
-
-          {/* Header */}
-          <div className="p-6 pb-4">
-            <div className="flex items-center gap-3">
-              <div className="flex size-10 items-center justify-center rounded-full bg-[#0B2E2F]">
-                <Lock className="size-[18px] text-[#F4F1EA]" />
-              </div>
-              <div>
-                <p className="text-[15px] font-semibold tracking-tight text-[#0B2E2F]">Card payment</p>
-                <p className="text-xs text-foreground/50">Processed securely by Bankful</p>
-              </div>
-            </div>
-            <div className="mt-4 rounded-xl border border-border/60 bg-background px-4 py-3.5">
-              <p className="text-[13px] leading-5 text-foreground/70">Your order is created only after the card is approved. Card number, expiry, and CVV are sent directly to the payment processor and are not stored.</p>
-            </div>
-          </div>
-
-          {/* Card fields */}
-          <div className="px-6 pb-5">
-            <div className="space-y-3">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/50">Card number</span>
-                <Input
-                  inputMode="numeric"
-                  autoComplete="cc-number"
-                  value={cardNumber}
-                  onChange={event => setCardNumber(normalizeCardNumberInput(event.target.value))}
-                  placeholder="1234 1234 1234 1234"
-                  className="h-11 rounded-xl border-border bg-background"
-                />
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/50">Expiry</span>
-                  <Input
-                    inputMode="numeric"
-                    autoComplete="cc-exp"
-                    value={cardExpiry}
-                    onChange={event => setCardExpiry(normalizeCardExpiryInput(event.target.value))}
-                    placeholder="MM/YY"
-                    className="h-11 rounded-xl border-border bg-background"
-                  />
-                </label>
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/50">CVV</span>
-                  <Input
-                    inputMode="numeric"
-                    autoComplete="cc-csc"
-                    value={cardCvv}
-                    onChange={event => setCardCvv(event.target.value.replace(/\D/g, '').slice(0, 4))}
-                    placeholder="123"
-                    className="h-11 rounded-xl border-border bg-background"
-                  />
-                </label>
-              </div>
-              <div className="flex items-start gap-2 rounded-xl border border-border/60 bg-background px-3.5 py-3">
-                <Lock className="mt-0.5 size-3.5 shrink-0 text-[#0B2E2F]" />
-                <p className="text-[12px] leading-5 text-foreground/60">
-                  Revalin stores only the Bankful transaction IDs and card last four digits after approval.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Action footer */}
-          <div className="border-t border-border/50 px-6 py-4">
-            <div className="flex flex-col gap-2.5">
-              <Button
-                type="button"
-                onClick={() => void continueToCardCheckout()}
-                disabled={isCreatingPayment}
-                className="w-full"
-              >
-                {isCreatingPayment ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Opening secure payment...
-                  </>
-                ) : (
-                  <>
-                    Pay securely
-                    <ArrowRight className="size-4" />
-                  </>
-                )}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => {
-                  if (!isCreatingPayment) {
-                    setIsCardCheckoutOpen(false);
-                  }
-                }}
-                disabled={isCreatingPayment}
-                className="w-full"
-              >
-                Back to checkout
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

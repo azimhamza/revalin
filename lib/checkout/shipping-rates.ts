@@ -48,7 +48,7 @@ const US_SHIPENGINE_PREFERRED_CARRIER_PATTERNS = (
   .filter(Boolean);
 
 const SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS =
-  process.env.SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS !== 'false';
+  process.env.SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS === 'true';
 
 function sortServicesByPrice<T extends CheckoutRatedService>(services: T[]) {
   return [...services].sort((left, right) => Number(left.price.amount) - Number(right.price.amount));
@@ -190,7 +190,7 @@ function applyUsShipEngineCarrierPreference(args: {
   shippingAddress: CheckoutShippingAddress;
   services: ShipEngineCheckoutRate[];
 }) {
-  if (!isUsShippingAddress(args.shippingAddress)) {
+  if (!isUsShippingAddress(args.shippingAddress) || args.services.length === 0) {
     return args.services;
   }
 
@@ -200,6 +200,16 @@ function applyUsShipEngineCarrierPreference(args: {
   }
 
   if (SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS) {
+    console.warn(
+      'ShipEngine returned no preferred US carrier rates and the preferred carrier requirement is enabled.',
+      {
+        preferredCarriers: US_SHIPENGINE_PREFERRED_CARRIER_PATTERNS,
+        returnedCarriers: Array.from(
+          new Set(args.services.map(service => service.carrier || service.carrierCode || 'unknown'))
+        ),
+      },
+    );
+
     return [];
   }
 
