@@ -1167,6 +1167,28 @@ export function CheckoutExperience({
     const current = checkoutSessionRef.current;
     return current?.accessKey === nextAccessKey && current.order.orderId === nextOrderId;
   };
+  const openHostedPaymentWindowPlaceholder = () => {
+    try {
+      const paymentWindow = window.open('', '_blank');
+      if (!paymentWindow) return null;
+
+      paymentWindow.opener = null;
+      try {
+        paymentWindow.document.title = 'Opening payment...';
+        paymentWindow.document.body.style.margin = '0';
+        paymentWindow.document.body.style.fontFamily =
+          'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+        paymentWindow.document.body.innerHTML =
+          '<div style="min-height:100vh;display:grid;place-items:center;background:#f4f1ea;color:#0b2e2f"><div style="text-align:center"><div style="font-size:16px;font-weight:700">Opening secure payment...</div><div style="margin-top:8px;font-size:13px;opacity:.7">You can return to Revalin after paying.</div></div></div>';
+      } catch {
+        // The tab can still be redirected even if writing the placeholder fails.
+      }
+
+      return paymentWindow;
+    } catch {
+      return null;
+    }
+  };
   const selectedQuoteService =
     quote?.services.find(service => service.id === selectedShippingServiceId) ||
     quote?.services.find(service => service.id === quote.selectedServiceId) ||
@@ -1833,7 +1855,7 @@ export function CheckoutExperience({
 
   useEffect(() => {
     if (!isDraftHydrated) return;
-    if (orderId || accessKey || activeOrder) return;
+    if (orderId || accessKey || checkoutSessionRef.current?.order) return;
 
     let cancelled = false;
 
@@ -1946,7 +1968,6 @@ export function CheckoutExperience({
     };
   }, [
     accessKey,
-    activeOrder,
     clearStoredCheckoutResume,
     discountParam,
     followCheckoutOrder,
@@ -1957,13 +1978,15 @@ export function CheckoutExperience({
   ]);
 
   useEffect(() => {
+    const currentCheckoutSession = checkoutSessionRef.current;
+
     if (!orderId || !accessKey) {
       const finalized = recentlyFinalizedCheckout.current;
       if (finalized && finalized.expiresAt > Date.now()) return;
       recentlyFinalizedCheckout.current = null;
       restoreRequestVersion.current += 1;
       setIsLoadingOrder(false);
-      if (activeOrder) return;
+      if (currentCheckoutSession?.order) return;
       setCheckoutSession(null);
       return;
     }
@@ -2039,6 +2062,7 @@ export function CheckoutExperience({
         if (
           cartSignature !== 'empty' &&
           !isInteracOrder(data.order.payment) &&
+          !isSquareOrder(data.order.payment) &&
           liveCartSignature !== restoredOrderSignature &&
           normalizedPaymentStatus !== 'finished' &&
           normalizedPaymentStatus !== 'paid'
@@ -2113,7 +2137,6 @@ export function CheckoutExperience({
     };
   }, [
     accessKey,
-    activeOrder,
     cartSignature,
     clearStoredCheckoutResume,
     discountParam,
@@ -2958,16 +2981,24 @@ export function CheckoutExperience({
 
       updateCheckoutUrl(data.order.orderId, data.accessKey);
 
-      if (data.redirectUrl) {
+      const hostedRedirectUrl =
+        data.redirectUrl ||
+        (isSquareOrder(data.order.payment)
+          ? data.order.payment.checkoutUrl
+          : isShieldClimbOrder(data.order.payment)
+            ? data.order.payment.redirectUrl
+            : null);
+
+      if (hostedRedirectUrl) {
         const paymentWindow = shieldClimbPaymentWindow.current;
         shieldClimbPaymentWindow.current = null;
 
         if (paymentWindow && !paymentWindow.closed) {
-          paymentWindow.location.href = data.redirectUrl;
+          paymentWindow.location.href = hostedRedirectUrl;
           paymentWindow.focus();
         } else {
           const openedWindow = window.open(
-            data.redirectUrl,
+            hostedRedirectUrl,
             '_blank',
             'noopener,noreferrer',
           );
@@ -2982,6 +3013,11 @@ export function CheckoutExperience({
 
         return;
       }
+
+      if (shieldClimbPaymentWindow.current && !shieldClimbPaymentWindow.current.closed) {
+        shieldClimbPaymentWindow.current.close();
+      }
+      shieldClimbPaymentWindow.current = null;
     } catch (submitError: unknown) {
       if (
         shieldClimbPaymentWindow.current &&
@@ -3036,6 +3072,20 @@ export function CheckoutExperience({
     if (paymentMethod === 'card') {
       await continueToCardCheckout();
       return;
+    }
+
+    if (paymentMethod === 'square') {
+      if (!selectedShippingServiceId) {
+        setError('Select a shipping method before creating the payment.');
+        return;
+      }
+
+      if (!squareFallbackAvailable) {
+        setError('Hosted card checkout is not available right now.');
+        return;
+      }
+
+      shieldClimbPaymentWindow.current = openHostedPaymentWindowPlaceholder();
     }
 
     await submitCheckoutPayment();

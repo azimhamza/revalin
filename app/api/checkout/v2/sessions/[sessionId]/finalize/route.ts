@@ -19,6 +19,7 @@ import {
   updateCheckoutSession,
 } from '@/lib/checkout/session-store';
 import type { CheckoutOrderPublic } from '@/lib/checkout/types';
+import { isShieldClimbPayment, isSquarePayment } from '@/lib/checkout/types';
 import { buildPublicCheckoutOrder } from '@/lib/checkout/public-order';
 import { linkCurrentResearchConsentToOrder } from '@/lib/compliance/research-access-consent';
 
@@ -27,6 +28,13 @@ const paramsSchema = z.object({
 });
 
 export const dynamic = 'force-dynamic';
+
+function getHostedPaymentRedirectUrl(order: Awaited<ReturnType<typeof getCheckoutOrder>>) {
+  if (!order) return null;
+  if (isShieldClimbPayment(order.payment)) return order.payment.redirectUrl;
+  if (isSquarePayment(order.payment)) return order.payment.checkoutUrl;
+  return null;
+}
 
 export const POST = createApiRoute({
   route: '/api/checkout/v2/sessions/:sessionId/finalize',
@@ -59,10 +67,7 @@ export const POST = createApiRoute({
             session: toCheckoutSessionState(current),
             accessKey: current.finalizedAccessKey,
             order: await buildPublicCheckoutOrder(existingOrder),
-            redirectUrl:
-              existingOrder.payment.provider === 'shieldclimb'
-                ? existingOrder.payment.redirectUrl
-                : null,
+            redirectUrl: getHostedPaymentRedirectUrl(existingOrder),
           },
         };
       }
