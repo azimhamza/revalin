@@ -1016,6 +1016,10 @@ export async function updateSwellCoupon(
   );
 }
 
+export async function getSwellCoupon(couponId: string) {
+  return swellBackendRequest<SwellBackendCoupon>("GET", `/coupons/${couponId}`);
+}
+
 export async function deleteSwellCoupon(couponId: string) {
   await swellBackendRequest("DELETE", `/coupons/${couponId}`);
 }

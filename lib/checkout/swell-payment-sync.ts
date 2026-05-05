@@ -31,6 +31,7 @@ export async function syncCheckoutOrderToSwell(
   await updateSwellOrder(order.swell.orderId, {
     // Suppress Swell's built-in emails — all emails sent via Loops.
     $notify: false,
+    account_id: order.swell.accountId,
     billing: {
       method: manualMethod,
       intent: {
@@ -114,6 +115,7 @@ export async function syncShieldClimbOrderToSwell(order: CheckoutOrderRecord) {
   await updateSwellOrder(order.swell.orderId, {
     // Suppress Swell's built-in emails — all emails sent via Loops.
     $notify: false,
+    account_id: order.swell.accountId,
     billing: {
       method: manualMethod,
       intent: {
@@ -198,6 +200,7 @@ export async function syncBankfulOrderToSwell(order: CheckoutOrderRecord) {
   await updateSwellOrder(order.swell.orderId, {
     // Suppress Swell's built-in emails — all emails sent via Loops.
     $notify: false,
+    account_id: order.swell.accountId,
     billing: {
       method: manualMethod,
       intent: {
@@ -319,6 +322,7 @@ export async function syncInteracOrderToSwell(order: CheckoutOrderRecord) {
   try {
     await updateSwellOrder(claimedOrder.swell.orderId, {
       $notify: false,
+      account_id: claimedOrder.swell.accountId,
       billing: {
         method: manualMethod,
         intent: {

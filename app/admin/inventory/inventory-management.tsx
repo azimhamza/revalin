@@ -3,10 +3,15 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
+  BarChart3,
   Boxes,
   ClipboardList,
   Loader2,
+  Minus,
   PackageCheck,
+  PackageMinus,
+  PackagePlus,
   Plus,
   RefreshCw,
   Search,
@@ -71,6 +76,10 @@ function statusLabel(status: InventoryItemSummary["stockStatus"]) {
   return "Ready";
 }
 
+function itemTypeLabel(value: string) {
+  return value.replace(/_/g, " ");
+}
+
 function movementLabel(value: string) {
   return value.replace(/_/g, " ");
 }
@@ -116,6 +125,12 @@ export function InventoryManagement({
     notes: "",
   });
   const [adjustments, setAdjustments] = useState<Record<string, string>>({});
+  const [quickAdjustment, setQuickAdjustment] = useState({
+    itemId: "",
+    mode: "remove" as "add" | "remove",
+    quantity: "1",
+    notes: "",
+  });
   const [ruleForm, setRuleForm] = useState({
     name: "",
     consumedItemId: "",
@@ -131,6 +146,56 @@ export function InventoryManagement({
     () => data.items.filter((item) => item.active),
     [data.items],
   );
+  const quickItem = useMemo(
+    () => data.items.find((item) => item.id === quickAdjustment.itemId) || null,
+    [data.items, quickAdjustment.itemId],
+  );
+  const dashboard = useMemo(() => {
+    const priority: Record<InventoryItemSummary["stockStatus"], number> = {
+      negative: 0,
+      out_of_stock: 1,
+      low_stock: 2,
+      in_stock: 3,
+    };
+    const attentionItems = data.items
+      .filter((item) => item.stockStatus !== "in_stock")
+      .sort((a, b) => {
+        const statusSort = priority[a.stockStatus] - priority[b.stockStatus];
+        if (statusSort !== 0) return statusSort;
+        return a.currentQuantity - b.currentQuantity;
+      })
+      .slice(0, 6);
+    const totalOnHand = data.items.reduce(
+      (total, item) => total + item.currentQuantity,
+      0,
+    );
+    const fulfillmentUses = data.movements.filter(
+      (movement) => movement.movementType === "fulfillment_consumed",
+    ).length;
+    const purchaseReceipts = data.movements.filter(
+      (movement) => movement.movementType === "purchase_received",
+    ).length;
+    const manualAdjustments = data.movements.filter(
+      (movement) => movement.movementType === "manual_adjustment",
+    ).length;
+    const typeCounts = ITEM_TYPES.map(([value, label]) => ({
+      value,
+      label,
+      count: data.items.filter((item) => item.itemType === value).length,
+      lowCount: data.items.filter(
+        (item) => item.itemType === value && item.stockStatus !== "in_stock",
+      ).length,
+    })).filter((entry) => entry.count > 0);
+
+    return {
+      attentionItems,
+      totalOnHand,
+      fulfillmentUses,
+      purchaseReceipts,
+      manualAdjustments,
+      typeCounts,
+    };
+  }, [data.items, data.movements]);
 
   function applyFilters(next = filters) {
     const params = new URLSearchParams();
@@ -236,18 +301,65 @@ export function InventoryManagement({
     }
   }
 
-  async function adjustItem(itemId: string) {
-    const quantityDelta = Number(adjustments[itemId] || 0);
+  async function adjustItem(
+    itemId: string,
+    overrideDelta?: number,
+    overrideNotes?: string,
+  ) {
+    const quantityDelta =
+      typeof overrideDelta === "number"
+        ? overrideDelta
+        : Number(adjustments[itemId] || 0);
+    if (!Number.isFinite(quantityDelta) || quantityDelta === 0) {
+      setError("Enter a non-zero quantity to add or remove.");
+      return;
+    }
+
     const ok = await postJson(
       `/api/admin/inventory/items/${itemId}/adjustments`,
       {
         quantityDelta,
-        notes: "Admin inventory adjustment",
+        notes: overrideNotes || "Admin inventory adjustment",
       },
       `adjust:${itemId}`,
     );
     if (ok) {
       setAdjustments((current) => ({ ...current, [itemId]: "" }));
+    }
+  }
+
+  async function submitQuickAdjustment() {
+    const itemId = quickAdjustment.itemId || selectableItems[0]?.id || "";
+    const quantity = Math.floor(Number(quickAdjustment.quantity || 0));
+    if (!itemId) {
+      setError("Create or select an item first.");
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setError("Quick stock quantity must be a positive whole number.");
+      return;
+    }
+
+    const delta = quickAdjustment.mode === "add" ? quantity : -quantity;
+    const selectedItem = data.items.find((item) => item.id === itemId);
+    const ok = await postJson(
+      `/api/admin/inventory/items/${itemId}/adjustments`,
+      {
+        quantityDelta: delta,
+        notes:
+          quickAdjustment.notes ||
+          `${quickAdjustment.mode === "add" ? "Quick add" : "Quick remove"}${
+            selectedItem ? ` from ${selectedItem.name}` : ""
+          }`,
+      },
+      `adjust:${itemId}`,
+    );
+    if (ok) {
+      setQuickAdjustment((current) => ({
+        ...current,
+        quantity: "1",
+        notes: "",
+      }));
     }
   }
 
@@ -276,6 +388,279 @@ export function InventoryManagement({
           {error}
         </div>
       ) : null}
+
+      <AdminPanel tone="inverse" className="p-3 md:p-4">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-sidebar-foreground/55">
+                  Dashboard
+                </p>
+                <h2 className="mt-1 text-xl font-semibold tracking-[-0.05em] md:text-2xl">
+                  Stock control
+                </h2>
+                <p className="mt-1 max-w-2xl text-[11px] leading-4 text-sidebar-foreground/70">
+                  Fast count changes, low-stock visibility, and recent movement activity from the internal ledger.
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="border border-sidebar-border bg-sidebar-accent/20 px-2 py-2">
+                  <p className="text-[9px] uppercase tracking-[0.16em] text-sidebar-foreground/55">
+                    On hand
+                  </p>
+                  <p className="mt-1 text-lg font-semibold tabular-nums">
+                    {dashboard.totalOnHand}
+                  </p>
+                </div>
+                <div className="border border-sidebar-border bg-sidebar-accent/20 px-2 py-2">
+                  <p className="text-[9px] uppercase tracking-[0.16em] text-sidebar-foreground/55">
+                    Used
+                  </p>
+                  <p className="mt-1 text-lg font-semibold tabular-nums">
+                    {dashboard.fulfillmentUses}
+                  </p>
+                </div>
+                <div className="border border-sidebar-border bg-sidebar-accent/20 px-2 py-2">
+                  <p className="text-[9px] uppercase tracking-[0.16em] text-sidebar-foreground/55">
+                    Received
+                  </p>
+                  <p className="mt-1 text-lg font-semibold tabular-nums">
+                    {dashboard.purchaseReceipts}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-2 md:grid-cols-2">
+              <div className="border border-sidebar-border bg-sidebar-accent/20 p-2.5">
+                <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-sidebar-foreground/60">
+                  <AlertTriangle className="size-3.5" />
+                  Needs attention
+                </div>
+                <div className="space-y-1.5">
+                  {dashboard.attentionItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() =>
+                        setQuickAdjustment((current) => ({
+                          ...current,
+                          itemId: item.id,
+                          mode: item.currentQuantity <= 0 ? "add" : current.mode,
+                        }))
+                      }
+                      className="flex w-full items-center justify-between gap-2 border border-sidebar-border bg-sidebar px-2 py-1.5 text-left"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-xs font-semibold">
+                          {item.name}
+                        </span>
+                        <span className="block text-[10px] text-sidebar-foreground/60">
+                          {item.code} · reorder {item.reorderPoint}
+                        </span>
+                      </span>
+                      <span className="text-right text-sm font-semibold tabular-nums">
+                        {item.currentQuantity}
+                      </span>
+                    </button>
+                  ))}
+                  {dashboard.attentionItems.length === 0 ? (
+                    <p className="border border-sidebar-border bg-sidebar px-2 py-3 text-xs text-sidebar-foreground/65">
+                      No low, out, or negative stock in this view.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="border border-sidebar-border bg-sidebar-accent/20 p-2.5">
+                <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-sidebar-foreground/60">
+                  <BarChart3 className="size-3.5" />
+                  Stock mix
+                </div>
+                <div className="space-y-2">
+                  {dashboard.typeCounts.slice(0, 6).map((entry) => (
+                    <div key={entry.value} className="space-y-1">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="capitalize text-sidebar-foreground/80">
+                          {entry.label}
+                        </span>
+                        <span className="font-semibold tabular-nums">
+                          {entry.count}
+                          {entry.lowCount > 0 ? (
+                            <span className="ml-1 text-yellow-200">
+                              ({entry.lowCount})
+                            </span>
+                          ) : null}
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-sidebar-border">
+                        <div
+                          className="h-full bg-sidebar-primary"
+                          style={{
+                            width: `${Math.max(
+                              8,
+                              Math.round((entry.count / Math.max(1, data.items.length)) * 100),
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  {dashboard.typeCounts.length === 0 ? (
+                    <p className="border border-sidebar-border bg-sidebar px-2 py-3 text-xs text-sidebar-foreground/65">
+                      Create inventory items to populate the mix.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="border border-sidebar-border bg-sidebar p-3">
+            <div className="flex items-center gap-2">
+              {quickAdjustment.mode === "add" ? (
+                <PackagePlus className="size-4 text-emerald-200" />
+              ) : (
+                <PackageMinus className="size-4 text-amber-200" />
+              )}
+              <div>
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-sidebar-foreground/55">
+                  Phone action
+                </p>
+                <h3 className="text-base font-semibold tracking-[-0.04em]">
+                  Quick add / remove
+                </h3>
+              </div>
+            </div>
+
+            <div className="mt-3 grid gap-2">
+              <select
+                value={quickAdjustment.itemId}
+                onChange={(event) =>
+                  setQuickAdjustment((current) => ({
+                    ...current,
+                    itemId: event.target.value,
+                  }))
+                }
+                className={cn(adminFieldClass, "border-sidebar-border bg-sidebar")}
+              >
+                <option value="">Select item</option>
+                {selectableItems.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.code} · {item.name}
+                  </option>
+                ))}
+              </select>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setQuickAdjustment((current) => ({ ...current, mode: "add" }))
+                  }
+                  className={cn(
+                    "inline-flex h-10 items-center justify-center gap-2 border text-xs font-semibold uppercase tracking-[0.14em]",
+                    quickAdjustment.mode === "add"
+                      ? "border-emerald-300 bg-emerald-300 text-emerald-950"
+                      : "border-sidebar-border bg-sidebar-accent/20 text-sidebar-foreground",
+                  )}
+                >
+                  <Plus className="size-4" />
+                  Add
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setQuickAdjustment((current) => ({ ...current, mode: "remove" }))
+                  }
+                  className={cn(
+                    "inline-flex h-10 items-center justify-center gap-2 border text-xs font-semibold uppercase tracking-[0.14em]",
+                    quickAdjustment.mode === "remove"
+                      ? "border-amber-300 bg-amber-300 text-amber-950"
+                      : "border-sidebar-border bg-sidebar-accent/20 text-sidebar-foreground",
+                  )}
+                >
+                  <Minus className="size-4" />
+                  Remove
+                </button>
+              </div>
+
+              <div className="grid grid-cols-[110px_1fr] gap-2">
+                <Input
+                  value={quickAdjustment.quantity}
+                  onChange={(event) =>
+                    setQuickAdjustment((current) => ({
+                      ...current,
+                      quantity: event.target.value,
+                    }))
+                  }
+                  inputMode="numeric"
+                  placeholder="Qty"
+                  className={cn(adminFieldClass, "h-10 border-sidebar-border bg-sidebar text-base")}
+                />
+                <Input
+                  value={quickAdjustment.notes}
+                  onChange={(event) =>
+                    setQuickAdjustment((current) => ({
+                      ...current,
+                      notes: event.target.value,
+                    }))
+                  }
+                  placeholder="Reason or order note"
+                  className={cn(adminFieldClass, "h-10 border-sidebar-border bg-sidebar")}
+                />
+              </div>
+
+              {quickItem ? (
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="border border-sidebar-border bg-sidebar-accent/20 px-2 py-1.5">
+                    <p className="text-[9px] uppercase tracking-[0.16em] text-sidebar-foreground/55">
+                      Now
+                    </p>
+                    <p className="font-semibold tabular-nums">
+                      {quickItem.currentQuantity}
+                    </p>
+                  </div>
+                  <div className="border border-sidebar-border bg-sidebar-accent/20 px-2 py-1.5">
+                    <p className="text-[9px] uppercase tracking-[0.16em] text-sidebar-foreground/55">
+                      Reorder
+                    </p>
+                    <p className="font-semibold tabular-nums">
+                      {quickItem.reorderPoint}
+                    </p>
+                  </div>
+                  <div className="border border-sidebar-border bg-sidebar-accent/20 px-2 py-1.5">
+                    <p className="text-[9px] uppercase tracking-[0.16em] text-sidebar-foreground/55">
+                      Unit
+                    </p>
+                    <p className="font-semibold">{quickItem.unit}</p>
+                  </div>
+                </div>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={submitQuickAdjustment}
+                disabled={
+                  !selectableItems.length ||
+                  busyKey === `adjust:${quickAdjustment.itemId || selectableItems[0]?.id}`
+                }
+                className={cn(adminPrimaryButtonClass, "h-10 text-xs")}
+              >
+                {busyKey === `adjust:${quickAdjustment.itemId || selectableItems[0]?.id}` ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : quickAdjustment.mode === "add" ? (
+                  <PackagePlus className="size-4" />
+                ) : (
+                  <PackageMinus className="size-4" />
+                )}
+                Save stock change
+              </button>
+            </div>
+          </div>
+        </div>
+      </AdminPanel>
 
       <div className="grid gap-3 md:grid-cols-5">
         <AdminStatCard label="Items" value={data.stats.totalItems} detail="Visible in current filter" />
@@ -377,7 +762,7 @@ export function InventoryManagement({
                         </Badge>
                       </div>
                       <p className="mt-1 text-[10px] text-muted-foreground">
-                        {item.category?.name || "Uncategorized"} · {item.itemType.replace(/_/g, " ")}
+                        {item.category?.name || "Uncategorized"} · {itemTypeLabel(item.itemType)}
                         {item.location ? ` · ${item.location}` : ""}
                       </p>
                     </div>
@@ -412,6 +797,31 @@ export function InventoryManagement({
                       </p>
                       <p className="font-semibold">{item.unit}</p>
                     </div>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        adjustItem(item.id, 1, `Quick add 1 ${item.unit}`)
+                      }
+                      disabled={busyKey === `adjust:${item.id}`}
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-none border border-emerald-200 bg-emerald-50 px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-900 hover:bg-emerald-100"
+                    >
+                      <PackagePlus className="size-3.5" />
+                      Add 1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        adjustItem(item.id, -1, `Quick remove 1 ${item.unit}`)
+                      }
+                      disabled={busyKey === `adjust:${item.id}`}
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-none border border-amber-200 bg-amber-50 px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-900 hover:bg-amber-100"
+                    >
+                      <PackageMinus className="size-3.5" />
+                      Remove 1
+                    </button>
                   </div>
 
                   <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">

@@ -4,8 +4,19 @@ import {
 } from '@/lib/checkout/constants';
 import { getShippoFulfillmentSettings } from '@/lib/checkout/shippo-fulfillment-settings';
 import { quoteShipEngineRates, type ShipEngineCheckoutRate } from '@/lib/checkout/shipengine';
-import { quoteShippoRates, type ShippoCheckoutRate } from '@/lib/checkout/shippo';
-import type { CheckoutAppliedDiscount, CheckoutLandedCost, CheckoutShippingAddress } from '@/lib/checkout/types';
+import {
+  getShippoMissingConfig,
+  isShippoConfigured,
+  quoteShippoRates,
+  type ShippoCheckoutRate,
+  type ShippoInsuranceRequest,
+} from '@/lib/checkout/shippo';
+import type {
+  CheckoutAppliedDiscount,
+  CheckoutLandedCost,
+  CheckoutShipmentProtection,
+  CheckoutShippingAddress,
+} from '@/lib/checkout/types';
 import type { StorefrontCartSnapshot, SwellShipmentService } from '@/lib/checkout/swell-order-management';
 
 export type CheckoutRatedService = {
@@ -40,6 +51,12 @@ export type CheckoutRatedService = {
     currencyCode: string;
   };
   landedCost?: CheckoutLandedCost;
+  shippoIncludedInsurancePrice?: {
+    amount: string;
+    currencyCode: string;
+  };
+  availableShipmentProtection?: CheckoutShipmentProtection;
+  shipmentProtection?: CheckoutShipmentProtection;
 };
 
 function toFixedAmount(amount: number) {
@@ -55,6 +72,172 @@ const US_SHIPENGINE_PREFERRED_CARRIER_PATTERNS = (
 
 const SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS =
   process.env.SHIPENGINE_US_REQUIRE_PREFERRED_CARRIERS === 'true';
+
+const SHIPPO_CHECKOUT_SHIPPING_MARKUP_AMOUNT = Number(
+  process.env.SHIPPO_CHECKOUT_SHIPPING_MARKUP_AMOUNT || 3
+);
+const SHIPPO_FALLBACK_TO_SHIPENGINE_ON_NO_RATES =
+  process.env.SHIPPO_FALLBACK_TO_SHIPENGINE_ON_NO_RATES === 'true';
+const SHIPMENT_PROTECTION_FEE_AMOUNT = Number(
+  process.env.CHECKOUT_SHIPMENT_PROTECTION_FEE_AMOUNT || 5
+);
+const SHIPPO_INSURANCE_CONTENT = (
+  process.env.SHIPPO_INSURANCE_CONTENT || 'laboratory supplies'
+).trim() || 'laboratory supplies';
+const SHIPPO_INSURANCE_MAX_VALUE_AMOUNT = Number(
+  process.env.SHIPPO_INSURANCE_MAX_VALUE_AMOUNT || 10000
+);
+
+function getCheckoutShippingMarkupAmount() {
+  return Number.isFinite(SHIPPO_CHECKOUT_SHIPPING_MARKUP_AMOUNT) &&
+    SHIPPO_CHECKOUT_SHIPPING_MARKUP_AMOUNT > 0
+    ? SHIPPO_CHECKOUT_SHIPPING_MARKUP_AMOUNT
+    : 0;
+}
+
+function getShipmentProtectionFeeAmount() {
+  return Number.isFinite(SHIPMENT_PROTECTION_FEE_AMOUNT) &&
+    SHIPMENT_PROTECTION_FEE_AMOUNT > 0
+    ? SHIPMENT_PROTECTION_FEE_AMOUNT
+    : 5;
+}
+
+function getShippoInsuranceMaxValueAmount() {
+  return Number.isFinite(SHIPPO_INSURANCE_MAX_VALUE_AMOUNT) &&
+    SHIPPO_INSURANCE_MAX_VALUE_AMOUNT > 0
+    ? SHIPPO_INSURANCE_MAX_VALUE_AMOUNT
+    : 10000;
+}
+
+function toMoney(amount: number, currencyCode: string) {
+  return {
+    amount: toFixedAmount(amount),
+    currencyCode,
+  };
+}
+
+export function buildShippoInsuranceRequest(args: {
+  subtotalAmount: number;
+  currencyCode: string;
+}): ShippoInsuranceRequest | null {
+  const insuredValue = Math.min(
+    Math.max(Number(args.subtotalAmount || 0), 0.01),
+    getShippoInsuranceMaxValueAmount(),
+  );
+
+  if (!Number.isFinite(insuredValue) || insuredValue <= 0) {
+    return null;
+  }
+
+  return {
+    amount: toFixedAmount(insuredValue),
+    currency: args.currencyCode,
+    content: SHIPPO_INSURANCE_CONTENT,
+  };
+}
+
+export function buildShipmentProtectionQuote(args: {
+  subtotalAmount: number;
+  currencyCode: string;
+  shippoInsuranceAmount?: number;
+}): CheckoutShipmentProtection {
+  const shippoInsuranceValue = Math.max(0, Number(args.shippoInsuranceAmount || 0));
+  const normalizedShippoInsuranceValue =
+    Number.isFinite(shippoInsuranceValue) ? shippoInsuranceValue : 0;
+  const feeValue = getShipmentProtectionFeeAmount();
+  const totalValue = normalizedShippoInsuranceValue + feeValue;
+
+  return {
+    selected: true,
+    provider: normalizedShippoInsuranceValue > 0 ? 'shippo_xcover' : 'revalin',
+    content: SHIPPO_INSURANCE_CONTENT,
+    insuredValueAmount: toMoney(
+      Math.min(Math.max(Number(args.subtotalAmount || 0), 0.01), getShippoInsuranceMaxValueAmount()),
+      args.currencyCode,
+    ),
+    feeAmount: toMoney(feeValue, args.currencyCode),
+    shippoInsuranceAmount:
+      normalizedShippoInsuranceValue > 0
+        ? toMoney(normalizedShippoInsuranceValue, args.currencyCode)
+        : undefined,
+    totalAmount: toMoney(totalValue, args.currencyCode),
+    shippoInsuranceIncluded: normalizedShippoInsuranceValue > 0,
+  };
+}
+
+export function applyShipmentProtectionToServices(args: {
+  services: CheckoutRatedService[];
+  shipmentProtection?: boolean;
+  subtotalAmount: number;
+  currencyCode: string;
+}) {
+  if (!args.shipmentProtection) {
+    return args.services;
+  }
+
+  return args.services.map(service => ({
+    ...service,
+    shipmentProtection:
+      service.availableShipmentProtection ||
+      buildShipmentProtectionQuote({
+        subtotalAmount: args.subtotalAmount,
+        currencyCode: service.price.currencyCode || args.currencyCode,
+        shippoInsuranceAmount: Number(service.shippoIncludedInsurancePrice?.amount || 0),
+      }),
+  }));
+}
+
+export function applyAvailableShipmentProtectionToServices(args: {
+  services: CheckoutRatedService[];
+  subtotalAmount: number;
+  currencyCode: string;
+}) {
+  return args.services.map(service => ({
+    ...service,
+    availableShipmentProtection:
+      service.availableShipmentProtection ||
+      buildShipmentProtectionQuote({
+        subtotalAmount: args.subtotalAmount,
+        currencyCode: service.price.currencyCode || args.currencyCode,
+        shippoInsuranceAmount: Number(service.shippoIncludedInsurancePrice?.amount || 0),
+      }),
+  }));
+}
+
+export function isUpsShippoCarrier(args: {
+  carrier?: string;
+  carrierCode?: string;
+  name?: string;
+  serviceCode?: string;
+}) {
+  const carrierIdentity = [
+    args.carrier,
+    args.carrierCode,
+    args.name,
+    args.serviceCode,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return /\bups\b|united\s*parcel/.test(carrierIdentity);
+}
+
+export function filterShippoRatesForDestination<T extends {
+  carrier?: string;
+  carrierCode?: string;
+  name?: string;
+  serviceCode?: string;
+}>(args: {
+  services: T[];
+  shippingAddress: CheckoutShippingAddress;
+}) {
+  if (isUsShippingAddress(args.shippingAddress)) {
+    return args.services.filter(service => isUpsShippoCarrier(service));
+  }
+
+  return args.services;
+}
 
 function sortServicesByPrice<T extends CheckoutRatedService>(services: T[]) {
   return [...services].sort((left, right) => Number(left.price.amount) - Number(right.price.amount));
@@ -122,8 +305,7 @@ function curateCheckoutServices(services: CheckoutRatedService[]) {
   };
 
   const cheapest = sortedByPrice[0];
-  const fastest = sortedBySpeed[0];
-  const preferred = sortServicesByPreference(sortedByPrice)[0];
+  const fastest = sortedBySpeed.find(service => service.id !== cheapest?.id) || sortedBySpeed[0];
   const bestValue = sortedByPrice
     .filter(service => service.id !== cheapest?.id && service.id !== fastest?.id)
     .sort((left, right) => {
@@ -133,18 +315,37 @@ function curateCheckoutServices(services: CheckoutRatedService[]) {
       if (leftScore !== rightScore) return leftScore - rightScore;
       return Number(left.price.amount) - Number(right.price.amount);
     })[0];
+  const fallbackBestValue = sortedByPrice.find(service =>
+    service.id !== cheapest?.id && service.id !== fastest?.id
+  );
 
-  pushService(preferred, preferred?.id === cheapest?.id ? 'cheapest' : 'best_value');
   pushService(cheapest, 'cheapest');
-  pushService(bestValue, 'best_value');
-  pushService(fastest, 'fastest');
+  pushService(bestValue || fallbackBestValue, 'best_value');
+  pushService(fastest, fastest?.id === cheapest?.id ? 'cheapest' : 'fastest');
 
   for (const service of sortedByPrice) {
-    if (curated.length >= 4) break;
+    if (curated.length >= 3) break;
     pushService(service, undefined);
   }
 
   return curated;
+}
+
+function getCustomerFacingShippingName(category: CheckoutRatedService['quoteCategory'], index: number) {
+  if (category === 'cheapest') return 'Standard Shipping';
+  if (category === 'best_value') return 'Priority Shipping';
+  if (category === 'fastest') return 'Express Shipping';
+  return `Shipping Option ${index + 1}`;
+}
+
+export function toCustomerFacingCheckoutServices(
+  services: CheckoutRatedService[],
+): CheckoutRatedService[] {
+  return services.map((service, index) => ({
+    ...service,
+    name: getCustomerFacingShippingName(service.quoteCategory, index),
+    carrier: undefined,
+  }));
 }
 
 function isEligibleForComplimentaryShipping(subtotalAmount: number, currencyCode: string) {
@@ -169,6 +370,21 @@ export function applyFreeShipping(services: CheckoutRatedService[], subtotalAmou
     price: {
       amount: '0.00',
       currencyCode: service.price.currencyCode || currencyCode,
+    },
+  }));
+}
+
+export function applyCustomerShippingMarkup(services: CheckoutRatedService[]) {
+  const markupAmount = getCheckoutShippingMarkupAmount();
+  if (markupAmount <= 0 || services.length === 0) {
+    return services;
+  }
+
+  return services.map(service => ({
+    ...service,
+    price: {
+      amount: toFixedAmount(Number(service.price.amount || 0) + markupAmount),
+      currencyCode: service.price.currencyCode,
     },
   }));
 }
@@ -277,11 +493,11 @@ export function buildQuoteResponse(args: {
   paymentMethod?: 'card' | 'crypto' | 'interac';
   services: CheckoutRatedService[];
 }) {
-  const services = applyFreeShipping(
-    curateCheckoutServices(args.services),
+  const services = toCustomerFacingCheckoutServices(applyFreeShipping(
+    applyCustomerShippingMarkup(curateCheckoutServices(args.services)),
     args.subtotalAmount,
     args.currencyCode
-  );
+  ));
 
   return {
     currencyCode: args.currencyCode,
@@ -335,28 +551,57 @@ function mapShipEngineRatedServices(services: ShipEngineCheckoutRate[]): Checkou
 function mapShippoRatedServices(args: {
   services: ShippoCheckoutRate[];
   shippingAddress: CheckoutShippingAddress;
+  subtotalAmount: number;
+  currencyCode: string;
+  shipmentProtection?: boolean;
 }): CheckoutRatedService[] {
-  return args.services.map(service => ({
-    id: service.id,
-    name: service.name,
-    carrier: service.carrier,
-    carrierCode: service.carrierCode,
-    serviceCode: service.serviceCode,
-    shippoRateId: service.shippoRateId,
-    shippoShipmentId: service.shippoShipmentId,
-    shippoCarrierAccountId: service.shippoCarrierAccountId,
-    carrierPreferenceRank: getShippoCarrierPreferenceRank({
-      shippingAddress: args.shippingAddress,
+  const services = filterShippoRatesForDestination({
+    services: args.services,
+    shippingAddress: args.shippingAddress,
+  }).map(service => {
+    const includedInsurancePrice = Math.max(0, Number(service.includedInsurancePrice || 0));
+    const baseShippingPrice = Math.max(0, service.price - includedInsurancePrice);
+
+    return {
+      id: service.id,
+      name: service.name,
       carrier: service.carrier,
       carrierCode: service.carrierCode,
-    }),
-    estimatedDays: service.estimatedDays,
-    source: 'shippo',
-    price: {
-      amount: toFixedAmount(service.price),
-      currencyCode: service.currencyCode,
-    },
-  }));
+      serviceCode: service.serviceCode,
+      shippoRateId: service.shippoRateId,
+      shippoShipmentId: service.shippoShipmentId,
+      shippoCarrierAccountId: service.shippoCarrierAccountId,
+      carrierPreferenceRank: getShippoCarrierPreferenceRank({
+        shippingAddress: args.shippingAddress,
+        carrier: service.carrier,
+        carrierCode: service.carrierCode,
+      }),
+      estimatedDays: service.estimatedDays,
+      source: 'shippo' as const,
+      price: {
+        amount: toFixedAmount(baseShippingPrice),
+        currencyCode: service.currencyCode,
+      },
+      shippoIncludedInsurancePrice:
+        includedInsurancePrice > 0
+          ? toMoney(includedInsurancePrice, service.currencyCode)
+          : undefined,
+      availableShipmentProtection: buildShipmentProtectionQuote({
+        subtotalAmount: args.subtotalAmount,
+        currencyCode: service.currencyCode,
+        shippoInsuranceAmount: includedInsurancePrice,
+      }),
+    };
+  });
+
+  const protectedServices = applyShipmentProtectionToServices({
+    services,
+    shipmentProtection: args.shipmentProtection,
+    subtotalAmount: args.subtotalAmount,
+    currencyCode: args.currencyCode,
+  });
+
+  return curateCheckoutServices(protectedServices);
 }
 
 export function getCartSnapshotItemCount(cartSnapshot?: StorefrontCartSnapshot) {
@@ -397,6 +642,7 @@ async function getLegacyShipEngineCheckoutServices(args: {
   currencyCode: string;
   subtotalAmount: number;
   itemCount: number;
+  shipmentProtection?: boolean;
 }) {
   const result = await quoteShipEngineRates({
     shippingAddress: args.shippingAddress,
@@ -414,7 +660,18 @@ async function getLegacyShipEngineCheckoutServices(args: {
     services: result.rates,
   });
 
-  return mapShipEngineRatedServices(preferredRates);
+  const servicesWithProtectionQuote = applyAvailableShipmentProtectionToServices({
+    services: mapShipEngineRatedServices(preferredRates),
+    subtotalAmount: args.subtotalAmount,
+    currencyCode: args.currencyCode,
+  });
+
+  return applyShipmentProtectionToServices({
+    services: servicesWithProtectionQuote,
+    shipmentProtection: args.shipmentProtection,
+    subtotalAmount: args.subtotalAmount,
+    currencyCode: args.currencyCode,
+  });
 }
 
 export async function getShippoCheckoutServices(args: {
@@ -423,15 +680,43 @@ export async function getShippoCheckoutServices(args: {
   subtotalAmount: number;
   itemCount: number;
   orderId?: string;
+  shipmentProtection?: boolean;
 }) {
   const customsSettings = await getShippoFulfillmentSettings();
-  const result = await quoteShippoRates({
-    shippingAddress: args.shippingAddress,
-    itemCount: args.itemCount,
-    currencyCode: args.currencyCode,
-    orderId: args.orderId,
-    customsSettings,
-  });
+  const insurance = args.shipmentProtection
+    ? buildShippoInsuranceRequest({
+        subtotalAmount: args.subtotalAmount,
+        currencyCode: args.currencyCode,
+      })
+    : null;
+  let result: Awaited<ReturnType<typeof quoteShippoRates>>;
+
+  try {
+    result = await quoteShippoRates({
+      shippingAddress: args.shippingAddress,
+      itemCount: args.itemCount,
+      currencyCode: args.currencyCode,
+      orderId: args.orderId,
+      customsSettings,
+      insurance,
+    });
+  } catch (error) {
+    if (!insurance) {
+      throw error;
+    }
+
+    console.warn(
+      'Shippo insurance quote failed; retrying checkout rates without Shippo insurance.',
+      error,
+    );
+    result = await quoteShippoRates({
+      shippingAddress: args.shippingAddress,
+      itemCount: args.itemCount,
+      currencyCode: args.currencyCode,
+      orderId: args.orderId,
+      customsSettings,
+    });
+  }
 
   if (!result || result.rates.length === 0) {
     return [];
@@ -440,6 +725,9 @@ export async function getShippoCheckoutServices(args: {
   return mapShippoRatedServices({
     services: result.rates,
     shippingAddress: args.shippingAddress,
+    subtotalAmount: args.subtotalAmount,
+    currencyCode: args.currencyCode,
+    shipmentProtection: args.shipmentProtection,
   });
 }
 
@@ -449,18 +737,43 @@ export async function getLiveCheckoutShippingServices(args: {
   subtotalAmount: number;
   itemCount: number;
   orderId?: string;
+  shipmentProtection?: boolean;
 }) {
-  try {
-    const shippoServices = await getShippoCheckoutServices(args);
-    if (shippoServices.length > 0) {
-      return shippoServices;
+  if (isShippoConfigured()) {
+    try {
+      const shippoServices = await getShippoCheckoutServices(args);
+      if (shippoServices.length > 0 || !SHIPPO_FALLBACK_TO_SHIPENGINE_ON_NO_RATES) {
+        return shippoServices;
+      }
+
+      console.warn(
+        'Shippo returned no checkout rates; temporarily trying ShipEngine fallback.',
+        {
+          country: args.shippingAddress.country,
+          province: args.shippingAddress.province,
+        },
+      );
+    } catch (error) {
+      if (!SHIPPO_FALLBACK_TO_SHIPENGINE_ON_NO_RATES) {
+        throw error;
+      }
+
+      console.warn(
+        'Shippo checkout rates failed; temporarily trying ShipEngine fallback.',
+        {
+          country: args.shippingAddress.country,
+          province: args.shippingAddress.province,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
     }
-  } catch (error) {
-    console.warn(
-      'Unable to fetch Shippo checkout rates. Falling back to legacy carrier rates.',
-      error,
-    );
+
+    return getLegacyShipEngineCheckoutServices(args);
   }
+
+  console.warn('Shippo checkout rates are not configured; trying ShipEngine fallback.', {
+    missing: getShippoMissingConfig(),
+  });
 
   return getLegacyShipEngineCheckoutServices(args);
 }

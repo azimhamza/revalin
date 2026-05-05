@@ -10,6 +10,7 @@ import {
   getFreeShippingThresholdForCurrency,
   isTerminalPaymentStatus,
 } from '@/lib/checkout/constants';
+import { isShippoConfigured } from '@/lib/checkout/shippo';
 import {
   getAffiliateCommissionSnapshot,
   getCommissionMonthKey,
@@ -61,7 +62,9 @@ import {
   getInteracRecipientEmail,
 } from '@/lib/checkout/interac';
 import {
+  getCardDebitCheckoutUnavailableMessage,
   getCardCheckoutMinimumMessage,
+  isCardDebitCheckoutEnabled,
   isCardCheckoutMinimumMet,
 } from '@/lib/checkout/payment-method-rules';
 import {
@@ -70,12 +73,15 @@ import {
   convertToUsd,
 } from '@/lib/checkout/shieldclimb';
 import {
+  applyCustomerShippingMarkup,
   applyFreeShipping,
+  applyShipmentProtectionToServices,
   findCheckoutShippingService,
   getCartSnapshotItemCount,
   getCartSnapshotSubtotal,
   getShipEngineCheckoutServices,
   mapSwellRatedServices,
+  toCustomerFacingCheckoutServices,
   type CheckoutRatedService,
 } from '@/lib/checkout/shipping-rates';
 import { quoteZonosLandedCost } from '@/lib/checkout/zonos';
@@ -84,6 +90,8 @@ import {
   convertSwellCartToOrder,
   createSwellCheckoutCart,
   deleteSwellCheckoutCart,
+  findSwellCouponCodeByCode,
+  getSwellCoupon,
   getSwellManualPaymentMethod,
   toSwellAddress,
   updateSwellCheckoutCart,
@@ -145,6 +153,7 @@ type FinalizeCheckoutInput = {
   interacSecurityQuestion?: string | null;
   interacSecurityAnswer?: string | null;
   selectedShippingServiceId: string;
+  shipmentProtection?: boolean;
   discountCode?: string | null;
   requestUrl: URL;
   affiliateCode?: string | null;
@@ -237,6 +246,41 @@ function normalizeComparableCountry(value?: string | null) {
 
 function normalizeComparableDiscountCode(value?: string | null) {
   return normalizeComparableValue(value).toUpperCase();
+}
+
+async function getSwellCouponDiscountRate(code?: string | null) {
+  if (!code) {
+    return undefined;
+  }
+
+  try {
+    const couponCode = await findSwellCouponCodeByCode(code);
+    if (!couponCode?.parent_id) {
+      return undefined;
+    }
+
+    const coupon = await getSwellCoupon(couponCode.parent_id);
+    if (coupon.active === false) {
+      return undefined;
+    }
+
+    const percentageDiscount = (coupon.discounts || []).find(discount =>
+      discount.value_type === 'percent' &&
+      Number.isFinite(Number(discount.value_percent)) &&
+      Number(discount.value_percent) > 0
+    );
+    const percentValue = Number(percentageDiscount?.value_percent);
+
+    return Number.isFinite(percentValue) && percentValue > 0
+      ? percentValue / 100
+      : undefined;
+  } catch (error) {
+    console.warn('Unable to resolve Swell coupon percentage for checkout finalize pricing.', {
+      code,
+      error,
+    });
+    return undefined;
+  }
 }
 
 function buildComparableCartLinesSignature(
@@ -337,6 +381,13 @@ function doesExistingOrderMatchCheckoutAttempt(args: {
   if (
     normalizeComparableValue(args.existingOrder.shippingService?.id) !==
     normalizeComparableValue(args.input.selectedShippingServiceId)
+  ) {
+    return false;
+  }
+
+  if (
+    Boolean(args.existingOrder.totals.shipmentProtection) !==
+    (args.input.shipmentProtection === true)
   ) {
     return false;
   }
@@ -648,6 +699,14 @@ function mapShippingService(
         }
       : undefined,
     landedCost: service.landedCost,
+    shippoIncludedInsurancePrice: service.shippoIncludedInsurancePrice
+      ? {
+          amount: Number(service.shippoIncludedInsurancePrice.amount || 0).toFixed(2),
+          currencyCode: service.shippoIncludedInsurancePrice.currencyCode || currencyCode,
+        }
+      : undefined,
+    availableShipmentProtection: service.availableShipmentProtection,
+    shipmentProtection: service.shipmentProtection,
   };
 }
 
@@ -667,6 +726,27 @@ function buildLandedCostTotalFields(args: {
       currencyCode: args.currencyCode,
     },
     landedCost: args.landedCost || undefined,
+  };
+}
+
+function buildShipmentProtectionTotalFields(shippingService: CheckoutShippingService) {
+  const protection = shippingService.shipmentProtection;
+  const protectionAmount = Number(protection?.totalAmount.amount || 0);
+
+  if (!protection || !Number.isFinite(protectionAmount) || protectionAmount <= 0.009) {
+    return {};
+  }
+
+  return {
+    shipmentProtectionAmount: {
+      amount: protectionAmount.toFixed(2),
+      currencyCode:
+        protection.totalAmount.currencyCode ||
+        shippingService.price.currencyCode ||
+        shippingService.shippoIncludedInsurancePrice?.currencyCode ||
+        'USD',
+    },
+    shipmentProtection: protection,
   };
 }
 
@@ -854,6 +934,7 @@ function buildNowPaymentsOrderRecord(args: {
         currencyCode: args.currencyCode,
         landedCost: args.landedCost,
       }),
+      ...buildShipmentProtectionTotalFields(args.shippingService),
       totalAmount: {
         amount: args.orderGrandTotal.toFixed(2),
         currencyCode: args.currencyCode,
@@ -971,6 +1052,7 @@ function buildShieldClimbOrderRecord(args: {
         currencyCode: args.currencyCode,
         landedCost: args.landedCost,
       }),
+      ...buildShipmentProtectionTotalFields(args.shippingService),
       totalAmount: {
         amount: args.orderGrandTotal.toFixed(2),
         currencyCode: args.currencyCode,
@@ -1087,6 +1169,7 @@ function buildBankfulOrderRecord(args: {
         currencyCode: args.currencyCode,
         landedCost: args.landedCost,
       }),
+      ...buildShipmentProtectionTotalFields(args.shippingService),
       totalAmount: {
         amount: args.orderGrandTotal.toFixed(2),
         currencyCode: args.currencyCode,
@@ -1202,6 +1285,7 @@ function buildInteracOrderRecord(args: {
         currencyCode: args.currencyCode,
         landedCost: args.landedCost,
       }),
+      ...buildShipmentProtectionTotalFields(args.shippingService),
       totalAmount: {
         amount: args.orderGrandTotal.toFixed(2),
         currencyCode: args.currencyCode,
@@ -1274,6 +1358,12 @@ export function createFinalizeCheckoutSession(
     let temporaryCartId: string | undefined;
 
     try {
+      if (args.paymentMethod === 'card' && !isCardDebitCheckoutEnabled()) {
+        throw apiError.badRequest(getCardDebitCheckoutUnavailableMessage(), {
+          code: 'card_debit_checkout_disabled',
+        });
+      }
+
       const affiliateRefCode = args.affiliateCode?.trim() || null;
       let resolvedAffiliate: Awaited<
         ReturnType<typeof getApprovedAffiliateByDiscountCode>
@@ -1329,6 +1419,7 @@ export function createFinalizeCheckoutSession(
         })),
         shippingAddress: args.shippingAddress,
         shippingServiceId: args.selectedShippingServiceId,
+        shipmentProtection: args.shipmentProtection === true,
         discountCode: args.discountCode,
       });
       const existingOrder = cartOrders.find((order) =>
@@ -1405,6 +1496,7 @@ export function createFinalizeCheckoutSession(
           currencyCode: checkoutCurrencyCode,
           subtotalAmount: checkoutSubtotalAmount,
           itemCount,
+          shipmentProtection: args.shipmentProtection,
         });
       } catch (liveShippingError) {
         liveShippingErrorMessage =
@@ -1417,11 +1509,16 @@ export function createFinalizeCheckoutSession(
         );
       }
 
-      if (availableServices.length === 0) {
-        availableServices = mapSwellRatedServices(
-          swellCart.shipment_rating?.services || [],
-          swellCart.currency || checkoutCurrencyCode,
-        );
+      if (availableServices.length === 0 && !isShippoConfigured()) {
+        availableServices = applyShipmentProtectionToServices({
+          services: mapSwellRatedServices(
+            swellCart.shipment_rating?.services || [],
+            swellCart.currency || checkoutCurrencyCode,
+          ),
+          shipmentProtection: args.shipmentProtection,
+          subtotalAmount: checkoutSubtotalAmount,
+          currencyCode: swellCart.currency || checkoutCurrencyCode,
+        });
       }
 
       if (availableServices.length === 0 && liveShippingErrorMessage) {
@@ -1431,9 +1528,12 @@ export function createFinalizeCheckoutSession(
       }
 
       availableServices = applyFreeShipping(
-        availableServices,
+        applyCustomerShippingMarkup(availableServices),
         checkoutSubtotalAmount,
         checkoutCurrencyCode,
+      );
+      availableServices = toCustomerFacingCheckoutServices(
+        availableServices,
       );
 
       const selectedService = findCheckoutShippingService(
@@ -1515,12 +1615,15 @@ export function createFinalizeCheckoutSession(
           ? Number(ratedCart.sub_total)
           : subtotalAmount;
         const appliedDiscountCode = args.discountCode || ratedCart.coupon_code;
+        const couponDiscountRate = await getSwellCouponDiscountRate(appliedDiscountCode);
         const pricing = calculateCheckoutPricing({
           currencyCode: orderCurrencyCode,
           subtotalAmount: orderSubtotalAmount,
           couponDiscountAmount: couponDiscountTotal,
+          couponDiscountRate,
           couponCode: appliedDiscountCode,
           shippingAmount: orderShipmentTotal,
+          shipmentProtectionAmount: selectedServiceForOrder.shipmentProtection?.totalAmount.amount,
           taxAmount: orderTaxTotal,
           landedCostAmount: orderLandedCostTotal,
           paymentMethod: args.paymentMethod,
@@ -1604,6 +1707,7 @@ export function createFinalizeCheckoutSession(
             currencyCode: orderCurrencyCode,
             landedCost,
           }),
+          ...buildShipmentProtectionTotalFields(shippingService),
           totalAmount: {
             amount: orderTotal.toFixed(2),
             currencyCode: orderCurrencyCode,
@@ -1913,12 +2017,15 @@ export function createFinalizeCheckoutSession(
         ? Number(swellOrder.sub_total)
         : subtotalAmount;
       const appliedDiscountCode = args.discountCode || swellOrder.coupon_code;
+      const couponDiscountRate = await getSwellCouponDiscountRate(appliedDiscountCode);
       const pricing = calculateCheckoutPricing({
         currencyCode: orderCurrencyCode,
         subtotalAmount: orderSubtotalAmount,
         couponDiscountAmount: couponDiscountTotal,
+        couponDiscountRate,
         couponCode: appliedDiscountCode,
         shippingAmount: orderShipmentTotal,
+        shipmentProtectionAmount: selectedServiceForOrder.shipmentProtection?.totalAmount.amount,
         taxAmount: orderTaxTotal,
         landedCostAmount: orderLandedCostTotal,
         paymentMethod: args.paymentMethod,
@@ -1930,6 +2037,7 @@ export function createFinalizeCheckoutSession(
         currencyCode: orderCurrencyCode,
         subtotalAmount: orderSubtotalAmount,
         shippingAmount: orderShipmentTotal,
+        shipmentProtectionAmount: selectedServiceForOrder.shipmentProtection?.totalAmount.amount,
         taxAmount: orderTaxTotal,
         landedCostAmount: orderLandedCostTotal,
         totalAmount: orderTotal,

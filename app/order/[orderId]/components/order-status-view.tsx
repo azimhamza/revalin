@@ -389,6 +389,14 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
               </span>
             </div>
           ) : null}
+          {order.totals.shipmentProtectionAmount ? (
+            <div className="flex justify-between text-sm">
+              <span className="text-[#0B2E2F]/60">Shipment Protection</span>
+              <span className="font-medium text-[#0B2E2F]">
+                {formatCurrency(order.totals.shipmentProtectionAmount.amount, order.currencyCode)}
+              </span>
+            </div>
+          ) : null}
           {order.totals.taxAmount ? (
             <div className="flex justify-between text-sm">
               <span className="text-[#0B2E2F]/60">Tax</span>

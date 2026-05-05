@@ -22,7 +22,9 @@ import {
   getSwellOrder,
 } from './swell-order-management';
 import {
+  filterShippoRatesForDestination,
   findCheckoutShippingService,
+  buildShipmentProtectionQuote,
   getLiveCheckoutShippingServices,
   type CheckoutRatedService,
 } from './shipping-rates';
@@ -308,6 +310,9 @@ function mapRatedServiceToCheckoutService(
     taxAmount: service.taxAmount,
     landedCostAmount: service.landedCostAmount,
     landedCost: service.landedCost,
+    shippoIncludedInsurancePrice: service.shippoIncludedInsurancePrice,
+    availableShipmentProtection: service.availableShipmentProtection,
+    shipmentProtection: service.shipmentProtection,
   };
 }
 
@@ -336,7 +341,12 @@ function getCarrierPreferenceRank(args: {
 function mapShippoPreviewRate(args: {
   rate: ShippoCheckoutRate;
   shippingAddress: CheckoutShippingAddress;
+  shipmentProtection?: CheckoutOrderRecord['totals']['shipmentProtection'];
+  subtotalAmount: number;
 }): CheckoutRatedService {
+  const includedInsurancePrice = Math.max(0, Number(args.rate.includedInsurancePrice || 0));
+  const basePrice = Math.max(0, Number(args.rate.price || 0) - includedInsurancePrice);
+
   return {
     id: args.rate.id,
     name: args.rate.name,
@@ -354,9 +364,34 @@ function mapShippoPreviewRate(args: {
     estimatedDays: args.rate.estimatedDays,
     source: 'shippo',
     price: {
-      amount: Number(args.rate.price || 0).toFixed(2),
+      amount: basePrice.toFixed(2),
       currencyCode: args.rate.currencyCode,
     },
+    shippoIncludedInsurancePrice:
+      includedInsurancePrice > 0
+        ? {
+            amount: includedInsurancePrice.toFixed(2),
+            currencyCode: args.rate.currencyCode,
+          }
+        : undefined,
+    shipmentProtection: args.shipmentProtection
+      ? buildShipmentProtectionQuote({
+          subtotalAmount: args.subtotalAmount,
+          currencyCode: args.rate.currencyCode,
+          shippoInsuranceAmount: includedInsurancePrice,
+        })
+      : undefined,
+  };
+}
+
+function buildOrderShippoInsurance(order: CheckoutOrderRecord) {
+  const protection = order.totals.shipmentProtection;
+  if (!protection) return null;
+
+  return {
+    amount: protection.insuredValueAmount.amount,
+    currency: protection.insuredValueAmount.currencyCode,
+    content: protection.content,
   };
 }
 
@@ -1078,17 +1113,45 @@ export async function getOrderLabelPreview(args: {
     }
   }
 
-  const quote = await quoteShippoRates({
+  const insurance = buildOrderShippoInsurance(order);
+  let quote: Awaited<ReturnType<typeof quoteShippoRates>>;
+
+  try {
+    quote = await quoteShippoRates({
+      shippingAddress,
+      itemCount,
+      currencyCode: order.currencyCode,
+      orderId: order.orderId,
+      customsSettings,
+      customsSnapshot: customs,
+      insurance,
+    });
+  } catch (error) {
+    if (!insurance) {
+      throw error;
+    }
+
+    console.warn(
+      `Shippo insurance quote failed for ${order.orderId}; retrying label preview without Shippo insurance.`,
+      error,
+    );
+    quote = await quoteShippoRates({
+      shippingAddress,
+      itemCount,
+      currencyCode: order.currencyCode,
+      orderId: order.orderId,
+      customsSettings,
+      customsSnapshot: customs,
+    });
+  }
+  const rates = filterShippoRatesForDestination({
+    services: quote?.rates || [],
     shippingAddress,
-    itemCount,
-    currencyCode: order.currencyCode,
-    orderId: order.orderId,
-    customsSettings,
-    customsSnapshot: customs,
-  });
-  const rates = (quote?.rates || []).map(rate => mapShippoPreviewRate({
+  }).map(rate => mapShippoPreviewRate({
     rate,
     shippingAddress,
+    shipmentProtection: order.totals.shipmentProtection,
+    subtotalAmount: Number(order.totals.subtotalAmount.amount || 0),
   }));
   const selectedRate = selectPreviewRate({
     rates,

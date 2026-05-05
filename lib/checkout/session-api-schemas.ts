@@ -63,6 +63,7 @@ export const checkoutSessionCreateSchema = z.object({
   interacSecurityQuestion: z.string().trim().max(256).optional(),
   interacSecurityAnswer: z.string().trim().max(256).optional(),
   discountCode: z.string().trim().optional(),
+  shipmentProtection: z.boolean().optional(),
 });
 
 export const checkoutSessionMutationSchema = checkoutSessionCreateSchema.extend({

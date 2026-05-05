@@ -11,8 +11,8 @@ const DEFAULT_MANUFACTURER_NOTES = [
 ].join('\n');
 
 export const shippoFulfillmentSettingsSchema = z.object({
-  customsDescription: z.string().trim().min(1).default('Body massage oil (cosmetic), for personal skin care use'),
-  unitWeight: z.string().trim().min(1).default('0.3'),
+  customsDescription: z.string().trim().min(1).default('Cosmetic skin care preparation, non-medicated, non-hazardous, for personal use'),
+  unitWeight: z.string().trim().min(1).default('0.05'),
   massUnit: z.enum(['g', 'kg', 'lb', 'oz']).default('kg'),
   unitValueMinAmount: z.string().trim().min(1).default('20.00'),
   unitValueMaxAmount: z.string().trim().min(1).default('30.00'),

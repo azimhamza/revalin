@@ -37,6 +37,10 @@ export function createResearchConsentToken() {
   return `${crypto.randomUUID()}-${crypto.randomBytes(8).toString('hex')}`;
 }
 
+export function createResearchConsentId() {
+  return crypto.randomUUID();
+}
+
 export function normalizeConsentEmail(email?: string | null) {
   return email?.trim().toLowerCase() || null;
 }
@@ -121,13 +125,15 @@ async function insertConsentEvent(args: {
 }
 
 export async function recordResearchAccessConsent(args: {
+  consentId?: string;
   consentToken: string;
+  acceptedAt?: Date;
   entryPath?: string | null;
   referrer?: string | null;
   metadata?: Record<string, unknown> | null;
 } & ConsentOptionalFields &
   ConsentRequestContext) {
-  const now = new Date();
+  const now = args.acceptedAt ?? new Date();
   const institutionName = cleanOptionalText(args.institutionName);
   const institutionIdentifier = cleanOptionalText(args.institutionIdentifier);
   const researchUseDescription = cleanOptionalText(args.researchUseDescription);
@@ -135,6 +141,7 @@ export async function recordResearchAccessConsent(args: {
   const [row] = await db
     .insert(researchAccessConsents)
     .values({
+      ...(args.consentId ? { id: args.consentId } : {}),
       consentToken: args.consentToken,
       termsVersion: RESEARCH_USE_TERMS_VERSION,
       minimumAge: RESEARCH_USE_MINIMUM_AGE,

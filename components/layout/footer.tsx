@@ -17,7 +17,7 @@ export function Footer() {
 
   return (
     <footer className="p-sides">
-      <div className="w-full md:h-[532px] p-sides md:p-11 text-background rounded-[12px] flex flex-col justify-between max-md:gap-8" style={{ backgroundColor: '#0B2E2F' }}>
+      <div className="w-full md:min-h-[532px] p-sides py-8 md:p-11 text-background rounded-[12px] flex flex-col justify-between max-md:gap-8" style={{ backgroundColor: '#0B2E2F' }}>
         <div className="flex flex-col justify-between md:flex-row">
           <LogoSvg className="md:basis-3/4 max-md:w-full max-w-[1200px] h-auto block" />
           <div className="max-md:hidden md:max-w-[360px] md:flex md:flex-col md:items-end">

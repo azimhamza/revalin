@@ -35,6 +35,37 @@ function isDraftOutOfDateError(error: unknown) {
   );
 }
 
+function isInvalidDiscountError(error: unknown) {
+  return (
+    error instanceof ApiError &&
+    error.code === 'bad_request' &&
+    /discount code is invalid|invalid discount code|expired/i.test(error.message)
+  );
+}
+
+async function clearInvalidDiscountFromSession(session: CheckoutSessionRecord) {
+  try {
+    await updateCheckoutSession({
+      sessionId: session.sessionId,
+      sessionKey: session.sessionKey,
+      expectedVersion: session.version,
+      changes: {
+        discountCode: null,
+        selectedShippingServiceId: null,
+        pricingSnapshot: null,
+        providerQuoteCache: null,
+        quoteExpiresAt: null,
+        status: 'draft',
+      },
+    });
+  } catch (error) {
+    console.warn('Unable to clear invalid checkout discount from session.', {
+      sessionId: session.sessionId,
+      error,
+    });
+  }
+}
+
 function buildStaleRepriceResponse(session: CheckoutSessionRecord): {
   data: CheckoutRepriceData;
 } {
@@ -87,15 +118,25 @@ export const POST = createApiRoute({
     });
     assertSessionReadyForQuote(session);
 
-    const quote = await buildCheckoutQuote({
-      cartId: session.cartId,
-      cartSnapshot: session.cartSnapshot,
-      shippingAddress: session.shippingAddress,
-      discountCode: session.discountCode,
-      paymentMethod: session.paymentMethod,
-      selectedShippingServiceId:
-        body.selectedShippingServiceId || session.selectedShippingServiceId,
-    });
+    let quote: Awaited<ReturnType<typeof buildCheckoutQuote>>;
+    try {
+      quote = await buildCheckoutQuote({
+        cartId: session.cartId,
+        cartSnapshot: session.cartSnapshot,
+        shippingAddress: session.shippingAddress,
+        discountCode: session.discountCode,
+        paymentMethod: session.paymentMethod,
+        selectedShippingServiceId:
+          body.selectedShippingServiceId || session.selectedShippingServiceId,
+        shipmentProtection: session.shipmentProtection,
+      });
+    } catch (error) {
+      if (session.discountCode && isInvalidDiscountError(error)) {
+        await clearInvalidDiscountFromSession(session);
+      }
+
+      throw error;
+    }
     let persisted: CheckoutSessionRecord;
 
     try {

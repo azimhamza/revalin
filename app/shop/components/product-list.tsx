@@ -55,7 +55,10 @@ async function getProductListData({
     products = [];
   }
 
-  // Sort: products with any in-stock variant first, then most purchased, then Swell order
+  // Reverse Swell's default order so equal-purchase-count items are flipped
+  products.reverse();
+
+  // Sort: products with any in-stock variant first, then most purchased
   products.sort((a, b) => {
     const aHasStock = hasAnyVariantInStock(a) ? 0 : 1;
     const bHasStock = hasAnyVariantInStock(b) ? 0 : 1;

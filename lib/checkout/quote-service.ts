@@ -6,12 +6,16 @@ import {
   getCartSnapshotItemCount,
   getCartSnapshotSubtotal,
   getShipEngineCheckoutServices,
+  applyShipmentProtectionToServices,
+  applyAvailableShipmentProtectionToServices,
   mapSwellRatedServices,
   type CheckoutRatedService,
 } from '@/lib/checkout/shipping-rates';
 import {
   createSwellCheckoutCart,
   deleteSwellCheckoutCart,
+  findSwellCouponCodeByCode,
+  getSwellCoupon,
   getSwellManualPaymentMethod,
   toSwellAddress,
   updateSwellCheckoutCart,
@@ -44,6 +48,7 @@ type CheckoutQuoteInput = {
   discountCode?: string | null;
   paymentMethod?: 'card' | 'crypto' | 'interac' | null;
   selectedShippingServiceId?: string | null;
+  shipmentProtection?: boolean;
 };
 
 function normalizeCheckoutPaymentMethod(
@@ -63,6 +68,41 @@ function sanitizeCartSnapshot(cartSnapshot: CheckoutSessionCartSnapshot) {
       quantity: line.quantity,
     })),
   };
+}
+
+async function getSwellCouponDiscountRate(code?: string | null) {
+  if (!code) {
+    return undefined;
+  }
+
+  try {
+    const couponCode = await findSwellCouponCodeByCode(code);
+    if (!couponCode?.parent_id) {
+      return undefined;
+    }
+
+    const coupon = await getSwellCoupon(couponCode.parent_id);
+    if (coupon.active === false) {
+      return undefined;
+    }
+
+    const percentageDiscount = (coupon.discounts || []).find(discount =>
+      discount.value_type === 'percent' &&
+      Number.isFinite(Number(discount.value_percent)) &&
+      Number(discount.value_percent) > 0
+    );
+    const percentValue = Number(percentageDiscount?.value_percent);
+
+    return Number.isFinite(percentValue) && percentValue > 0
+      ? percentValue / 100
+      : undefined;
+  } catch (error) {
+    console.warn('Unable to resolve Swell coupon percentage for checkout pricing.', {
+      code,
+      error,
+    });
+    return undefined;
+  }
 }
 
 async function estimateTaxForSelectedService(args: {
@@ -140,6 +180,7 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
         currencyCode,
         subtotalAmount,
         itemCount,
+        shipmentProtection: args.shipmentProtection,
       });
 
       if (liveShippingServices.length > 0) {
@@ -200,10 +241,20 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       paymentMethod,
     });
 
-    const fallbackServices = mapSwellRatedServices(
-      swellCart.shipment_rating?.services || [],
-      swellCart.currency || currencyCode,
-    );
+    const fallbackServicesWithProtectionQuote = applyAvailableShipmentProtectionToServices({
+      services: mapSwellRatedServices(
+        swellCart.shipment_rating?.services || [],
+        swellCart.currency || currencyCode,
+      ),
+      subtotalAmount,
+      currencyCode: swellCart.currency || currencyCode,
+    });
+    const fallbackServices = applyShipmentProtectionToServices({
+      services: fallbackServicesWithProtectionQuote,
+      shipmentProtection: args.shipmentProtection,
+      subtotalAmount,
+      currencyCode: swellCart.currency || currencyCode,
+    });
 
     const quote = buildQuoteResponse({
       currencyCode: swellCart.currency || currencyCode,
@@ -213,7 +264,9 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       discounts: pricing.discounts,
       paymentMethod,
       services:
-        preferredServices.length > 0 ? preferredServices : fallbackServices,
+        preferredServices.length > 0 || isShippoConfigured()
+          ? preferredServices
+          : fallbackServices,
     });
 
     const preservedSelection = args.selectedShippingServiceId
@@ -244,6 +297,7 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       selectedRating.couponDiscountAmount ?? couponDiscountAmount;
     const resolvedCouponCode =
       args.discountCode || selectedRating.couponCode || swellCart.coupon_code;
+    const resolvedCouponDiscountRate = await getSwellCouponDiscountRate(resolvedCouponCode);
 
     if (args.discountCode && resolvedCouponDiscountAmount <= 0) {
       throw apiError.badRequest('That discount code is invalid or has expired.');
@@ -258,8 +312,10 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       currencyCode: selectedRating.currencyCode || swellCart.currency || currencyCode,
       subtotalAmount,
       couponDiscountAmount: resolvedCouponDiscountAmount,
+      couponDiscountRate: resolvedCouponDiscountRate,
       couponCode: resolvedCouponCode,
       shippingAmount: selectedServiceForPricing?.price.amount,
+      shipmentProtectionAmount: selectedServiceForPricing?.shipmentProtection?.totalAmount.amount,
       taxAmount: selectedServiceForPricing?.taxAmount?.amount,
       landedCostAmount: selectedServiceForPricing?.landedCostAmount?.amount,
       paymentMethod,

@@ -74,6 +74,9 @@ export function buildOrderConfirmationDataVariables(order: CheckoutOrderRecord) 
   const landedCostAmount = order.totals.landedCostAmount
     ? formatCurrency(order.totals.landedCostAmount.amount, order.currencyCode)
     : "$0.00";
+  const shipmentProtectionAmount = order.totals.shipmentProtectionAmount
+    ? formatCurrency(order.totals.shipmentProtectionAmount.amount, order.currencyCode)
+    : "$0.00";
   const discountAmount =
     order.totals.discountAmount && Number(order.totals.discountAmount.amount) > 0
       ? `-${formatCurrency(order.totals.discountAmount.amount, order.currencyCode)}`
@@ -84,6 +87,7 @@ export function buildOrderConfirmationDataVariables(order: CheckoutOrderRecord) 
     subtotal: formatCurrency(order.totals.subtotalAmount.amount, order.currencyCode),
     shipping: shippingAmount,
     shipping_total: shippingAmount,
+    shipment_protection: shipmentProtectionAmount,
     tax: taxAmount,
     duties: landedCostAmount,
     landed_cost: landedCostAmount,
@@ -111,6 +115,9 @@ export function buildOrderShippedDataVariables(order: CheckoutOrderRecord) {
   const landedCostAmount = order.totals.landedCostAmount
     ? formatCurrency(order.totals.landedCostAmount.amount, order.currencyCode)
     : "$0.00";
+  const shipmentProtectionAmount = order.totals.shipmentProtectionAmount
+    ? formatCurrency(order.totals.shipmentProtectionAmount.amount, order.currencyCode)
+    : "$0.00";
   const discountAmount =
     order.totals.discountAmount && Number(order.totals.discountAmount.amount) > 0
       ? `-${formatCurrency(order.totals.discountAmount.amount, order.currencyCode)}`
@@ -132,6 +139,7 @@ export function buildOrderShippedDataVariables(order: CheckoutOrderRecord) {
     items: buildOrderItems(order),
     subtotal: formatCurrency(order.totals.subtotalAmount.amount, order.currencyCode),
     shipping_total: shippingAmount,
+    shipment_protection: shipmentProtectionAmount,
     tax: taxAmount,
     duties: landedCostAmount,
     landed_cost: landedCostAmount,

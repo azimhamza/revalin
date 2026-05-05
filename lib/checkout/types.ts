@@ -29,10 +29,22 @@ export type CheckoutOrderLine = {
 };
 
 export type CheckoutAppliedDiscount = {
-  kind: 'coupon' | 'crypto' | 'manual';
+  kind: 'coupon' | 'crypto' | 'interac' | 'manual';
   label: string;
   amount: Money;
   code?: string;
+  rate?: number;
+};
+
+export type CheckoutShipmentProtection = {
+  selected: true;
+  provider: 'shippo_xcover' | 'revalin';
+  content: string;
+  insuredValueAmount: Money;
+  feeAmount: Money;
+  shippoInsuranceAmount?: Money;
+  totalAmount: Money;
+  shippoInsuranceIncluded: boolean;
 };
 
 export type CheckoutLandedCost = {
@@ -55,6 +67,8 @@ export type CheckoutOrderTotals = {
   taxAmount?: Money;
   landedCostAmount?: Money;
   landedCost?: CheckoutLandedCost;
+  shipmentProtectionAmount?: Money;
+  shipmentProtection?: CheckoutShipmentProtection;
   totalAmount: Money;
   shippingAmount?: Money;
   shippingThresholdAmount: Money;
@@ -80,6 +94,9 @@ export type CheckoutShippingService = {
   taxAmount?: Money;
   landedCostAmount?: Money;
   landedCost?: CheckoutLandedCost;
+  shippoIncludedInsurancePrice?: Money;
+  availableShipmentProtection?: CheckoutShipmentProtection;
+  shipmentProtection?: CheckoutShipmentProtection;
   pickup?: boolean;
 };
 

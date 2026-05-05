@@ -29,6 +29,7 @@ import {
 } from '@/lib/checkout/client-resume';
 import {
   CARD_CHECKOUT_MINIMUM_USD,
+  getCardDebitCheckoutUnavailableMessage,
   getCardCheckoutMinimumMessage,
   isCardCheckoutMinimumMet,
 } from '@/lib/checkout/payment-method-rules';
@@ -42,7 +43,12 @@ import type {
   ShieldClimbPublicPaymentData,
   NowPaymentsPublicPaymentData,
 } from '@/lib/checkout/types';
-import { calculateCheckoutPricing, getCheckoutDiscounts } from '@/lib/checkout/pricing';
+import {
+  calculateCheckoutPricing,
+  getCheckoutDiscounts,
+  isCheckoutPaymentMethodDiscount,
+  isDirectPaymentDiscountMethod,
+} from '@/lib/checkout/pricing';
 import { cn } from '@/lib/utils';
 import type { Product } from '@/lib/swell/types';
 import { formatPrice, getDiscountPercentage, getDisplayCompareAtPrice, getDisplayPrice } from '@/lib/swell/utils';
@@ -51,6 +57,7 @@ import { CheckoutAuthBanner } from './checkout-auth-banner';
 import { getApiData, getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
 
 type CheckoutExperienceProps = {
+  cardDebitCheckoutEnabled: boolean;
   quickAddProducts: Product[];
 };
 
@@ -99,7 +106,66 @@ type AppliedDiscount = {
   code: string;
   amount: string;
   currencyCode: string;
+  rate?: number;
 };
+
+function getQuoteCouponDiscountAmount(quote: CheckoutQuote) {
+  const couponDiscounts = (quote.discounts || []).filter(
+    discount => discount.kind === 'coupon',
+  );
+  const couponAmount = couponDiscounts.reduce(
+    (total, discount) => total + Number(discount.amount.amount || 0),
+    0,
+  );
+
+  if (couponAmount > 0) {
+    const couponRate = couponDiscounts.find(
+      discount => typeof discount.rate === 'number' && Number.isFinite(discount.rate) && discount.rate > 0,
+    )?.rate;
+
+    return {
+      amount: couponAmount.toFixed(2),
+      currencyCode: couponDiscounts[0]?.amount.currencyCode || quote.currencyCode,
+      rate: couponRate,
+    };
+  }
+
+  if (quote.discounts?.length || isDirectPaymentDiscountMethod(quote.paymentMethod)) {
+    return {
+      amount: '0.00',
+      currencyCode: quote.discountAmount?.currencyCode || quote.currencyCode,
+    };
+  }
+
+  return {
+    amount: quote.discountAmount?.amount || '0.00',
+    currencyCode: quote.discountAmount?.currencyCode || quote.currencyCode,
+  };
+}
+
+function formatAppliedDiscountSummary(discount: AppliedDiscount) {
+  const amount = `-${formatPrice(discount.amount, discount.currencyCode)}`;
+
+  if (typeof discount.rate === 'number' && Number.isFinite(discount.rate) && discount.rate > 0) {
+    const percent = discount.rate * 100;
+    const rounded = Math.round((percent + Number.EPSILON) * 100) / 100;
+    const percentLabel = Number.isInteger(rounded)
+      ? rounded.toFixed(0)
+      : rounded.toFixed(2).replace(/\.?0+$/, '');
+
+    return `${percentLabel}% off (${amount})`;
+  }
+
+  return `${amount} off`;
+}
+
+function getCheckoutErrorMessage(error: unknown, fallbackMessage: string) {
+  return error instanceof Error ? error.message : fallbackMessage;
+}
+
+function isInvalidDiscountMessage(message: string) {
+  return /discount code is invalid|invalid discount code|expired/i.test(message);
+}
 
 type CheckoutDraft = {
   shippingAddress: CheckoutShippingAddress;
@@ -111,6 +177,7 @@ type CheckoutDraft = {
   interacHasSecurityQuestion: boolean;
   interacSecurityQuestion: string;
   interacSecurityAnswer: string;
+  shipmentProtection: boolean;
   discountCode: string;
   appliedDiscount: AppliedDiscount | null;
   apiSession: CheckoutApiSession | null;
@@ -373,6 +440,7 @@ function parseCheckoutDraft(rawDraft: string | null): CheckoutDraft | null {
         typeof parsed.interacSecurityQuestion === 'string' ? parsed.interacSecurityQuestion : '',
       interacSecurityAnswer:
         typeof parsed.interacSecurityAnswer === 'string' ? parsed.interacSecurityAnswer : '',
+      shipmentProtection: parsed.shipmentProtection === true,
       discountCode: typeof parsed.discountCode === 'string' ? parsed.discountCode : '',
       appliedDiscount:
         parsed.appliedDiscount &&
@@ -383,6 +451,12 @@ function parseCheckoutDraft(rawDraft: string | null): CheckoutDraft | null {
               code: parsed.appliedDiscount.code,
               amount: parsed.appliedDiscount.amount,
               currencyCode: parsed.appliedDiscount.currencyCode,
+              rate:
+                typeof parsed.appliedDiscount.rate === 'number' &&
+                Number.isFinite(parsed.appliedDiscount.rate) &&
+                parsed.appliedDiscount.rate > 0
+                  ? parsed.appliedDiscount.rate
+                  : undefined,
             }
           : null,
       apiSession:
@@ -988,7 +1062,10 @@ function DevPaymentSimulator({
   );
 }
 
-export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps) {
+export function CheckoutExperience({
+  cardDebitCheckoutEnabled,
+  quickAddProducts,
+}: CheckoutExperienceProps) {
   const { cart } = useCart();
   const pathname = usePathname();
   const router = useRouter();
@@ -1005,6 +1082,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const [interacHasSecurityQuestion, setInteracHasSecurityQuestion] = useState(false);
   const [interacSecurityQuestion, setInteracSecurityQuestion] = useState('');
   const [interacSecurityAnswer, setInteracSecurityAnswer] = useState('');
+  const [shipmentProtection, setShipmentProtection] = useState(false);
   const [isSubmittingInterac, setIsSubmittingInterac] = useState(false);
   const [isUploadingInteracScreenshot, setIsUploadingInteracScreenshot] = useState(false);
   const [cardNumber, setCardNumber] = useState('');
@@ -1104,6 +1182,40 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     activeOrder?.totals.landedCostAmount?.amount ||
     selectedQuoteService?.landedCostAmount?.amount ||
     '0.00';
+  const selectedAvailableShipmentProtection =
+    activeOrder?.totals.shipmentProtection ||
+    selectedQuoteService?.availableShipmentProtection ||
+    selectedQuoteService?.shipmentProtection ||
+    null;
+  const selectedChargedShipmentProtection =
+    activeOrder?.totals.shipmentProtection ||
+    (shipmentProtection
+      ? selectedQuoteService?.shipmentProtection ||
+        selectedQuoteService?.availableShipmentProtection ||
+        null
+      : null) ||
+    null;
+  const summaryShipmentProtection =
+    activeOrder?.totals.shipmentProtectionAmount?.amount ||
+    selectedChargedShipmentProtection?.totalAmount.amount ||
+    '0.00';
+  const summaryShipmentProtectionValue =
+    selectedChargedShipmentProtection
+      ? formatPrice(
+          summaryShipmentProtection,
+          selectedChargedShipmentProtection.totalAmount.currencyCode || summaryCurrencyCode,
+        )
+      : '';
+  const availableShipmentProtectionValue =
+    selectedAvailableShipmentProtection
+      ? formatPrice(
+          selectedAvailableShipmentProtection.totalAmount.amount,
+          selectedAvailableShipmentProtection.totalAmount.currencyCode || summaryCurrencyCode,
+        )
+      : '';
+  const shipmentProtectionRateLabel = shipmentProtection
+    ? summaryShipmentProtectionValue || (summaryItemCount > 0 && isShippingAddressReady(shippingAddress) ? 'Calculating...' : 'Enter address')
+    : availableShipmentProtectionValue || (summaryItemCount > 0 && isShippingAddressReady(shippingAddress) ? 'Calculating...' : 'Enter address');
   const summaryPricing = useMemo(() => {
     if (activeOrder) {
       const discounts = getCheckoutDiscounts({
@@ -1116,25 +1228,19 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       return {
         discounts,
         totalAmount: activeOrder.totals.totalAmount,
-        cryptoDiscountAmount: discounts.find(discount => discount.kind === 'crypto')?.amount,
+        paymentMethodDiscountAmount: discounts.find(isCheckoutPaymentMethodDiscount)?.amount,
       };
     }
 
     if (quote) {
-      const quoteCouponDiscountAmount = quote.discounts?.length
-        ? quote.discounts
-            .filter(discount => discount.kind !== 'crypto')
-            .reduce((total, discount) => total + Number(discount.amount.amount || 0), 0)
-            .toFixed(2)
-        : quote.paymentMethod === 'crypto'
-          ? appliedDiscount?.amount || '0.00'
-          : quote.discountAmount?.amount || appliedDiscount?.amount || '0.00';
+      const quoteCouponDiscountAmount = getQuoteCouponDiscountAmount(quote).amount;
       const pricing = calculateCheckoutPricing({
         currencyCode: quote.currencyCode,
         subtotalAmount: summarySubtotal,
         couponDiscountAmount: quoteCouponDiscountAmount,
         couponCode: quote.discountCode || appliedDiscount?.code,
         shippingAmount: summaryShipping,
+        shipmentProtectionAmount: summaryShipmentProtection,
         taxAmount: summaryTax,
         landedCostAmount: summaryLandedCost,
         paymentMethod,
@@ -1143,7 +1249,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       return {
         discounts: pricing.discounts,
         totalAmount: pricing.totalAmount,
-        cryptoDiscountAmount: pricing.cryptoDiscountAmount,
+        paymentMethodDiscountAmount: pricing.paymentMethodDiscountAmount,
       };
     }
 
@@ -1153,6 +1259,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       couponDiscountAmount: appliedDiscount?.amount || '0.00',
       couponCode: appliedDiscount?.code,
       shippingAmount: summaryShipping,
+      shipmentProtectionAmount: summaryShipmentProtection,
       taxAmount: summaryTax,
       landedCostAmount: summaryLandedCost,
       paymentMethod,
@@ -1161,7 +1268,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     return {
       discounts: pricing.discounts,
       totalAmount: pricing.totalAmount,
-      cryptoDiscountAmount: pricing.cryptoDiscountAmount,
+      paymentMethodDiscountAmount: pricing.paymentMethodDiscountAmount,
     };
   }, [
     activeOrder,
@@ -1170,11 +1277,13 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     paymentMethod,
     quote?.currencyCode,
     quote?.discountAmount?.amount,
+    quote?.discountAmount?.currencyCode,
     quote?.discountCode,
     quote?.discounts,
     quote?.paymentMethod,
     summaryCurrencyCode,
     summaryLandedCost,
+    summaryShipmentProtection,
     summaryShipping,
     summarySubtotal,
     summaryTax,
@@ -1183,7 +1292,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const summaryCouponDiscountAmount = useMemo(
     () =>
       summaryDiscountLines
-        .filter((discount) => discount.kind !== 'crypto')
+        .filter((discount) => !isCheckoutPaymentMethodDiscount(discount))
         .reduce((total, discount) => total + Number(discount.amount.amount || 0), 0)
         .toFixed(2),
     [summaryDiscountLines],
@@ -1197,6 +1306,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         couponCode:
           appliedDiscount?.code || quote?.discountCode || activeOrder?.totals.discountCode,
         shippingAmount: summaryShipping,
+        shipmentProtectionAmount: summaryShipmentProtection,
         taxAmount: summaryTax,
         landedCostAmount: summaryLandedCost,
         paymentMethod: 'card',
@@ -1208,6 +1318,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       summaryCouponDiscountAmount,
       summaryCurrencyCode,
       summaryLandedCost,
+      summaryShipmentProtection,
       summaryShipping,
       summarySubtotal,
       summaryTax,
@@ -1229,7 +1340,10 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       : 'Enter address';
   const hasLandedCost = Number(summaryLandedCost || 0) > 0.009;
   const summaryLandedCostValue = formatPrice(summaryLandedCost, summaryCurrencyCode);
-  const summaryCryptoDiscountAmount = summaryPricing.cryptoDiscountAmount?.amount;
+  const summaryPaymentMethodDiscountAmount = summaryPricing.paymentMethodDiscountAmount?.amount;
+  const directPaymentSavingsMessage = summaryPaymentMethodDiscountAmount
+    ? ` 5% savings of ${formatPrice(summaryPaymentMethodDiscountAmount, summaryCurrencyCode)} applied automatically.`
+    : ' 5% savings applied automatically.';
   const summaryTotal = summaryPricing.totalAmount.amount;
   const isCartHydrating = !activeOrder && cart === undefined;
   const canEvaluateCardMinimum =
@@ -1244,6 +1358,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         'USD',
       )}.`
     : getCardCheckoutMinimumMessage();
+  const isCardCheckoutUnavailable =
+    !cardDebitCheckoutEnabled || isCardCheckoutDisabled;
+  const cardCheckoutUnavailableMessage = !cardDebitCheckoutEnabled
+    ? getCardDebitCheckoutUnavailableMessage()
+    : cardCheckoutMinimumMessage;
 
   const quickAddCatalog = useMemo(() => {
     if (!cart || cart.lines.length === 0) return quickAddProducts;
@@ -1320,8 +1439,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         quantity: line.quantity,
       })),
       discountCode: appliedDiscount?.code || '',
+      shipmentProtection,
     });
-  }, [cartSnapshot, appliedDiscount, shippingAddress]);
+  }, [cartSnapshot, appliedDiscount, shippingAddress, shipmentProtection]);
 
   // Handle retry URL: pre-fill checkout from a previous failed order
   useEffect(() => {
@@ -1344,6 +1464,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
           setAppliedDiscount(null);
           setShouldAutoApplyDiscount(true);
         }
+        setShipmentProtection(Boolean(retryOrder.totals.shipmentProtection));
       })
       .catch(() => {
         // Silent fail — user can still fill in manually
@@ -1428,7 +1549,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
             : null;
 
         setShippingAddress(checkoutDraft.shippingAddress);
-        setPaymentMethod(checkoutDraft.paymentMethod);
+        setPaymentMethod(
+          checkoutDraft.paymentMethod === 'card' && !cardDebitCheckoutEnabled
+            ? 'crypto'
+            : checkoutDraft.paymentMethod,
+        );
         setPaymentCurrency(checkoutDraft.paymentCurrency);
         setSourceWalletAddress(checkoutDraft.sourceWalletAddress);
         setInteracSenderEmail(checkoutDraft.interacSenderEmail);
@@ -1436,6 +1561,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         setInteracHasSecurityQuestion(checkoutDraft.interacHasSecurityQuestion);
         setInteracSecurityQuestion(checkoutDraft.interacSecurityQuestion);
         setInteracSecurityAnswer(checkoutDraft.interacSecurityAnswer);
+        setShipmentProtection(checkoutDraft.shipmentProtection);
         setCheckoutApiSession(hydratedApiSession);
         const hydratedDiscountCode = initialDiscountCode || checkoutDraft.discountCode;
         const hydratedAppliedDiscount =
@@ -1459,7 +1585,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     } finally {
       setIsDraftHydrated(true);
     }
-  }, [initialDiscountCode]);
+  }, [cardDebitCheckoutEnabled, initialDiscountCode]);
 
   useEffect(() => {
     if (!isDraftHydrated || activeOrder || cart === undefined) return;
@@ -1553,6 +1679,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         interacHasSecurityQuestion,
         interacSecurityQuestion,
         interacSecurityAnswer,
+        shipmentProtection,
         discountCode,
         appliedDiscount,
         apiSession: checkoutApiSession,
@@ -1571,6 +1698,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     isDraftHydrated,
     paymentCurrency,
     paymentMethod,
+    shipmentProtection,
     interacSenderEmail,
     interacSenderName,
     interacHasSecurityQuestion,
@@ -2008,10 +2136,15 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
 
   useEffect(() => {
     if (activeOrder) return;
-    if (paymentMethod !== 'card' || !isCardCheckoutDisabled) return;
+    if (
+      paymentMethod !== 'card' ||
+      (cardDebitCheckoutEnabled && !isCardCheckoutDisabled)
+    ) {
+      return;
+    }
 
     setPaymentMethod('crypto');
-  }, [activeOrder, isCardCheckoutDisabled, paymentMethod]);
+  }, [activeOrder, cardDebitCheckoutEnabled, isCardCheckoutDisabled, paymentMethod]);
 
   const pollingId = checkoutSession?.order.payment ? getPollingId(checkoutSession.order.payment) : undefined;
   const autoPollingId =
@@ -2110,17 +2243,29 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   }, [shippingAddress]);
 
   const selectPaymentMethod = useCallback((nextPaymentMethod: 'card' | 'crypto' | 'interac') => {
+    if (nextPaymentMethod === 'card' && !cardDebitCheckoutEnabled) {
+      setPaymentMethod('crypto');
+      return;
+    }
+
     if (nextPaymentMethod === 'interac') {
       fillInteracSenderDetails();
     }
 
     setPaymentMethod(nextPaymentMethod);
-  }, [fillInteracSenderDetails]);
+  }, [cardDebitCheckoutEnabled, fillInteracSenderDetails]);
 
   const handleShippingChange = (name: keyof CheckoutShippingAddress, value: string) => {
     setShippingAddress(current => ({ ...current, [name]: value }));
     if (!activeOrder) {
       resetQuoteState();
+    }
+  };
+
+  const handleShipmentProtectionChange = (checked: boolean) => {
+    setShipmentProtection(checked);
+    if (!activeOrder) {
+      lastQuoteRequestSignature.current = null;
     }
   };
 
@@ -2161,6 +2306,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       paymentMethod,
       paymentCurrency,
       sourceWalletAddress: sourceWalletAddress.trim() || undefined,
+      shipmentProtection,
       interacSenderEmail:
         paymentMethod === 'interac'
           ? effectiveInteracSenderEmail || undefined
@@ -2195,6 +2341,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       interacSenderName,
       paymentCurrency,
       paymentMethod,
+      shipmentProtection,
       selectedShippingServiceId,
       shippingAddress,
       sourceWalletAddress,
@@ -2391,16 +2538,23 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
           : data.quote.selectedServiceId,
       );
       const appliedCode = data.quote.discountCode || code;
+      const couponDiscountAmount = getQuoteCouponDiscountAmount(data.quote);
       setDiscountCode(appliedCode);
       setAppliedDiscount({
         code: appliedCode,
-        amount: data.quote.discountAmount?.amount || '0.00',
-        currencyCode: data.quote.discountAmount?.currencyCode || data.quote.currencyCode,
+        amount: couponDiscountAmount.amount,
+        currencyCode: couponDiscountAmount.currencyCode,
+        rate: couponDiscountAmount.rate,
       });
       setDiscountError(null);
     } catch (applyError: unknown) {
-      setDiscountError(applyError instanceof Error ? applyError.message : 'Invalid discount code.');
+      const message = getCheckoutErrorMessage(applyError, 'Invalid discount code.');
+      setDiscountError(message);
       setAppliedDiscount(null);
+      setShouldAutoApplyDiscount(false);
+      if (isInvalidDiscountMessage(message)) {
+        setDiscountCode('');
+      }
     } finally {
       setIsValidatingDiscount(false);
     }
@@ -2481,13 +2635,13 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       setIsLoadingQuote(true);
       setError(null);
 
+      const pendingCode = shouldAutoApplyDiscount && !appliedDiscount
+        ? discountCode.trim().toUpperCase() || undefined
+        : undefined;
+
       try {
         // Include the pending affiliate discount code in the first quote so
         // the user sees it applied as soon as the shipping address is ready.
-        const pendingCode = shouldAutoApplyDiscount && !appliedDiscount
-          ? discountCode.trim().toUpperCase() || undefined
-          : undefined;
-
         const session = await ensureCheckoutApiSession();
         const data = await repriceCheckoutApiSession({
           session,
@@ -2510,23 +2664,46 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
             : data.quote.selectedServiceId
         );
 
-        // If we piggybacked the affiliate discount, mark it as applied.
-        if (pendingCode && data.quote.discountAmount && Number(data.quote.discountAmount.amount) > 0) {
-          const appliedCode = data.quote.discountCode || pendingCode;
-          setDiscountCode(appliedCode);
-          setAppliedDiscount({
-            code: appliedCode,
-            amount: data.quote.discountAmount.amount || '0.00',
-            currencyCode: data.quote.discountAmount.currencyCode || data.quote.currencyCode,
-          });
-          setShouldAutoApplyDiscount(false);
+        const couponDiscountAmount = getQuoteCouponDiscountAmount(data.quote);
+        const refreshedDiscountCode = data.quote.discountCode || pendingCode || appliedDiscount?.code;
+        if (refreshedDiscountCode && Number(couponDiscountAmount.amount) > 0) {
+          const nextAppliedDiscount = {
+            code: refreshedDiscountCode,
+            amount: couponDiscountAmount.amount,
+            currencyCode: couponDiscountAmount.currencyCode,
+            rate: couponDiscountAmount.rate,
+          };
+
+          if (pendingCode) {
+            setDiscountCode(refreshedDiscountCode);
+            setShouldAutoApplyDiscount(false);
+          }
+
+          if (
+            !appliedDiscount ||
+            appliedDiscount.code !== nextAppliedDiscount.code ||
+            appliedDiscount.amount !== nextAppliedDiscount.amount ||
+            appliedDiscount.currencyCode !== nextAppliedDiscount.currencyCode ||
+            appliedDiscount.rate !== nextAppliedDiscount.rate
+          ) {
+            setAppliedDiscount(nextAppliedDiscount);
+          }
         }
       } catch (quoteError: unknown) {
         if (quoteError instanceof Error && quoteError.name === 'AbortError') {
           return;
         }
 
-        setError(quoteError instanceof Error ? quoteError.message : 'Unable to fetch shipping options.');
+        const message = getCheckoutErrorMessage(quoteError, 'Unable to fetch shipping options.');
+        if (pendingCode && isInvalidDiscountMessage(message)) {
+          setDiscountError(message);
+          setDiscountCode('');
+          setAppliedDiscount(null);
+          setShouldAutoApplyDiscount(false);
+          lastQuoteRequestSignature.current = null;
+        } else {
+          setError(message);
+        }
         setQuote(null);
         setSelectedShippingServiceId('');
       } finally {
@@ -2580,6 +2757,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   }) => {
     if (!selectedShippingServiceId) {
       setError('Select a shipping method before creating the payment.');
+      return;
+    }
+
+    if (paymentMethod === 'card' && !cardDebitCheckoutEnabled) {
+      setError(getCardDebitCheckoutUnavailableMessage());
       return;
     }
 
@@ -2755,6 +2937,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     }
   }, [
     buildCheckoutSessionPayload,
+    cardDebitCheckoutEnabled,
     cardCheckoutMinimumMessage,
     ensureCheckoutApiSession,
     createCheckoutApiSession,
@@ -2773,6 +2956,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const handleCreatePayment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    if (paymentMethod === 'card' && !cardDebitCheckoutEnabled) {
+      setError(getCardDebitCheckoutUnavailableMessage());
+      return;
+    }
+
     if (paymentMethod === 'card' && isCardCheckoutDisabled) {
       setError(cardCheckoutMinimumMessage);
       return;
@@ -2789,6 +2977,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const continueToCardCheckout = useCallback(async () => {
     if (isCreatingPayment) return;
 
+    if (!cardDebitCheckoutEnabled) {
+      setError(getCardDebitCheckoutUnavailableMessage());
+      return;
+    }
+
     const parsedExpiry = parseCardExpiry(cardExpiry);
     const normalizedNumber = cardNumber.replace(/\D/g, '');
     const normalizedCvv = cardCvv.replace(/\D/g, '');
@@ -2804,7 +2997,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       expiryMonth: parsedExpiry.expiryMonth,
       expiryYear: parsedExpiry.expiryYear,
     });
-  }, [cardCvv, cardExpiry, cardNumber, isCreatingPayment, submitCheckoutPayment]);
+  }, [cardCvv, cardDebitCheckoutEnabled, cardExpiry, cardNumber, isCreatingPayment, submitCheckoutPayment]);
 
   const refreshStatus = async () => {
     if (!pollingId || !checkoutSession) return;
@@ -3026,6 +3219,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
         setCheckoutSession(null);
         setQuote(null);
         setSelectedShippingServiceId(preservedShippingServiceId);
+        setShipmentProtection(Boolean(activeOrder.totals.shipmentProtection));
         selectPaymentMethod(nextPaymentMethod);
         lastQuoteRequestSignature.current = null;
         syncCheckoutUrlImmediately();
@@ -3060,7 +3254,16 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
   const paymentStatus = activeOrder?.payment.status || 'waiting';
   const nowPayment = activeOrder?.payment && isNowPaymentsOrder(activeOrder.payment) ? activeOrder.payment : null;
   const shieldClimbPayment = activeOrder?.payment && isShieldClimbOrder(activeOrder.payment) ? activeOrder.payment : null;
+  const bankfulPayment = activeOrder?.payment && isBankfulOrder(activeOrder.payment) ? activeOrder.payment : null;
   const interacPayment = activeOrder?.payment && isInteracOrder(activeOrder.payment) ? activeOrder.payment : null;
+  const activeOrderUsesCardPayment = Boolean(shieldClimbPayment || bankfulPayment);
+  const alternatePaymentMethod: 'card' | 'crypto' | 'interac' = activeOrderUsesCardPayment
+    ? 'crypto'
+    : interacPayment
+      ? 'crypto'
+      : cardDebitCheckoutEnabled
+        ? 'card'
+        : 'interac';
   const paymentExpiresAt = nowPayment ? formatDateTime(nowPayment.validUntil || nowPayment.expirationEstimateDate) : null;
   const isPartiallyPaid = paymentStatus === 'partially_paid';
 
@@ -3091,6 +3294,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
       setCheckoutSession(null);
       setQuote(null);
       setSelectedShippingServiceId(preservedShippingServiceId);
+      setShipmentProtection(Boolean(activeOrder.totals.shipmentProtection));
       lastQuoteRequestSignature.current = null;
       syncCheckoutUrlImmediately();
       updateCheckoutUrl();
@@ -3177,16 +3381,19 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     : interacPayment?.cadAmount;
 
   const canPayRemainderWithCard =
-    !isPartiallyPaid ||
-    !activeOrder ||
-    activeOrder.currencyCode.trim().toUpperCase() !== 'USD'
-      ? true
-      : remainingBalanceAmount >= CARD_CHECKOUT_MINIMUM_USD;
+    cardDebitCheckoutEnabled &&
+    (!isPartiallyPaid ||
+      !activeOrder ||
+      activeOrder.currencyCode.trim().toUpperCase() !== 'USD'
+        ? true
+        : remainingBalanceAmount >= CARD_CHECKOUT_MINIMUM_USD);
 
   const canSwitchToAlternatePayment =
-    isPartiallyPaid
-      ? (shieldClimbPayment ? true : canPayRemainderWithCard)
-      : (shieldClimbPayment ? true : !isCardCheckoutDisabled);
+    alternatePaymentMethod !== 'card'
+      ? true
+      : isPartiallyPaid
+        ? canPayRemainderWithCard
+        : !isCardCheckoutDisabled;
 
   const canPlaceOrder =
     cart &&
@@ -3194,7 +3401,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
     selectedShippingServiceId &&
     !isCreatingPayment &&
     ageVerified &&
-    !(paymentMethod === 'card' && isCardCheckoutDisabled) &&
+    !(paymentMethod === 'card' && (!cardDebitCheckoutEnabled || isCardCheckoutDisabled)) &&
     !(
       paymentMethod === 'interac' &&
       (!effectiveInteracSenderEmail || !effectiveInteracSenderName)
@@ -3258,6 +3465,12 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                     label={activeOrder?.shippingService?.name || selectedQuoteService?.name || 'Shipping'}
                     value={summaryShippingValue}
                   />
+                  {selectedChargedShipmentProtection ? (
+                    <SummaryBlock
+                      label="Shipment Protection"
+                      value={summaryShipmentProtectionValue}
+                    />
+                  ) : null}
                   <SummaryBlock label="Tax" value={summaryTaxValue} />
                   {hasLandedCost ? (
                     <SummaryBlock label="Duties & import taxes" value={summaryLandedCostValue} />
@@ -3416,6 +3629,34 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                       </Button>
                     </div>
 
+                    <label className="mt-3 flex cursor-pointer items-start justify-between gap-4 rounded-xl border border-border bg-background px-3.5 py-3 transition-colors hover:bg-muted/40">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={shipmentProtection}
+                          onChange={(event) => handleShipmentProtectionChange(event.target.checked)}
+                          className="mt-0.5 size-[18px] shrink-0 rounded accent-[#0B2E2F]"
+                        />
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <ShieldCheck className="size-4 text-[#0B2E2F]" strokeWidth={1.7} />
+                            <p className="text-sm font-semibold">Shipment Protection</p>
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-foreground/55">
+                            Optional replacement support for lost or damaged packages.
+                          </p>
+                          {shipmentProtection && selectedQuoteService ? (
+                            <p className="mt-1 text-[11px] font-medium text-foreground/45">
+                              Added to your order total as Shipment Protection.
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+                      <span className="shrink-0 text-right text-sm font-semibold">
+                        {shipmentProtectionRateLabel}
+                      </span>
+                    </label>
+
                     <div className="mt-3 space-y-2">
                       {quote ? (
                         quote.services.map(service => {
@@ -3424,6 +3665,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                           const estimatedDelivery = formatEstimatedDeliveryDays(service.estimatedDays);
                           const optionCategory = formatShippingOptionCategory(service.quoteCategory);
                           const optionLandedCost = Number(service.landedCostAmount?.amount || 0);
+                          const optionProtection = shipmentProtection
+                            ? service.shipmentProtection || service.availableShipmentProtection
+                            : service.availableShipmentProtection;
                           return (
                             <label
                               key={service.id}
@@ -3476,6 +3720,11 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                                     +{formatPrice(service.landedCostAmount?.amount || '0.00', service.landedCostAmount?.currencyCode || service.price.currencyCode)} duties
                                   </p>
                                 ) : null}
+                                {optionProtection ? (
+                                  <p className="mt-1 text-[11px] font-medium text-foreground/55">
+                                    +{formatPrice(optionProtection.totalAmount.amount, optionProtection.totalAmount.currencyCode)} Shipment Protection
+                                  </p>
+                                ) : null}
                               </div>
                             </label>
                           );
@@ -3501,13 +3750,13 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                       <button
                         type="button"
                         onClick={() => {
-                          if (isCardCheckoutDisabled) return;
+                          if (isCardCheckoutUnavailable) return;
                           selectPaymentMethod('card');
                         }}
-                        disabled={isCardCheckoutDisabled}
+                        disabled={isCardCheckoutUnavailable}
                         className={cn(
-                          'flex items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition-all',
-                          isCardCheckoutDisabled
+                          'flex items-center gap-2.5 rounded-xl border px-3 py-3 text-left transition-all',
+                          isCardCheckoutUnavailable
                             ? 'cursor-not-allowed border-border/70 bg-background/60 opacity-55'
                             : paymentMethod === 'card'
                             ? 'border-[#0B2E2F] bg-[#0B2E2F]/5 ring-1 ring-[#0B2E2F]'
@@ -3519,16 +3768,16 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-sm font-semibold">Debit / Credit Card</p>
-                            {isCardCheckoutDisabled ? (
+                            <p className="text-sm font-semibold leading-5">Debit / Credit Card</p>
+                            {isCardCheckoutUnavailable ? (
                               <span className="rounded-full border border-foreground/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-foreground/45">
-                                Min ${CARD_CHECKOUT_MINIMUM_USD} USD
+                                {cardDebitCheckoutEnabled ? `Min $${CARD_CHECKOUT_MINIMUM_USD} USD` : 'Currently disabled'}
                               </span>
                             ) : null}
                           </div>
-                          {isCardCheckoutDisabled ? (
+                          {isCardCheckoutUnavailable ? (
                             <p className="mt-1 text-xs text-foreground/45">
-                              {cardCheckoutMinimumMessage}
+                              {cardCheckoutUnavailableMessage}
                             </p>
                           ) : (
                             <PaymentBrandIcons className="mt-1" />
@@ -3553,8 +3802,8 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                           <Wallet className="size-4" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-semibold">Direct Crypto</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-semibold leading-5">Direct Crypto</p>
                             <span className="rounded-full bg-[#0B2E2F] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#F4F1EA]">Save 5%</span>
                           </div>
                           <p className="text-xs text-foreground/55">BTC, ETH, USDT, more</p>
@@ -3578,9 +3827,9 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                           <Landmark className="size-4" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-semibold">Interac e-Transfer</p>
-                            <span className="rounded-full border border-[#0B2E2F]/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#0B2E2F]">CAD</span>
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <p className="whitespace-nowrap text-sm font-semibold leading-5">Interac e-Transfer</p>
+                            <span className="whitespace-nowrap rounded-full bg-[#0B2E2F] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[#F4F1EA]">Save 5%</span>
                           </div>
                           <p className="text-xs text-foreground/55">Auto-deposit confirmation</p>
                         </div>
@@ -3711,6 +3960,20 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                           </div>
                         ) : null}
                       </div>
+                    ) : paymentMethod === 'card' && isCardCheckoutUnavailable ? (
+                      <div className="mt-3 rounded-2xl border border-border/70 bg-background/60 px-4 py-4">
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-foreground/8 text-foreground/45">
+                            <CreditCard className="size-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold">Debit / Credit Card currently disabled</p>
+                            <p className="mt-1 text-xs leading-5 text-foreground/50">
+                              {cardCheckoutUnavailableMessage}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
                     ) : (
                       <div className="mt-3 rounded-2xl border border-border/70 bg-background/60 px-4 py-4">
                         <div className="flex items-start gap-3">
@@ -3799,7 +4062,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                             </label>
                           </div>
                           <p className="px-1 text-xs text-foreground/45">
-                            Want to save 5%? Choose <button type="button" onClick={() => selectPaymentMethod('crypto')} className="font-semibold text-[#0B2E2F] underline underline-offset-2">Direct Crypto</button> above and pay from your wallet.
+                            Want to save 5%? Choose <button type="button" onClick={() => selectPaymentMethod('crypto')} className="font-semibold text-[#0B2E2F] underline underline-offset-2">Direct Crypto</button> or <button type="button" onClick={() => selectPaymentMethod('interac')} className="font-semibold text-[#0B2E2F] underline underline-offset-2">Interac e-Transfer</button> above.
                           </p>
                         </div>
                       </div>
@@ -3822,7 +4085,7 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                           <div>
                             <p className="text-sm font-semibold text-[#0B2E2F]">{appliedDiscount.code}</p>
                             <p className="text-xs text-foreground/60">
-                              -{formatPrice(appliedDiscount.amount, appliedDiscount.currencyCode)} off
+                              {formatAppliedDiscountSummary(appliedDiscount)}
                             </p>
                           </div>
                         </div>
@@ -3928,12 +4191,12 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                     ) : paymentMethod === 'interac' ? (
                       <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-foreground/45">
                         <Lock className="size-3" />
-                        You&apos;ll receive a copyable Interac message code and exact CAD amount after placing the order.
+                        You&apos;ll receive a copyable Interac message code and exact amount after placing the order.{directPaymentSavingsMessage}
                       </p>
                     ) : (
                       <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-foreground/45">
                         <Lock className="size-3" />
-                        You&apos;ll receive a {formatTicker(paymentCurrency)} deposit address in the next step.{summaryCryptoDiscountAmount ? ` Direct crypto savings of ${formatPrice(summaryCryptoDiscountAmount, summaryCurrencyCode)} applied automatically.` : ' 5% discount applied automatically.'}
+                        You&apos;ll receive a {formatTicker(paymentCurrency)} deposit address in the next step.{directPaymentSavingsMessage}
                       </p>
                     )}
                   </div>
@@ -4018,6 +4281,12 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                               <div className="flex justify-between">
                                 <span className="text-foreground/65">Shipping</span>
                                 <span>{Number(activeOrder.totals.shippingAmount.amount) === 0 ? 'Free' : formatPrice(activeOrder.totals.shippingAmount.amount, activeOrder.totals.shippingAmount.currencyCode)}</span>
+                              </div>
+                            ) : null}
+                            {activeOrder.totals.shipmentProtectionAmount ? (
+                              <div className="flex justify-between">
+                                <span className="text-foreground/65">Shipment Protection</span>
+                                <span>{formatPrice(activeOrder.totals.shipmentProtectionAmount.amount, activeOrder.totals.shipmentProtectionAmount.currencyCode)}</span>
                               </div>
                             ) : null}
                             {activeOrder.totals.taxAmount && Number(activeOrder.totals.taxAmount.amount) > 0 ? (
@@ -4203,8 +4472,10 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                                   ) : (
                                     <div className="flex items-center justify-center gap-2 rounded-xl border border-border/50 bg-background/60 px-5 py-3 text-sm text-foreground/45">
                                       <CreditCard className="size-4" />
-                                      Card unavailable
-                                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">${CARD_CHECKOUT_MINIMUM_USD} min</span>
+                                      {cardDebitCheckoutEnabled ? 'Card unavailable' : 'Card currently disabled'}
+                                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
+                                        {cardDebitCheckoutEnabled ? `$${CARD_CHECKOUT_MINIMUM_USD} min` : 'Disabled'}
+                                      </span>
                                     </div>
                                   )}
                                 </div>
@@ -4519,6 +4790,12 @@ export function CheckoutExperience({ quickAddProducts }: CheckoutExperienceProps
                                 <div className="flex justify-between">
                                   <span className="text-foreground/65">Shipping</span>
                                   <span>{Number(activeOrder.totals.shippingAmount.amount) === 0 ? 'Free' : formatPrice(activeOrder.totals.shippingAmount.amount, activeOrder.totals.shippingAmount.currencyCode)}</span>
+                                </div>
+                              ) : null}
+                              {activeOrder.totals.shipmentProtectionAmount ? (
+                                <div className="flex justify-between">
+                                  <span className="text-foreground/65">Shipment Protection</span>
+                                  <span>{formatPrice(activeOrder.totals.shipmentProtectionAmount.amount, activeOrder.totals.shipmentProtectionAmount.currencyCode)}</span>
                                 </div>
                               ) : null}
                               {activeOrder.totals.taxAmount && Number(activeOrder.totals.taxAmount.amount) > 0 ? (

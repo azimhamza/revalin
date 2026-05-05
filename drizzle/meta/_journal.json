@@ -176,6 +176,13 @@
       "when": 1777942800000,
       "tag": "0024_shippo_fulfillment",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1778029200000,
+      "tag": "0025_checkout_shipment_protection",
+      "breakpoints": true
     }
   ]
 }

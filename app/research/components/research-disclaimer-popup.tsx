@@ -7,6 +7,7 @@ import { LogoSvg } from '@/components/layout/header/logo-svg';
 import Link from 'next/link';
 import { FileCheck2, FlaskConical, Loader2, ShieldCheck } from 'lucide-react';
 import { getApiData, getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
+import { RESEARCH_USE_TERMS_VERSION } from '@/lib/compliance';
 import {
   RESEARCH_CONSENT_ACCEPTED_EVENT,
   RESEARCH_CONSENT_STORAGE_KEY,
@@ -66,61 +67,78 @@ export function ResearchDisclaimerPopup() {
     };
   }, []);
 
-  const handleAccept = async () => {
+  const handleAccept = () => {
     if (isSubmitting) return;
 
     setIsSubmitting(true);
     setError(null);
 
-    try {
-      const response = await fetch('/api/compliance/research-consent', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          institutionName,
-          institutionIdentifier,
-          researchUseDescription,
-          entryPath: `${window.location.pathname}${window.location.search}`,
-          referrer: document.referrer || null,
-        }),
-      });
-      const payload = await readJsonSafely(response);
+    const acceptedAt = new Date().toISOString();
+    const payload = {
+      institutionName,
+      institutionIdentifier,
+      researchUseDescription,
+      entryPath: `${window.location.pathname}${window.location.search}`,
+      referrer: document.referrer || null,
+    };
 
-      if (!response.ok) {
-        throw new Error(getApiErrorMessage(payload, 'Unable to record consent.'));
-      }
+    setIsOpen(false);
+    window.dispatchEvent(new Event(RESEARCH_CONSENT_ACCEPTED_EVENT));
 
-      const data = getApiData<{
-        consentId: string;
-        acceptedAt: string;
-        termsVersion: string;
-      }>(payload);
-
-      if (!data?.consentId || !data.acceptedAt) {
-        throw new Error('Unable to record consent.');
-      }
-
+    window.setTimeout(() => {
       try {
         window.localStorage.setItem(
           RESEARCH_CONSENT_STORAGE_KEY,
           JSON.stringify({
-            consentId: data.consentId,
-            acceptedAt: data.acceptedAt,
-            termsVersion: data.termsVersion,
+            consentId: 'pending',
+            acceptedAt,
+            termsVersion: RESEARCH_USE_TERMS_VERSION,
           }),
         );
         window.localStorage.setItem(LEGACY_STORAGE_KEY, 'true');
       } catch {
-        // Consent is already persisted server-side; storage failure should not block entry.
+        // Local storage is only a client-side UX hint; the background request persists consent.
       }
-      window.dispatchEvent(new Event(RESEARCH_CONSENT_ACCEPTED_EVENT));
-      setIsOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to record consent.');
-    } finally {
-      setIsSubmitting(false);
-    }
+
+      void fetch('/api/compliance/research-consent', {
+        method: 'POST',
+        credentials: 'same-origin',
+        keepalive: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            const payload = await readJsonSafely(response);
+            throw new Error(getApiErrorMessage(payload, 'Unable to record consent.'));
+          }
+
+          const consentId = response.headers.get('x-revalin-consent-id')?.trim();
+          const persistedAcceptedAt = response.headers.get('x-revalin-consent-accepted-at')?.trim();
+          const termsVersion = response.headers.get('x-revalin-consent-terms-version')?.trim();
+
+          if (!consentId && !persistedAcceptedAt && !termsVersion) return;
+
+          try {
+            window.localStorage.setItem(
+              RESEARCH_CONSENT_STORAGE_KEY,
+              JSON.stringify({
+                consentId: consentId || 'queued',
+                acceptedAt: persistedAcceptedAt || acceptedAt,
+                termsVersion: termsVersion || RESEARCH_USE_TERMS_VERSION,
+              }),
+            );
+          } catch {
+            // The cookie and database record are authoritative.
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to queue research access consent:', err);
+        })
+        .finally(() => {
+          setIsSubmitting(false);
+        });
+    }, 0);
   };
 
   return (
@@ -278,7 +296,7 @@ export function ResearchDisclaimerPopup() {
                   {isSubmitting ? (
                     <>
                       <Loader2 className="size-4 animate-spin" />
-                      Recording consent
+                      Entering site
                     </>
                   ) : (
                     'Yes, I agree and enter site'

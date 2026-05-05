@@ -158,6 +158,7 @@ export const POST = createApiRoute({
         interacSecurityQuestion: session.interacSecurityQuestion,
         interacSecurityAnswer: session.interacSecurityAnswer,
         selectedShippingServiceId: session.selectedShippingServiceId,
+        shipmentProtection: session.shipmentProtection,
         discountCode: session.discountCode,
         requestUrl: new URL(request.url),
         affiliateCode,

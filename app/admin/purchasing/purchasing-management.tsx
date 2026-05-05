@@ -3,12 +3,15 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   CreditCard,
+  DollarSign,
   Loader2,
   PackageCheck,
   Plus,
   ReceiptText,
   Search,
+  Timer,
   Truck,
 } from "lucide-react";
 
@@ -60,6 +63,17 @@ function formatMoney(amount: string, currencyCode: string) {
     style: "currency",
     currency: currencyCode,
   }).format(Number(amount || 0));
+}
+
+function formatMoneyNumber(amount: number, currencyCode = "USD") {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currencyCode,
+  }).format(amount);
+}
+
+function amountDue(order: PurchaseOrderSummary) {
+  return Math.max(0, Number(order.totalAmount || 0) - Number(order.amountPaid || 0));
 }
 
 function splitProofUrls(value: string) {
@@ -147,6 +161,55 @@ export function PurchasingManagement({
     () => data.inventoryItems.filter((item) => item.active),
     [data.inventoryItems],
   );
+  const dashboard = useMemo(() => {
+    const now = new Date();
+    const openOrders = data.purchaseOrders.filter((order) =>
+      ["ordered", "partially_received"].includes(order.status),
+    );
+    const unpaidOrders = data.purchaseOrders.filter((order) =>
+      ["unpaid", "partially_paid"].includes(order.paymentStatus),
+    );
+    const overdueOrders = openOrders.filter(
+      (order) => order.expectedAt && new Date(order.expectedAt) < now,
+    );
+    const totalValue = data.purchaseOrders.reduce(
+      (total, order) => total + Number(order.totalAmount || 0),
+      0,
+    );
+    const unpaidValue = unpaidOrders.reduce(
+      (total, order) => total + amountDue(order),
+      0,
+    );
+    const orderedQuantity = data.purchaseOrders.reduce(
+      (total, order) => total + order.orderedQuantity,
+      0,
+    );
+    const receivedQuantity = data.purchaseOrders.reduce(
+      (total, order) => total + order.receivedQuantity,
+      0,
+    );
+    const receiptRate =
+      orderedQuantity > 0 ? Math.round((receivedQuantity / orderedQuantity) * 100) : 0;
+    const actionOrders = [...overdueOrders, ...unpaidOrders]
+      .filter(
+        (order, index, orders) =>
+          orders.findIndex((candidate) => candidate.id === order.id) === index,
+      )
+      .slice(0, 5);
+
+    return {
+      openOrders,
+      unpaidOrders,
+      overdueOrders,
+      totalValue,
+      unpaidValue,
+      orderedQuantity,
+      receivedQuantity,
+      receiptRate,
+      actionOrders,
+      currencyCode: data.purchaseOrders[0]?.currencyCode || "USD",
+    };
+  }, [data.purchaseOrders]);
 
   function applyFilters(next = filters) {
     const params = new URLSearchParams();
@@ -247,10 +310,22 @@ export function PurchasingManagement({
     }
   }
 
-  async function receivePurchaseOrder(order: PurchaseOrderSummary) {
+  function setReceiveLine(orderId: string, lineId: string, value: string) {
+    setReceiveInputs((current) => ({
+      ...current,
+      [orderId]: {
+        ...(current[orderId] || {}),
+        [lineId]: value,
+      },
+    }));
+  }
+
+  async function receivePurchaseOrder(order: PurchaseOrderSummary, receiveAll = false) {
     const lines = order.lines.map((line) => ({
       purchaseOrderLineId: line.id,
-      quantityReceived: Number(receiveInputs[order.id]?.[line.id] || 0),
+      quantityReceived: receiveAll
+        ? line.quantityRemaining
+        : Number(receiveInputs[order.id]?.[line.id] || 0),
     }));
 
     const ok = await requestJson(
@@ -293,6 +368,21 @@ export function PurchasingManagement({
     );
   }
 
+  async function markOrderPaid(order: PurchaseOrderSummary) {
+    await requestJson(
+      `/api/admin/purchasing/purchase-orders/${order.id}/payment`,
+      "PATCH",
+      {
+        paymentStatus: "paid",
+        amountPaid: order.totalAmount,
+        paymentMethod: paymentInputFor(order).paymentMethod || undefined,
+        paymentReference: paymentInputFor(order).paymentReference || undefined,
+        proofUrls: splitProofUrls(paymentInputFor(order).proofUrls),
+      },
+      `payment:${order.id}`,
+    );
+  }
+
   return (
     <div className="space-y-4">
       <AdminSectionHeader
@@ -306,6 +396,138 @@ export function PurchasingManagement({
           {error}
         </div>
       ) : null}
+
+      <AdminPanel tone="inverse" className="p-3 md:p-4">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]">
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-sidebar-foreground/55">
+                  Dashboard
+                </p>
+                <h2 className="mt-1 text-xl font-semibold tracking-[-0.05em] md:text-2xl">
+                  Purchasing visibility
+                </h2>
+                <p className="mt-1 max-w-2xl text-[11px] leading-4 text-sidebar-foreground/70">
+                  Open PO value, payment exposure, receiving progress, and orders that need attention.
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="border border-sidebar-border bg-sidebar-accent/20 px-2 py-2">
+                  <p className="text-[9px] uppercase tracking-[0.16em] text-sidebar-foreground/55">
+                    Value
+                  </p>
+                  <p className="mt-1 text-sm font-semibold tabular-nums">
+                    {formatMoneyNumber(dashboard.totalValue, dashboard.currencyCode)}
+                  </p>
+                </div>
+                <div className="border border-sidebar-border bg-sidebar-accent/20 px-2 py-2">
+                  <p className="text-[9px] uppercase tracking-[0.16em] text-sidebar-foreground/55">
+                    Unpaid
+                  </p>
+                  <p className="mt-1 text-sm font-semibold tabular-nums text-red-100">
+                    {formatMoneyNumber(dashboard.unpaidValue, dashboard.currencyCode)}
+                  </p>
+                </div>
+                <div className="border border-sidebar-border bg-sidebar-accent/20 px-2 py-2">
+                  <p className="text-[9px] uppercase tracking-[0.16em] text-sidebar-foreground/55">
+                    Received
+                  </p>
+                  <p className="mt-1 text-sm font-semibold tabular-nums">
+                    {dashboard.receiptRate}%
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-2 md:grid-cols-3">
+              <div className="border border-sidebar-border bg-sidebar-accent/20 p-2.5">
+                <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-sidebar-foreground/60">
+                  <Truck className="size-3.5" />
+                  Open
+                </div>
+                <p className="mt-2 text-2xl font-semibold tracking-[-0.06em]">
+                  {dashboard.openOrders.length}
+                </p>
+                <p className="text-[11px] text-sidebar-foreground/65">
+                  {dashboard.orderedQuantity - dashboard.receivedQuantity} units remaining
+                </p>
+              </div>
+              <div className="border border-sidebar-border bg-sidebar-accent/20 p-2.5">
+                <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-sidebar-foreground/60">
+                  <DollarSign className="size-3.5" />
+                  Payment
+                </div>
+                <p className="mt-2 text-2xl font-semibold tracking-[-0.06em]">
+                  {dashboard.unpaidOrders.length}
+                </p>
+                <p className="text-[11px] text-sidebar-foreground/65">
+                  unpaid or partially paid
+                </p>
+              </div>
+              <div className="border border-sidebar-border bg-sidebar-accent/20 p-2.5">
+                <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-sidebar-foreground/60">
+                  <Timer className="size-3.5" />
+                  Late
+                </div>
+                <p className="mt-2 text-2xl font-semibold tracking-[-0.06em]">
+                  {dashboard.overdueOrders.length}
+                </p>
+                <p className="text-[11px] text-sidebar-foreground/65">
+                  expected dates have passed
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="border border-sidebar-border bg-sidebar p-3">
+            <div className="mb-2 flex items-center gap-2">
+              <AlertTriangle className="size-4 text-amber-200" />
+              <div>
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-sidebar-foreground/55">
+                  Action queue
+                </p>
+                <h3 className="text-base font-semibold tracking-[-0.04em]">
+                  What needs follow-up
+                </h3>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              {dashboard.actionOrders.map((order) => (
+                <button
+                  key={order.id}
+                  type="button"
+                  onClick={() =>
+                    setPaymentInputs((current) => ({
+                      ...current,
+                      [order.id]: paymentInputFor(order),
+                    }))
+                  }
+                  className="flex w-full items-center justify-between gap-3 border border-sidebar-border bg-sidebar-accent/20 px-2 py-2 text-left"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs font-semibold">
+                      {order.poNumber}
+                    </span>
+                    <span className="block text-[10px] text-sidebar-foreground/60">
+                      {order.vendor?.name || "No vendor"} · due{" "}
+                      {formatMoneyNumber(amountDue(order), order.currencyCode)}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-foreground/70">
+                    {order.status === "received" ? "Payment" : "Receive"}
+                  </span>
+                </button>
+              ))}
+              {dashboard.actionOrders.length === 0 ? (
+                <p className="border border-sidebar-border bg-sidebar-accent/20 px-2 py-3 text-xs text-sidebar-foreground/65">
+                  No overdue receipts or unpaid purchase orders in this view.
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </AdminPanel>
 
       <div className="grid gap-3 md:grid-cols-4">
         <AdminStatCard label="Purchase orders" value={data.stats.totalPurchaseOrders} detail="Visible in current filter" />
@@ -485,7 +707,82 @@ export function PurchasingManagement({
                   </div>
                 </div>
 
-                <div className="mt-3 overflow-x-auto">
+                <div className="mt-3 grid gap-2 md:hidden">
+                  {order.lines.map((line) => (
+                    <div
+                      key={line.id}
+                      className="rounded-none border border-border/70 bg-background px-3 py-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">
+                            {line.itemName}
+                          </p>
+                          <p className="mt-0.5 text-[10px] text-muted-foreground">
+                            {line.itemCode} · {formatMoney(line.unitCost, order.currencyCode)}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-right text-xs font-semibold tabular-nums">
+                          {line.quantityReceived}/{line.quantityOrdered}
+                        </span>
+                      </div>
+                      <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                        <div>
+                          <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
+                            Ordered
+                          </p>
+                          <p className="font-semibold tabular-nums">
+                            {line.quantityOrdered}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
+                            Received
+                          </p>
+                          <p className="font-semibold tabular-nums">
+                            {line.quantityReceived}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
+                            Left
+                          </p>
+                          <p className="font-semibold tabular-nums">
+                            {line.quantityRemaining}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
+                        <Input
+                          value={receiveInputs[order.id]?.[line.id] || ""}
+                          onChange={(event) =>
+                            setReceiveLine(order.id, line.id, event.target.value)
+                          }
+                          disabled={line.quantityRemaining === 0}
+                          inputMode="numeric"
+                          placeholder={`Receive up to ${line.quantityRemaining}`}
+                          className={cn(adminFieldClass, "h-9")}
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setReceiveLine(
+                              order.id,
+                              line.id,
+                              String(line.quantityRemaining),
+                            )
+                          }
+                          disabled={line.quantityRemaining === 0}
+                          className={adminSecondaryButtonClass}
+                        >
+                          Max
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-3 hidden overflow-x-auto md:block">
                   <table className="min-w-full border-collapse text-left text-xs">
                     <thead>
                       <tr className="border-b border-border/70 text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
@@ -509,13 +806,7 @@ export function PurchasingManagement({
                             <Input
                               value={receiveInputs[order.id]?.[line.id] || ""}
                               onChange={(event) =>
-                                setReceiveInputs((current) => ({
-                                  ...current,
-                                  [order.id]: {
-                                    ...(current[order.id] || {}),
-                                    [line.id]: event.target.value,
-                                  },
-                                }))
+                                setReceiveLine(order.id, line.id, event.target.value)
                               }
                               disabled={line.quantityRemaining === 0}
                               inputMode="numeric"
@@ -540,11 +831,46 @@ export function PurchasingManagement({
                     {busyKey === `receive:${order.id}` ? <Loader2 className="size-3.5 animate-spin" /> : <PackageCheck className="size-3.5" />}
                     Receive
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => receivePurchaseOrder(order, true)}
+                    disabled={busyKey === `receive:${order.id}` || order.status === "received"}
+                    className={adminSecondaryButtonClass}
+                  >
+                    {busyKey === `receive:${order.id}` ? <Loader2 className="size-3.5 animate-spin" /> : <PackageCheck className="size-3.5" />}
+                    Receive all
+                  </button>
+                  {order.paymentStatus !== "paid" ? (
+                    <button
+                      type="button"
+                      onClick={() => markOrderPaid(order)}
+                      disabled={busyKey === `payment:${order.id}`}
+                      className={adminSecondaryButtonClass}
+                    >
+                      {busyKey === `payment:${order.id}` ? <Loader2 className="size-3.5 animate-spin" /> : <CreditCard className="size-3.5" />}
+                      Mark paid
+                    </button>
+                  ) : null}
                   {order.proofUrls.map((url) => (
                     <Button key={url} asChild variant="outline" size="sm" className="h-7 rounded-none px-2.5 text-[10px] uppercase tracking-[0.14em]">
                       <a href={url} target="_blank" rel="noreferrer">Proof</a>
                     </Button>
                   ))}
+                </div>
+
+                <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+                  <div className="rounded-none border border-border/70 bg-background px-2 py-1.5">
+                    <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground">Due</p>
+                    <p className="font-semibold tabular-nums">{formatMoneyNumber(amountDue(order), order.currencyCode)}</p>
+                  </div>
+                  <div className="rounded-none border border-border/70 bg-background px-2 py-1.5">
+                    <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground">Paid</p>
+                    <p className="font-semibold tabular-nums">{formatMoney(order.amountPaid, order.currencyCode)}</p>
+                  </div>
+                  <div className="rounded-none border border-border/70 bg-background px-2 py-1.5">
+                    <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground">Reference</p>
+                    <p className="truncate font-semibold">{order.paymentReference || order.paymentMethod || "Not recorded"}</p>
+                  </div>
                 </div>
 
                 <details className="mt-3 rounded-none border border-border/70 bg-background px-3 py-2">

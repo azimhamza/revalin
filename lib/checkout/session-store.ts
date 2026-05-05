@@ -23,6 +23,7 @@ export type CheckoutSessionRecord = {
   cartSnapshot: Record<string, unknown> | null;
   shippingAddress: CheckoutShippingAddress | null;
   selectedShippingServiceId: string | null;
+  shipmentProtection: boolean;
   paymentMethod: 'card' | 'crypto' | 'interac' | null;
   paymentCurrency: string | null;
   sourceWalletAddress: string | null;
@@ -48,6 +49,7 @@ type UpsertSessionInput = {
   cartSnapshot?: Record<string, unknown> | null;
   shippingAddress?: CheckoutShippingAddress | null;
   selectedShippingServiceId?: string | null;
+  shipmentProtection?: boolean;
   paymentMethod?: 'card' | 'crypto' | 'interac' | null;
   paymentCurrency?: string | null;
   sourceWalletAddress?: string | null;
@@ -91,6 +93,7 @@ function rowToSession(row: typeof checkoutDrafts.$inferSelect): CheckoutSessionR
     cartSnapshot: asNullableRecord(row.cartSnapshot),
     shippingAddress: (row.shippingAddress as CheckoutShippingAddress | null) ?? null,
     selectedShippingServiceId: row.selectedShippingServiceId ?? null,
+    shipmentProtection: row.shipmentProtection === true,
     paymentMethod: (row.paymentMethod as CheckoutSessionRecord['paymentMethod']) ?? null,
     paymentCurrency: row.paymentCurrency ?? null,
     sourceWalletAddress: row.sourceWalletAddress ?? null,
@@ -138,6 +141,7 @@ export async function createCheckoutSession(input: UpsertSessionInput = {}) {
       cartSnapshot: input.cartSnapshot ?? {},
       shippingAddress: input.shippingAddress ?? null,
       selectedShippingServiceId: input.selectedShippingServiceId ?? null,
+      shipmentProtection: input.shipmentProtection ?? false,
       paymentMethod: input.paymentMethod ?? null,
       paymentCurrency: input.paymentCurrency ?? null,
       sourceWalletAddress: input.sourceWalletAddress ?? null,
@@ -239,6 +243,10 @@ export async function updateCheckoutSession(args: {
         args.changes.selectedShippingServiceId === undefined
           ? current.selectedShippingServiceId
           : args.changes.selectedShippingServiceId,
+      shipmentProtection:
+        args.changes.shipmentProtection === undefined
+          ? current.shipmentProtection
+          : args.changes.shipmentProtection,
       paymentMethod:
         args.changes.paymentMethod === undefined
           ? current.paymentMethod

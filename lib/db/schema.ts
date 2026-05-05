@@ -1555,6 +1555,7 @@ export const checkoutDrafts = pgTable(
     selectedShippingServiceId: varchar("selected_shipping_service_id", {
       length: 128,
     }),
+    shipmentProtection: boolean("shipment_protection").default(false).notNull(),
     paymentMethod: varchar("payment_method", { length: 32 }),
     paymentCurrency: varchar("payment_currency", { length: 16 }),
     sourceWalletAddress: text("source_wallet_address"),

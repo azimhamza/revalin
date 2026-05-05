@@ -10,6 +10,7 @@ type CheckoutCarryoverComparable = {
   cartLinesSignature: string;
   shippingAddressSignature: string;
   shippingServiceId: string;
+  shipmentProtection: boolean;
   discountCode: string;
 };
 
@@ -21,6 +22,7 @@ type BuildCarryoverComparableFromInputArgs = {
   }>;
   shippingAddress: CheckoutShippingAddress;
   shippingServiceId?: string | null;
+  shipmentProtection?: boolean;
   discountCode?: string | null;
 };
 
@@ -137,6 +139,7 @@ export function buildCarryoverComparableFromOrder(
       order.shippingAddress,
     ),
     shippingServiceId: normalizeComparableValue(order.shippingService?.id),
+    shipmentProtection: Boolean(order.totals.shipmentProtection),
     discountCode: normalizeComparableDiscountCode(order.totals.discountCode),
   };
 }
@@ -151,6 +154,7 @@ export function buildCarryoverComparableFromFinalizeInput(
       args.shippingAddress,
     ),
     shippingServiceId: normalizeComparableValue(args.shippingServiceId),
+    shipmentProtection: args.shipmentProtection === true,
     discountCode: normalizeComparableDiscountCode(args.discountCode),
   };
 }
@@ -164,6 +168,7 @@ export function isSameCarryoverCheckout(
     left.cartLinesSignature === right.cartLinesSignature &&
     left.shippingAddressSignature === right.shippingAddressSignature &&
     left.shippingServiceId === right.shippingServiceId &&
+    left.shipmentProtection === right.shipmentProtection &&
     left.discountCode === right.discountCode
   );
 }

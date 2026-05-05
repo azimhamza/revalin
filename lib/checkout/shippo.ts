@@ -14,9 +14,36 @@ const SHIPPO_API_TOKEN = (
 ).trim();
 const SHIPPO_LABEL_FILE_TYPE = (process.env.SHIPPO_LABEL_FILE_TYPE || 'PDF_4x6').trim();
 
+function parseList(value?: string) {
+  return (value || '')
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(Boolean);
+}
+
+function firstConfiguredEmail(...values: Array<string | undefined>) {
+  for (const value of values) {
+    const email = value
+      ?.split(',')
+      .map(entry => entry.trim())
+      .find(Boolean);
+
+    if (email) {
+      return email;
+    }
+  }
+
+  return '';
+}
+
 const SHIPPO_ORIGIN = {
   name: (process.env.SHIPPO_ORIGIN_NAME || '').trim(),
-  email: (process.env.SHIPPO_ORIGIN_EMAIL || '').trim(),
+  email: firstConfiguredEmail(
+    process.env.SHIPPO_ORIGIN_EMAIL,
+    process.env.SHIPPING_LABEL_EMAIL,
+    process.env.SHIPPING_LABEL_EMAILS,
+    process.env.LOOPS_SHIPPING_LABEL_EMAIL,
+  ),
   phone: (process.env.SHIPPO_ORIGIN_PHONE || '').trim(),
   street1: (process.env.SHIPPO_ORIGIN_STREET1 || '').trim(),
   street2: (process.env.SHIPPO_ORIGIN_STREET2 || '').trim(),
@@ -25,6 +52,14 @@ const SHIPPO_ORIGIN = {
   zip: (process.env.SHIPPO_ORIGIN_ZIP || '').trim(),
   country: (process.env.SHIPPO_ORIGIN_COUNTRY || '').trim().toUpperCase(),
 } as const;
+
+const SHIPPO_CARRIER_ACCOUNT_IDS = parseList(process.env.SHIPPO_CARRIER_ACCOUNT_IDS);
+const SHIPPO_US_CARRIER_ACCOUNT_IDS = parseList(process.env.SHIPPO_US_CARRIER_ACCOUNT_IDS);
+const SHIPPO_CA_CARRIER_ACCOUNT_IDS = parseList(process.env.SHIPPO_CA_CARRIER_ACCOUNT_IDS);
+const SHIPPO_INTERNATIONAL_CARRIER_ACCOUNT_IDS = parseList(
+  process.env.SHIPPO_INTERNATIONAL_CARRIER_ACCOUNT_IDS ||
+    process.env.SHIPPO_INTL_CARRIER_ACCOUNT_IDS,
+);
 
 const DEFAULT_PARCEL = {
   lengthIn: Number(process.env.SHIPPO_PARCEL_LENGTH_IN || 3),
@@ -48,6 +83,7 @@ type ShippoRate = {
   provider?: string;
   carrier_account?: string;
   estimated_days?: number | null;
+  included_insurance_price?: string | null;
   duration_terms?: string | null;
   servicelevel?: {
     token?: string;
@@ -90,9 +126,17 @@ export type ShippoCheckoutRate = {
   shippoShipmentId?: string;
   shippoCarrierAccountId?: string;
   estimatedDays?: number | null;
+  includedInsurancePrice?: number;
   price: number;
   currencyCode: string;
   source: 'shippo';
+};
+
+export type ShippoInsuranceRequest = {
+  amount: string;
+  currency: string;
+  content: string;
+  provider?: string;
 };
 
 export type ShippoCustomsSnapshot = {
@@ -167,6 +211,28 @@ function buildShippoMessage(messages?: ShippoMessage[], fallback = 'Shippo reque
   return message || fallback;
 }
 
+function buildShippoNoRatesMessage(args: {
+  messages?: ShippoMessage[];
+  destinationCountryCode: string;
+  carrierAccountIds: string[];
+}) {
+  const messageText = (args.messages || [])
+    .map(message => [message.source, message.code, message.text].filter(Boolean).join(': '))
+    .join(' ');
+  const hasUpsOriginIssue = /ups.+origin is out of service area|origin is out of service area.+ups/i.test(messageText);
+  const scopedAccountText = args.carrierAccountIds.length > 0
+    ? `configured Shippo carrier account(s): ${args.carrierAccountIds.join(', ')}`
+    : 'Shippo default/master carrier accounts';
+
+  if (args.destinationCountryCode === 'US') {
+    return hasUpsOriginIssue
+      ? 'Shippo returned no usable UPS rates for this US address. Connect a UPS account in Shippo that supports the configured origin address, then set SHIPPO_US_CARRIER_ACCOUNT_IDS to that carrier account ID.'
+      : `Shippo returned no usable UPS rates for this US address using ${scopedAccountText}.`;
+  }
+
+  return `Shippo returned no usable rates for this address using ${scopedAccountText}.`;
+}
+
 function isInternationalShippoShipment(destinationCountryCode: string) {
   const originCountryCode = SHIPPO_ORIGIN.country.trim().toUpperCase();
   return Boolean(
@@ -174,6 +240,26 @@ function isInternationalShippoShipment(destinationCountryCode: string) {
       destinationCountryCode &&
       originCountryCode !== destinationCountryCode
   );
+}
+
+function getShippoCarrierAccountIds(destinationCountryCode: string) {
+  if (destinationCountryCode === 'US' && SHIPPO_US_CARRIER_ACCOUNT_IDS.length > 0) {
+    return SHIPPO_US_CARRIER_ACCOUNT_IDS;
+  }
+
+  if (destinationCountryCode === 'CA' && SHIPPO_CA_CARRIER_ACCOUNT_IDS.length > 0) {
+    return SHIPPO_CA_CARRIER_ACCOUNT_IDS;
+  }
+
+  if (
+    destinationCountryCode &&
+    destinationCountryCode !== SHIPPO_ORIGIN.country &&
+    SHIPPO_INTERNATIONAL_CARRIER_ACCOUNT_IDS.length > 0
+  ) {
+    return SHIPPO_INTERNATIONAL_CARRIER_ACCOUNT_IDS;
+  }
+
+  return SHIPPO_CARRIER_ACCOUNT_IDS;
 }
 
 export function resolveConfiguredParcel(itemCount: number) {
@@ -228,6 +314,7 @@ function mapShippoRate(rate: ShippoRate, currencyCode: string, shipmentId?: stri
   const provider = rate.provider?.trim() || 'Shippo';
   const serviceToken = rate.servicelevel?.token?.trim() || rate.servicelevel?.name?.trim() || rateId;
   const carrierAccount = rate.carrier_account?.trim();
+  const includedInsurancePrice = Number(rate.included_insurance_price || 0);
 
   return {
     id: [
@@ -244,6 +331,10 @@ function mapShippoRate(rate: ShippoRate, currencyCode: string, shipmentId?: stri
     shippoShipmentId: shipmentId,
     shippoCarrierAccountId: carrierAccount,
     estimatedDays: rate.estimated_days ?? null,
+    includedInsurancePrice:
+      Number.isFinite(includedInsurancePrice) && includedInsurancePrice > 0
+        ? includedInsurancePrice
+        : undefined,
     price: resolvedAmount.amount,
     currencyCode: resolvedAmount.currencyCode,
     source: 'shippo',
@@ -288,7 +379,6 @@ export function getShippoMissingConfig() {
 
   if (!SHIPPO_API_TOKEN) missing.push('SHIPPO_API_TOKEN');
   if (!SHIPPO_ORIGIN.name) missing.push('SHIPPO_ORIGIN_NAME');
-  if (!SHIPPO_ORIGIN.email) missing.push('SHIPPO_ORIGIN_EMAIL');
   if (!SHIPPO_ORIGIN.phone) missing.push('SHIPPO_ORIGIN_PHONE');
   if (!SHIPPO_ORIGIN.street1) missing.push('SHIPPO_ORIGIN_STREET1');
   if (!SHIPPO_ORIGIN.city) missing.push('SHIPPO_ORIGIN_CITY');
@@ -439,13 +529,15 @@ function buildShipmentBody(args: {
   shippingAddress: CheckoutShippingAddress;
   itemCount: number;
   customsSnapshot?: ShippoCustomsSnapshot | null;
+  insurance?: ShippoInsuranceRequest | null;
+  carrierAccountIds?: string[];
   orderId?: string;
 }) {
   const countryCode = args.shippingAddress.country.trim().toUpperCase();
   const body: Record<string, unknown> = {
     address_from: {
       name: SHIPPO_ORIGIN.name,
-      email: SHIPPO_ORIGIN.email,
+      email: SHIPPO_ORIGIN.email || undefined,
       phone: SHIPPO_ORIGIN.phone,
       street1: SHIPPO_ORIGIN.street1,
       street2: SHIPPO_ORIGIN.street2 || undefined,
@@ -472,6 +564,21 @@ function buildShipmentBody(args: {
     async: false,
   };
 
+  if (args.carrierAccountIds?.length) {
+    body.carrier_accounts = args.carrierAccountIds;
+  }
+
+  if (args.insurance) {
+    body.extra = {
+      insurance: {
+        amount: args.insurance.amount,
+        currency: args.insurance.currency,
+        content: args.insurance.content,
+        provider: args.insurance.provider || undefined,
+      },
+    };
+  }
+
   if (args.customsSnapshot) {
     body.customs_declaration = toShippoCustomsDeclaration(args.customsSnapshot);
   }
@@ -486,12 +593,14 @@ export async function quoteShippoRates(args: {
   orderId?: string;
   customsSettings?: ShippoFulfillmentSettings;
   customsSnapshot?: ShippoCustomsSnapshot | null;
+  insurance?: ShippoInsuranceRequest | null;
 }) {
   if (!isShippoConfigured()) {
     return null;
   }
 
   const destinationCountryCode = args.shippingAddress.country.trim().toUpperCase();
+  const carrierAccountIds = getShippoCarrierAccountIds(destinationCountryCode);
   const customsSnapshot = args.customsSnapshot ??
     (args.customsSettings && isInternationalShippoShipment(destinationCountryCode)
       ? buildShippoCustomsSnapshot({
@@ -515,6 +624,8 @@ export async function quoteShippoRates(args: {
       shippingAddress: args.shippingAddress,
       itemCount: args.itemCount,
       customsSnapshot,
+      insurance: args.insurance,
+      carrierAccountIds,
       orderId: args.orderId,
     })),
   });
@@ -523,8 +634,12 @@ export async function quoteShippoRates(args: {
     .map(rate => mapShippoRate(rate, args.currencyCode, payload.object_id))
     .filter((rate): rate is ShippoCheckoutRate => rate !== null);
 
-  if (rates.length === 0 && payload.messages?.length) {
-    throw new Error(buildShippoMessage(payload.messages, 'Shippo returned no rates.'));
+  if (rates.length === 0) {
+    throw new Error(buildShippoNoRatesMessage({
+      messages: payload.messages,
+      destinationCountryCode,
+      carrierAccountIds,
+    }));
   }
 
   return {

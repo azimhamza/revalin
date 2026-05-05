@@ -30,6 +30,7 @@ export function toCheckoutSessionState(session: CheckoutSessionRecord) {
       cartSnapshot: session.cartSnapshot,
       shippingAddress: session.shippingAddress,
       selectedShippingServiceId: session.selectedShippingServiceId,
+      shipmentProtection: session.shipmentProtection,
       paymentMethod: session.paymentMethod,
       paymentCurrency: session.paymentCurrency,
       sourceWalletAddress: session.sourceWalletAddress,
@@ -52,6 +53,7 @@ export function buildSessionChanges(body: {
   cartSnapshot?: Record<string, unknown>;
   shippingAddress?: CheckoutShippingAddress;
   selectedShippingServiceId?: string;
+  shipmentProtection?: boolean;
   paymentMethod?: 'card' | 'crypto' | 'interac';
   paymentCurrency?: string;
   sourceWalletAddress?: string;
@@ -66,6 +68,8 @@ export function buildSessionChanges(body: {
     cartSnapshot: body.cartSnapshot,
     shippingAddress: body.shippingAddress,
     selectedShippingServiceId: body.selectedShippingServiceId,
+    shipmentProtection:
+      body.shipmentProtection === undefined ? undefined : body.shipmentProtection === true,
     paymentMethod: body.paymentMethod,
     paymentCurrency: body.paymentCurrency?.trim() || null,
     sourceWalletAddress: body.sourceWalletAddress?.trim() || null,

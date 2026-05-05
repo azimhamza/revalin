@@ -72,6 +72,11 @@ export function buildOrderDataVariables(order: CheckoutOrderRecord) {
     vars.shipping = 'Free';
   }
 
+  vars.shipmentProtection = order.totals.shipmentProtectionAmount
+    ? formatCurrency(order.totals.shipmentProtectionAmount.amount, order.currencyCode)
+    : '$0.00';
+  vars.shipment_protection = vars.shipmentProtection;
+
   if (order.totals.taxAmount) {
     vars.tax = formatCurrency(order.totals.taxAmount.amount, order.currencyCode);
   } else {

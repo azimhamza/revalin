@@ -20,7 +20,7 @@ const alternateHosts = KNOWN_SITE_HOSTS.filter(host => host !== canonicalHost);
 const nextConfig = {
   trailingSlash: false,
   experimental: {
-    inlineCss: true,
+    inlineCss: process.env.NODE_ENV === 'production',
     useCache: true,
     clientSegmentCache: true,
   },
