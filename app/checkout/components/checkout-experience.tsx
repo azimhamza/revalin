@@ -2979,7 +2979,9 @@ export function CheckoutExperience({
 
       syncCheckoutUrlImmediately(data.order.orderId, data.accessKey);
 
-      updateCheckoutUrl(data.order.orderId, data.accessKey);
+      if (!isSquareOrder(data.order.payment)) {
+        updateCheckoutUrl(data.order.orderId, data.accessKey);
+      }
 
       const hostedRedirectUrl =
         data.redirectUrl ||
