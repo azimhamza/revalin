@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
 import { AlertTriangle, ArrowRight, BadgeCheck, CheckCircle2, Copy, CreditCard, FlaskConical, Landmark, Lock, Loader2, RefreshCw, Send, ShieldCheck, Tag, Truck, Upload, UserCheck, Wallet, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type Ref } from 'react';
@@ -1103,7 +1103,6 @@ export function CheckoutExperience({
 }: CheckoutExperienceProps) {
   const { cart } = useCart();
   const pathname = usePathname();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const { data: authSession } = useAuthSession();
   const initialDiscountCode = (searchParams.get('discount') || '').toUpperCase();
@@ -1144,6 +1143,10 @@ export function CheckoutExperience({
   const [error, setError] = useState<string | null>(null);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [address1InputElement, setAddress1InputElement] = useState<HTMLInputElement | null>(null);
+  const [hashCheckoutParams, setHashCheckoutParams] = useState<{
+    orderId: string;
+    accessKey: string;
+  } | null>(null);
   const previousCartSignature = useRef<string | null>(null);
   const lastQuoteRequestSignature = useRef<string | null>(null);
   const quoteAbortController = useRef<AbortController | null>(null);
@@ -1155,8 +1158,8 @@ export function CheckoutExperience({
   const checkoutSessionRef = useRef<CheckoutSession | null>(null);
   const interacSenderDefaults = useRef({ email: '', name: '' });
 
-  const orderId = searchParams.get('order');
-  const accessKey = searchParams.get('key');
+  const orderId = searchParams.get('order') || hashCheckoutParams?.orderId || null;
+  const accessKey = searchParams.get('key') || hashCheckoutParams?.accessKey || null;
   const discountParam = searchParams.get('discount');
   const retryOrderId = searchParams.get('retry');
   const retryKey = searchParams.get('key');
@@ -1193,6 +1196,27 @@ export function CheckoutExperience({
     quote?.services.find(service => service.id === selectedShippingServiceId) ||
     quote?.services.find(service => service.id === quote.selectedServiceId) ||
     null;
+
+  useEffect(() => {
+    const readHashCheckoutParams = () => {
+      const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const nextOrderId = params.get('order')?.trim();
+      const nextAccessKey = params.get('key')?.trim();
+
+      setHashCheckoutParams(
+        nextOrderId && nextAccessKey
+          ? { orderId: nextOrderId, accessKey: nextAccessKey }
+          : null,
+      );
+    };
+
+    readHashCheckoutParams();
+    window.addEventListener('hashchange', readHashCheckoutParams);
+    return () => {
+      window.removeEventListener('hashchange', readHashCheckoutParams);
+    };
+  }, []);
+
   const defaultInteracSenderEmail = shippingAddress.email.trim();
   const defaultInteracSenderName = `${shippingAddress.firstName} ${shippingAddress.lastName}`.trim();
   const effectiveInteracSenderEmail = interacSenderEmail.trim() || defaultInteracSenderEmail;
@@ -1812,31 +1836,40 @@ export function CheckoutExperience({
   const updateCheckoutUrl = useCallback((nextOrderId?: string, nextAccessKey?: string) => {
     const params = new URLSearchParams(searchParams.toString());
 
-    if (nextOrderId && nextAccessKey) {
-      params.set('order', nextOrderId);
-      params.set('key', nextAccessKey);
-    } else {
-      params.delete('order');
-      params.delete('key');
-    }
+    params.delete('order');
+    params.delete('key');
 
     const nextQuery = params.toString();
-    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
-  }, [pathname, router, searchParams]);
+    const nextHash = nextOrderId && nextAccessKey
+      ? `#${new URLSearchParams({ order: nextOrderId, key: nextAccessKey }).toString()}`
+      : '';
+    const nextUrl = `${pathname}${nextQuery ? `?${nextQuery}` : ''}${nextHash}`;
+
+    setHashCheckoutParams(
+      nextOrderId && nextAccessKey
+        ? { orderId: nextOrderId, accessKey: nextAccessKey }
+        : null,
+    );
+    window.history.replaceState(window.history.state, '', nextUrl);
+  }, [pathname, searchParams]);
 
   const syncCheckoutUrlImmediately = useCallback((nextOrderId?: string, nextAccessKey?: string) => {
     const params = new URLSearchParams(searchParams.toString());
 
-    if (nextOrderId && nextAccessKey) {
-      params.set('order', nextOrderId);
-      params.set('key', nextAccessKey);
-    } else {
-      params.delete('order');
-      params.delete('key');
-    }
+    params.delete('order');
+    params.delete('key');
 
     const nextQuery = params.toString();
-    const nextUrl = nextQuery ? `${pathname}?${nextQuery}` : pathname;
+    const nextHash = nextOrderId && nextAccessKey
+      ? `#${new URLSearchParams({ order: nextOrderId, key: nextAccessKey }).toString()}`
+      : '';
+    const nextUrl = `${pathname}${nextQuery ? `?${nextQuery}` : ''}${nextHash}`;
+
+    setHashCheckoutParams(
+      nextOrderId && nextAccessKey
+        ? { orderId: nextOrderId, accessKey: nextAccessKey }
+        : null,
+    );
     window.history.replaceState(window.history.state, '', nextUrl);
   }, [pathname, searchParams]);
 
@@ -1988,6 +2021,13 @@ export function CheckoutExperience({
       setIsLoadingOrder(false);
       if (currentCheckoutSession?.order) return;
       setCheckoutSession(null);
+      return;
+    }
+
+    if (
+      currentCheckoutSession?.accessKey === accessKey &&
+      currentCheckoutSession.order.orderId === orderId
+    ) {
       return;
     }
 
