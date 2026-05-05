@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useTransition } from 'react';
+import { useMemo, useTransition } from 'react';
 import { Minus, Plus, PlusCircleIcon } from 'lucide-react';
 import { AnimatePresence, motion, LayoutGroup } from 'motion/react';
 import { Product } from '@/lib/swell/types';
@@ -11,8 +11,6 @@ import { Loader } from '@/components/ui/loader';
 import { useParams, useSearchParams } from 'next/navigation';
 import { getSwellProductId } from '@/lib/swell/utils';
 import { useProductQuantity } from './product-quantity-context';
-import { getInventoryState } from '@/lib/inventory';
-import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
 
 export function ProductAddToCart({
   product,
@@ -25,7 +23,7 @@ export function ProductAddToCart({
 }) {
   const { quantity, setQuantity } = useProductQuantity();
   const [isLoading, startTransition] = useTransition();
-  const { addItem, cart, warmCart } = useCart();
+  const { addItem, warmCart } = useCart();
   const selectedVariant = useSelectedVariant(product);
   const pathname = useParams<{ handle?: string }>();
   const searchParams = useSearchParams();
@@ -44,6 +42,12 @@ export function ProductAddToCart({
         availableForSale: product.availableForSale,
         stockStatus: product.stockStatus,
         stockLevel: product.stockLevel,
+        internalOnHand: product.internalOnHand,
+        internalAllocated: product.internalAllocated,
+        availableToShipNow: product.availableToShipNow,
+        isHighDemand: product.isHighDemand,
+        shippingLeadTimeLabel: product.shippingLeadTimeLabel,
+        internalInventoryMatched: product.internalInventoryMatched,
         selectedOptions: [],
         price: product.priceRange.minVariantPrice,
       };
@@ -51,47 +55,17 @@ export function ProductAddToCart({
     if (!isTargetingProduct && !defaultVariantId) return undefined;
     return variants.find(v => v.id === selectedVariantId);
   }, [variants, product, isTargetingProduct, defaultVariantId, selectedVariantId]);
-  const dosageSubstitution = useMemo(
-    () => resolveDosageSubstitution(product, resolvedVariant),
-    [product, resolvedVariant]
-  );
-  const cartVariant = dosageSubstitution.cartVariant;
-  const quantityMultiplier = dosageSubstitution.quantityMultiplier;
-  const inventory = useMemo(() => getInventoryState(product, cartVariant), [product, cartVariant]);
-  const existingCartQuantity = useMemo(() => {
-    if (!cartVariant) return 0;
-    return cart?.lines.find(line => line.merchandise.id === cartVariant.id)?.quantity || 0;
-  }, [cart, cartVariant]);
-  const remainingAvailableQuantity = useMemo(() => {
-    if (inventory.availableQuantity === null) return null;
-    return Math.floor(Math.max(0, inventory.availableQuantity - existingCartQuantity) / quantityMultiplier);
-  }, [inventory.availableQuantity, existingCartQuantity, quantityMultiplier]);
-  const maxSelectableQuantity = remainingAvailableQuantity === null ? null : Math.max(1, remainingAvailableQuantity);
-  const hasReachedAvailableLimit = remainingAvailableQuantity !== null && remainingAvailableQuantity <= 0;
-
-  useEffect(() => {
-    if (maxSelectableQuantity === null) return;
-
-    setQuantity(currentQuantity => Math.min(currentQuantity, maxSelectableQuantity));
-  }, [maxSelectableQuantity, cartVariant?.id, setQuantity]);
-
-  const isDisabled = inventory.isBackorder || hasReachedAvailableLimit || !cartVariant || isLoading;
-  const isSelectOneState = !inventory.isBackorder && !cartVariant;
-
-  const buttonText = inventory.isBackorder
-    ? 'Get Notified'
-    : !cartVariant
-      ? 'Select one'
-      : hasReachedAvailableLimit
-        ? 'Max quantity added'
-        : 'Add To Cart';
+  const cartVariant = resolvedVariant;
+  const isDisabled = !cartVariant || isLoading;
+  const isSelectOneState = !cartVariant;
+  const buttonText = cartVariant ? 'Add To Cart' : 'Select one';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cartVariant || hasReachedAvailableLimit) return;
+    if (!cartVariant) return;
 
     startTransition(async () => {
-      await addItem(cartVariant, product, quantity * quantityMultiplier);
+      await addItem(cartVariant, product, quantity);
       setQuantity(1);
     });
   };
@@ -102,7 +76,7 @@ export function ProductAddToCart({
         <div className="flex items-stretch gap-2">
           {/* Quantity selector — only visible after variant is selected */}
           <AnimatePresence>
-            {cartVariant && !inventory.isBackorder && (
+            {cartVariant && (
               <motion.div
                 initial={{ width: 0, opacity: 0, scale: 0.8 }}
                 animate={{ width: 'auto', opacity: 1, scale: 1 }}
@@ -135,14 +109,7 @@ export function ProductAddToCart({
                   <button
                     type="button"
                     aria-label="Increase quantity"
-                    disabled={maxSelectableQuantity !== null && quantity >= maxSelectableQuantity}
-                    onClick={() =>
-                      setQuantity(currentQuantity =>
-                        maxSelectableQuantity === null
-                          ? currentQuantity + 1
-                          : Math.min(maxSelectableQuantity, currentQuantity + 1)
-                      )
-                    }
+                    onClick={() => setQuantity(currentQuantity => currentQuantity + 1)}
                     className="flex items-center justify-center w-10 h-full transition-opacity hover:opacity-70 disabled:opacity-30"
                   >
                     <Plus className="size-3.5" />

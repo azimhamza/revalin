@@ -1,4 +1,4 @@
-import { and, desc, eq, lte, ne, notInArray, sql } from 'drizzle-orm';
+import { and, desc, eq, lte, ne, notInArray, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { checkoutOrders } from '@/lib/db/schema';
 import type { CheckoutOrderPayment, CheckoutOrderProcessing, CheckoutOrderRecord, FulfillmentStatus } from '@/lib/checkout/types';
@@ -266,6 +266,45 @@ export async function findCheckoutOrderByPaymentId(paymentId: string): Promise<C
     .select()
     .from(checkoutOrders)
     .where(sql`${checkoutOrders.payment}->>'paymentId' = ${paymentId}`)
+    .limit(1);
+
+  return rows[0] ? rowToRecord(rows[0]) : null;
+}
+
+export async function findCheckoutOrderBySquarePayment(args: {
+  paymentId?: string | null;
+  squareOrderId?: string | null;
+  paymentLinkId?: string | null;
+}): Promise<CheckoutOrderRecord | null> {
+  const paymentId = args.paymentId?.trim();
+  const squareOrderId = args.squareOrderId?.trim();
+  const paymentLinkId = args.paymentLinkId?.trim();
+
+  if (!paymentId && !squareOrderId && !paymentLinkId) {
+    return null;
+  }
+
+  const matchers = [];
+  if (paymentId) {
+    matchers.push(sql`${checkoutOrders.payment}->>'paymentId' = ${paymentId}`);
+  }
+  if (squareOrderId) {
+    matchers.push(sql`${checkoutOrders.payment}->>'squareOrderId' = ${squareOrderId}`);
+  }
+  if (paymentLinkId) {
+    matchers.push(sql`${checkoutOrders.payment}->>'paymentLinkId' = ${paymentLinkId}`);
+  }
+
+  const rows = await db
+    .select()
+    .from(checkoutOrders)
+    .where(
+      and(
+        sql`${checkoutOrders.payment}->>'provider' = 'square'`,
+        or(...matchers),
+      ),
+    )
+    .orderBy(desc(checkoutOrders.updatedAt))
     .limit(1);
 
   return rows[0] ? rowToRecord(rows[0]) : null;

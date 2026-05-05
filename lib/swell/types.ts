@@ -8,6 +8,12 @@ export interface SwellProduct {
   availableForSale?: boolean;
   stockStatus?: string;
   stockLevel?: number;
+  internalOnHand?: number | null;
+  internalAllocated?: number;
+  availableToShipNow?: number;
+  isHighDemand?: boolean;
+  shippingLeadTimeLabel?: string;
+  internalInventoryMatched?: boolean;
   category?: {
     id: string;
     name: string;
@@ -60,6 +66,12 @@ export interface SwellProduct {
         availableForSale: boolean;
         stockStatus?: string;
         stockLevel?: number;
+        internalOnHand?: number | null;
+        internalAllocated?: number;
+        availableToShipNow?: number;
+        isHighDemand?: boolean;
+        shippingLeadTimeLabel?: string;
+        internalInventoryMatched?: boolean;
         selectedOptions?: Array<{
           name: string;
           value: string;
@@ -218,6 +230,7 @@ export interface SwellCartLine {
   id: string;
   quantity: number;
   bulkPriceTiers?: BulkPriceTier[];
+  fulfillmentEstimate?: ProductFulfillmentEstimate;
   merchandise: {
     id: string;
     title: string;
@@ -237,6 +250,12 @@ export interface SwellCartLine {
       availableForSale?: boolean;
       stockStatus?: string;
       stockLevel?: number;
+      internalOnHand?: number | null;
+      internalAllocated?: number;
+      availableToShipNow?: number;
+      isHighDemand?: boolean;
+      shippingLeadTimeLabel?: string;
+      internalInventoryMatched?: boolean;
       compareAtPrice?: {
         amount: string;
         currencyCode: string;
@@ -314,6 +333,12 @@ export type Product = {
   availableForSale: boolean;
   bulkPriceTiers?: BulkPriceTier[];
   purchaseCount?: number;
+  internalOnHand?: number | null;
+  internalAllocated?: number;
+  availableToShipNow?: number;
+  isHighDemand?: boolean;
+  shippingLeadTimeLabel?: string;
+  internalInventoryMatched?: boolean;
 };
 
 export type ProductSortKey =
@@ -353,6 +378,12 @@ export type ProductVariant = {
   price: Money;
   compareAtPrice?: Money;
   bulkPriceTiers?: BulkPriceTier[];
+  internalOnHand?: number | null;
+  internalAllocated?: number;
+  availableToShipNow?: number;
+  isHighDemand?: boolean;
+  shippingLeadTimeLabel?: string;
+  internalInventoryMatched?: boolean;
 };
 
 export type ProductOption = {
@@ -410,6 +441,7 @@ export type CartItem = {
     totalAmount: Money;
   };
   bulkPriceTiers?: BulkPriceTier[];
+  fulfillmentEstimate?: ProductFulfillmentEstimate;
   merchandise: {
     id: string;
     title: string;
@@ -418,6 +450,12 @@ export type CartItem = {
     selectedOptions: SelectedOptions;
     product: Product;
   };
+};
+
+export type ProductFulfillmentEstimate = {
+  label: string;
+  availableToShipNow: number;
+  isHighDemand: boolean;
 };
 
 export type CartProduct = Product;

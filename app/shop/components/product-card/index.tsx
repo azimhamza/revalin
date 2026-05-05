@@ -1,7 +1,6 @@
 'use client';
 
 import React, { Suspense } from 'react';
-import { ArrowRight } from 'lucide-react';
 import { Product } from '@/lib/swell/types';
 import { AddToCart, AddToCartButton } from '@/components/cart/add-to-cart';
 import { formatPrice, getDiscountPercentage, getDisplayCompareAtPrice, getDisplayPrice } from '@/lib/swell/utils';
@@ -17,6 +16,7 @@ export const ProductCard = ({ product }: { product: Product }) => {
   const compareAtPrice = getDisplayCompareAtPrice(product, selectedVariant, displayPrice);
   const discountPercentage = getDiscountPercentage(compareAtPrice, displayPrice);
   const inventory = getInventoryState(product, selectedVariant);
+  const inventoryMessage = inventory.isHighDemand ? null : inventory.message;
 
   // Forward the currently-selected variant options so /product/[handle] opens
   // to the same dosage/option the shopper picked on the card.
@@ -64,30 +64,20 @@ export const ProductCard = ({ product }: { product: Product }) => {
                 </span>
               ) : null}
             </div>
-            {inventory.isLowStock && !inventory.isBackorder && (
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground/55">
-                Only {inventory.availableQuantity} left
+            {inventoryMessage ? (
+              <p className="col-span-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground/55">
+                {inventoryMessage}
               </p>
-            )}
+            ) : null}
             <Suspense fallback={null}>
               <div className="col-start-1 self-start">
                 <VariantSelector product={product} />
               </div>
             </Suspense>
 
-            {inventory.isBackorder ? (
-              <IntentLink
-                href={productHref}
-                className="group/waitlist col-start-2 self-end inline-flex h-7 items-center gap-1.5 rounded-sm py-1 px-2 text-base font-semibold text-[#F4F1EA] bg-[#0B2E2F] transition-opacity hover:opacity-90"
-              >
-                Get Notified
-                <ArrowRight className="size-4 transition-transform duration-200 ease-out group-hover/waitlist:translate-x-0.5" />
-              </IntentLink>
-            ) : (
-              <Suspense fallback={<AddToCartButton className="col-start-2 self-end" product={product} size="sm" />}>
-                <AddToCart className="col-start-2 self-end" size="sm" product={product} />
-              </Suspense>
-            )}
+            <Suspense fallback={<AddToCartButton className="col-start-2 self-end" product={product} size="sm" />}>
+              <AddToCart className="col-start-2 self-end" size="sm" product={product} />
+            </Suspense>
           </div>
         </div>
       </div>

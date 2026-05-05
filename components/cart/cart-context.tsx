@@ -13,7 +13,7 @@ import React, {
   useTransition,
 } from 'react';
 import * as CartActions from '@/components/cart/actions';
-import { resolveAvailableQuantity } from '@/lib/inventory';
+import { getProductFulfillmentEstimate } from '@/lib/inventory';
 import { resolveUnitPrice } from '@/lib/swell/utils';
 
 export type UpdateType = 'plus' | 'minus' | 'delete';
@@ -46,28 +46,6 @@ const CartContext = createContext<CartContextType | undefined>(undefined);
 function calculateItemCost(quantity: number, price: string): string {
   return (Number(price) * quantity).toString();
 }
-
-function getMaxCartItemQuantity(item: CartItem): number | null {
-  const availableQuantity = item.merchandise.availableQuantity;
-  if (availableQuantity === null || availableQuantity === undefined) {
-    return null;
-  }
-
-  return Math.max(item.quantity, availableQuantity);
-}
-
-function clampCartItemQuantity(item: CartItem, nextQuantity: number): number {
-  const maxQuantity = getMaxCartItemQuantity(item);
-  if (maxQuantity === null) {
-    return nextQuantity;
-  }
-
-  return Math.min(nextQuantity, maxQuantity);
-}
-
-// removed old updateCartItem helper; logic in reducer now uses nextQuantity directly
-
-// removed createOrUpdateCartItem helper in favor of explicit logic in reducer
 
 function updateCartTotals(lines: CartItem[]): Pick<Cart, 'totalQuantity' | 'cost'> {
   const totalQuantity = lines.reduce((sum, item) => sum + item.quantity, 0);
@@ -133,16 +111,23 @@ function cartReducer(state: Cart | undefined, action: CartAction): Cart {
       const updatedLines = currentCart.lines
         .map(item => {
           if (item.merchandise.id !== merchandiseId) return item;
-          const clampedQuantity = clampCartItemQuantity(item, nextQuantity);
-          if (clampedQuantity <= 0) return null;
+          if (nextQuantity <= 0) return null;
 
           const baseUnitPrice = item.merchandise.product.priceRange.minVariantPrice.amount;
-          const effectiveUnitPrice = resolveUnitPrice(baseUnitPrice, clampedQuantity, item.bulkPriceTiers);
-          const newTotalAmount = calculateItemCost(clampedQuantity, effectiveUnitPrice);
+          const effectiveUnitPrice = resolveUnitPrice(baseUnitPrice, nextQuantity, item.bulkPriceTiers);
+          const newTotalAmount = calculateItemCost(nextQuantity, effectiveUnitPrice);
+          const selectedVariant =
+            item.merchandise.product.variants.find(variant => variant.id === item.merchandise.id) || null;
+          const fulfillmentEstimate = getProductFulfillmentEstimate(
+            item.merchandise.product,
+            selectedVariant,
+            nextQuantity
+          );
 
           return {
             ...item,
-            quantity: clampedQuantity,
+            quantity: nextQuantity,
+            fulfillmentEstimate,
             cost: {
               ...item.cost,
               totalAmount: {
@@ -175,16 +160,11 @@ function cartReducer(state: Cart | undefined, action: CartAction): Cart {
     case 'ADD_ITEM': {
       const { variant, product, previousQuantity, quantity } = action.payload;
       const existingItem = currentCart.lines.find(item => item.merchandise.id === variant.id);
-      const availableQuantity = resolveAvailableQuantity(product, variant);
       const targetQuantity = previousQuantity + quantity;
-      const clampedTargetQuantity = existingItem
-        ? clampCartItemQuantity(existingItem, targetQuantity)
-        : availableQuantity === null
-          ? targetQuantity
-          : Math.min(targetQuantity, availableQuantity);
       const tiers = variant.bulkPriceTiers?.length ? variant.bulkPriceTiers : product.bulkPriceTiers;
+      const fulfillmentEstimate = getProductFulfillmentEstimate(product, variant, targetQuantity);
 
-      if (clampedTargetQuantity <= 0) {
+      if (targetQuantity <= 0) {
         return currentCart;
       }
 
@@ -192,15 +172,16 @@ function cartReducer(state: Cart | undefined, action: CartAction): Cart {
         ? currentCart.lines.map(item => {
             if (item.merchandise.id !== variant.id) return item;
 
-            const effectiveUnitPrice = resolveUnitPrice(variant.price.amount, clampedTargetQuantity, item.bulkPriceTiers);
-            const newTotalAmount = calculateItemCost(clampedTargetQuantity, effectiveUnitPrice);
+            const effectiveUnitPrice = resolveUnitPrice(variant.price.amount, targetQuantity, item.bulkPriceTiers);
+            const newTotalAmount = calculateItemCost(targetQuantity, effectiveUnitPrice);
 
             return {
               ...item,
-              quantity: clampedTargetQuantity,
+              quantity: targetQuantity,
+              fulfillmentEstimate,
               merchandise: {
                 ...item.merchandise,
-                availableQuantity,
+                availableQuantity: null,
               },
               cost: {
                 ...item.cost,
@@ -214,13 +195,14 @@ function cartReducer(state: Cart | undefined, action: CartAction): Cart {
         : [
             {
               id: `temp-${Date.now()}`,
-              quantity: clampedTargetQuantity,
+              quantity: targetQuantity,
               bulkPriceTiers: tiers,
+              fulfillmentEstimate,
               cost: {
                 totalAmount: {
                   amount: calculateItemCost(
-                    clampedTargetQuantity,
-                    resolveUnitPrice(variant.price.amount, clampedTargetQuantity, tiers)
+                    targetQuantity,
+                    resolveUnitPrice(variant.price.amount, targetQuantity, tiers)
                   ),
                   currencyCode: variant.price.currencyCode,
                 },
@@ -228,7 +210,7 @@ function cartReducer(state: Cart | undefined, action: CartAction): Cart {
               merchandise: {
                 id: variant.id,
                 title: variant.title,
-                availableQuantity,
+                availableQuantity: null,
                 selectedOptions: variant.selectedOptions,
                 product: product,
               },

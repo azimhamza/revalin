@@ -136,7 +136,7 @@ function paymentMethod(payment: CheckoutOrderPayment | null) {
   if (!payment) return null;
   if ('paymentMethod' in payment && payment.paymentMethod) return payment.paymentMethod;
   if (isNowPaymentsPayment(payment)) return 'crypto';
-  if (isShieldClimbPayment(payment) || isBankfulPayment(payment)) return 'card_debit';
+  if (isShieldClimbPayment(payment) || isBankfulPayment(payment) || payment.provider === 'square') return 'card_debit';
   if (isInteracPayment(payment)) return 'interac';
   return null;
 }
@@ -222,6 +222,28 @@ function safePaymentSnapshot(payment: CheckoutOrderPayment | null) {
       updatedAt: payment.updatedAt ?? null,
       attemptAmount: payment.attemptAmount ?? null,
       amountPaidToDate: payment.amountPaidToDate ?? null,
+    };
+  }
+
+  if (payment.provider === 'square') {
+    return {
+      provider: payment.provider,
+      paymentMethod: payment.paymentMethod ?? 'card_debit',
+      status: payment.status,
+      paymentLinkId: payment.paymentLinkId,
+      squareOrderId: payment.squareOrderId,
+      paymentId: payment.paymentId ?? null,
+      squareStatus: payment.squareStatus ?? null,
+      expectedAmount: payment.expectedAmount,
+      expectedCurrency: payment.expectedCurrency,
+      receiptUrl: payment.receiptUrl ?? null,
+      swellPaymentId: payment.swellPaymentId ?? null,
+      createdAt: payment.createdAt ?? null,
+      updatedAt: payment.updatedAt ?? null,
+      attemptAmount: payment.attemptAmount ?? null,
+      amountPaidToDate: payment.amountPaidToDate ?? null,
+      deletedAt: payment.deletedAt ?? null,
+      deletionError: payment.deletionError ?? null,
     };
   }
 

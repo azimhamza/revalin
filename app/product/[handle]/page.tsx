@@ -31,8 +31,7 @@ import { RelatedProducts } from './components/related-products';
 import { ProductQuantityProvider } from './components/product-quantity-context';
 import { ProductInventoryPanel } from './components/product-inventory-panel';
 import { ProductViewTracker } from './components/product-view-tracker';
-import { getInventoryState } from '@/lib/inventory';
-import { DosageSubstitutionNotice } from './components/dosage-substitution-notice';
+import { hydrateProductWithInternalAvailability } from '@/lib/internal-availability';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,13 +76,14 @@ export async function generateMetadata(props: { params: Promise<{ handle: string
 export default async function ProductPage(props: { params: Promise<{ handle: string }> }) {
   const currencyCode = await resolveRequestCurrencyCode();
   const params = await props.params;
-  const product = await getLiveProduct(params.handle, currencyCode);
+  const product = await hydrateProductWithInternalAvailability(
+    await getLiveProduct(params.handle, currencyCode)
+  );
 
   if (!product) return notFound();
 
   const collection = product.categoryId ? await getCollection(product.categoryId) : null;
   const productBatches = getBatchesForProduct(product.handle, product.title);
-  const inventory = getInventoryState(product);
 
   const productJsonLd = {
     '@context': 'https://schema.org',
@@ -93,7 +93,7 @@ export default async function ProductPage(props: { params: Promise<{ handle: str
     image: product.featuredImage.url,
     offers: {
       '@type': 'AggregateOffer',
-      availability: inventory.isBackorder ? 'https://schema.org/BackOrder' : 'https://schema.org/InStock',
+      availability: 'https://schema.org/InStock',
       priceCurrency: product.currencyCode,
       highPrice: product.priceRange.maxVariantPrice.amount,
       lowPrice: product.priceRange.minVariantPrice.amount,
@@ -184,10 +184,6 @@ export default async function ProductPage(props: { params: Promise<{ handle: str
                 <div className="grid grid-cols-1 gap-4 md:items-start">
                   <Suspense fallback={<VariantSelectorSlots product={product} fallback />}>
                     <VariantSelectorSlots product={product} />
-                  </Suspense>
-
-                  <Suspense fallback={null}>
-                    <DosageSubstitutionNotice product={product} />
                   </Suspense>
 
                   <Suspense fallback={null}>

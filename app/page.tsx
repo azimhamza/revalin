@@ -12,13 +12,14 @@ import { Badge } from '@/components/ui/badge';
 import { getCollections, getLiveProduct, getProducts } from '@/lib/swell';
 import { resolveRequestCurrencyCode } from '@/lib/swell/currency';
 import { Product } from '../lib/swell/types';
-import { hasAnyVariantInStock } from '@/lib/inventory';
+import { getProductPurchaseMetricsByHandle, sortProductsForMerchandising } from '@/lib/product-ordering';
 import { getSiteUrl } from '@/lib/site';
+import { hydrateProductsWithInternalAvailability } from '@/lib/internal-availability';
 
 export const metadata = {
   title: 'Revalin',
   description:
-    'Research-grade peptides with published COAs, independent batch testing, and same-day fulfillment for qualified buyers.',
+    'Research-grade peptides with published COAs, independent batch testing, and clear fulfillment timelines for qualified buyers.',
   alternates: {
     canonical: '/',
   },
@@ -55,6 +56,7 @@ function prioritizeFeaturedProduct(products: Product[], featuredProduct?: Produc
 export default async function Home() {
   const currencyCode = await resolveRequestCurrencyCode();
   const collections = await getCollections();
+  const purchaseMetricsByHandle = await getProductPurchaseMetricsByHandle();
 
   let featuredProducts: Product[] = [];
 
@@ -70,27 +72,20 @@ export default async function Home() {
       featuredMatch = await getLiveProduct(FEATURED_PRODUCT_HANDLE, currencyCode);
     }
 
-    featuredProducts = uniqueProducts([...allProducts, ...featuredSearchMatches]).slice(
-      0,
-      FEATURED_PRODUCTS_LIMIT * 2
-    );
-
+    featuredProducts = uniqueProducts([...allProducts, ...featuredSearchMatches]);
     featuredProducts = prioritizeFeaturedProduct(featuredProducts, featuredMatch);
+    featuredProducts = await hydrateProductsWithInternalAvailability(featuredProducts);
   } catch (error) {
     console.error('Error fetching featured products:', error);
     featuredProducts = [];
   }
 
-  // Hero stays as the featured product; sort the rest: in-stock first, then most purchased
+  // Hero stays as the featured product; sort the rest by availability, purchase quantity, then stock quantity.
   const [lastProduct, ...remaining] = featuredProducts;
-
-  remaining.sort((a, b) => {
-    const aHasStock = hasAnyVariantInStock(a) ? 0 : 1;
-    const bHasStock = hasAnyVariantInStock(b) ? 0 : 1;
-    if (aHasStock !== bHasStock) return aHasStock - bHasStock;
-    return (b.purchaseCount ?? 0) - (a.purchaseCount ?? 0);
-  });
-  const restProducts = remaining.slice(0, FEATURED_PRODUCTS_LIMIT - 1);
+  const restProducts = sortProductsForMerchandising(
+    remaining,
+    purchaseMetricsByHandle
+  ).slice(0, FEATURED_PRODUCTS_LIMIT - 1);
 
   const organizationJsonLd = {
     '@context': 'https://schema.org',

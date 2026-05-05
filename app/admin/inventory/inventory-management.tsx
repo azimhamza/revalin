@@ -54,6 +54,15 @@ const STOCK_FILTERS = [
   ["in_stock", "Ready"],
 ] as const;
 
+const READINESS_FILTERS = [
+  ["all", "All shipping states"],
+  ["ready", "Ready for 2-3 days"],
+  ["high_demand", "High demand / about 1 week"],
+  ["missing_mapping", "Missing Swell mapping"],
+] as const;
+
+type ReadinessStatus = (typeof READINESS_FILTERS)[number][0];
+
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-CA", {
     dateStyle: "medium",
@@ -84,6 +93,40 @@ function movementLabel(value: string) {
   return value.replace(/_/g, " ");
 }
 
+function hasStorefrontMapping(item: InventoryItemSummary) {
+  if (item.itemType !== "sellable_product") return true;
+  return Boolean(
+    item.swellVariantId?.trim() ||
+      item.swellProductId?.trim() ||
+      item.sku?.trim() ||
+      item.productHandle?.trim(),
+  );
+}
+
+function getReadinessStatus(item: InventoryItemSummary): Exclude<ReadinessStatus, "all"> {
+  if (item.itemType === "sellable_product" && !hasStorefrontMapping(item)) {
+    return "missing_mapping";
+  }
+
+  if (item.itemType === "sellable_product" && item.currentQuantity <= 0) {
+    return "high_demand";
+  }
+
+  return "ready";
+}
+
+function readinessLabel(status: Exclude<ReadinessStatus, "all">) {
+  if (status === "missing_mapping") return "Missing mapping";
+  if (status === "high_demand") return "High demand";
+  return "2-3 day ready";
+}
+
+function readinessTone(status: Exclude<ReadinessStatus, "all">) {
+  if (status === "missing_mapping") return "border-red-300 bg-red-50 text-red-900";
+  if (status === "high_demand") return "border-amber-300 bg-amber-50 text-amber-900";
+  return "border-emerald-200 bg-emerald-50 text-emerald-900";
+}
+
 async function readApiError(response: Response, fallback: string) {
   const payload = await response.json().catch(() => null);
   return payload?.error?.message || fallback;
@@ -105,7 +148,14 @@ export function InventoryManagement({
   const [isPending, startTransition] = useTransition();
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [syncSummary, setSyncSummary] = useState<{
+    productsSeen: number;
+    variantsSeen: number;
+    created: number;
+    updated: number;
+  } | null>(null);
   const [filters, setFilters] = useState(initialFilters);
+  const [readinessFilter, setReadinessFilter] = useState<ReadinessStatus>("all");
   const [categoryForm, setCategoryForm] = useState({ name: "", code: "" });
   const [itemForm, setItemForm] = useState({
     name: "",
@@ -196,6 +246,24 @@ export function InventoryManagement({
       typeCounts,
     };
   }, [data.items, data.movements]);
+  const readinessStats = useMemo(() => {
+    const sellableItems = data.items.filter((item) => item.itemType === "sellable_product");
+
+    return {
+      ready: sellableItems.filter((item) => getReadinessStatus(item) === "ready").length,
+      highDemand: sellableItems.filter((item) => getReadinessStatus(item) === "high_demand").length,
+      missingMapping: sellableItems.filter((item) => getReadinessStatus(item) === "missing_mapping").length,
+    };
+  }, [data.items]);
+  const visibleItems = useMemo(
+    () =>
+      data.items.filter((item) =>
+        readinessFilter === "all"
+          ? true
+          : getReadinessStatus(item) === readinessFilter,
+      ),
+    [data.items, readinessFilter],
+  );
 
   function applyFilters(next = filters) {
     const params = new URLSearchParams();
@@ -229,6 +297,40 @@ export function InventoryManagement({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Request failed.");
       return false;
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function syncSwellCatalog() {
+    setBusyKey("sync-swell");
+    setError(null);
+    setSyncSummary(null);
+
+    try {
+      const response = await fetch("/api/admin/inventory/sync-swell", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(payload?.error?.message || `Sync failed (${response.status}).`);
+      }
+
+      const summary = payload?.data;
+      if (summary) {
+        setSyncSummary({
+          productsSeen: Number(summary.productsSeen || 0),
+          variantsSeen: Number(summary.variantsSeen || 0),
+          created: Number(summary.created || 0),
+          updated: Number(summary.updated || 0),
+        });
+      }
+
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Swell sync failed.");
     } finally {
       setBusyKey(null);
     }
@@ -370,22 +472,46 @@ export function InventoryManagement({
         title="Inventory"
         description="Internal stock ledger for products, packaging, labels, stickers, cards, inserts, and supplies."
         action={
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => router.refresh()}
-            className="h-7 rounded-none px-2.5 text-[10px] uppercase tracking-[0.14em]"
-          >
-            <RefreshCw className="mr-1.5 size-3.5" />
-            Refresh
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={syncSwellCatalog}
+              disabled={busyKey === "sync-swell"}
+              className="h-7 rounded-none px-2.5 text-[10px] uppercase tracking-[0.14em]"
+            >
+              {busyKey === "sync-swell" ? (
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-1.5 size-3.5" />
+              )}
+              Sync Swell products
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => router.refresh()}
+              className="h-7 rounded-none px-2.5 text-[10px] uppercase tracking-[0.14em]"
+            >
+              <RefreshCw className="mr-1.5 size-3.5" />
+              Refresh
+            </Button>
+          </div>
         }
       />
 
       {error ? (
         <div className="rounded-none border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
           {error}
+        </div>
+      ) : null}
+
+      {syncSummary ? (
+        <div className="rounded-none border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-950">
+          Synced {syncSummary.productsSeen} Swell products and {syncSummary.variantsSeen} sellable options.
+          Created {syncSummary.created}, updated {syncSummary.updated}. Quantities were not changed.
         </div>
       ) : null}
 
@@ -670,72 +796,119 @@ export function InventoryManagement({
         <AdminStatCard label="Rules" value={data.stats.activeRules} detail="Auto deductions" />
       </div>
 
+      <div className="grid gap-3 md:grid-cols-3">
+        <AdminStatCard label="2-3 day ready" value={readinessStats.ready} detail="Sellable items with internal stock" />
+        <AdminStatCard label="High demand" value={readinessStats.highDemand} detail="Sellable items showing about 1 week" />
+        <AdminStatCard label="Missing mapping" value={readinessStats.missingMapping} detail="Defaults to high-demand copy" />
+      </div>
+
       <AdminPanel>
-        <div className="grid gap-2 lg:grid-cols-[1fr_180px_160px_160px_auto]">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={filters.q}
+        <div className="grid gap-2 lg:grid-cols-[minmax(220px,1fr)_180px_170px_150px_210px_auto]">
+          <label className="grid gap-1">
+            <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Search
+            </span>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={filters.q}
+                onChange={(event) =>
+                  setFilters((current) => ({ ...current, q: event.target.value }))
+                }
+                placeholder="Name, code, SKU, barcode"
+                className={cn(adminFieldClass, "pl-7")}
+              />
+            </div>
+          </label>
+          <label className="grid gap-1">
+            <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Category
+            </span>
+            <select
+              value={filters.categoryId}
               onChange={(event) =>
-                setFilters((current) => ({ ...current, q: event.target.value }))
+                setFilters((current) => ({ ...current, categoryId: event.target.value }))
               }
-              placeholder="Search name, code, SKU, barcode"
-              className={cn(adminFieldClass, "pl-7")}
-            />
+              className={adminFieldClass}
+            >
+              <option value="all">All categories</option>
+              {data.categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1">
+            <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Type
+            </span>
+            <select
+              value={filters.itemType}
+              onChange={(event) =>
+                setFilters((current) => ({ ...current, itemType: event.target.value }))
+              }
+              className={adminFieldClass}
+            >
+              <option value="all">All types</option>
+              {ITEM_TYPES.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1">
+            <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Stock
+            </span>
+            <select
+              value={filters.stockStatus}
+              onChange={(event) =>
+                setFilters((current) => ({
+                  ...current,
+                  stockStatus: event.target.value,
+                }))
+              }
+              className={adminFieldClass}
+            >
+              {STOCK_FILTERS.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1">
+            <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Storefront
+            </span>
+            <select
+              value={readinessFilter}
+              onChange={(event) => setReadinessFilter(event.target.value as ReadinessStatus)}
+              className={adminFieldClass}
+            >
+              {READINESS_FILTERS.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="grid gap-1">
+            <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-transparent">
+              Apply
+            </span>
+            <button
+              type="button"
+              onClick={() => applyFilters()}
+              disabled={isPending}
+              className={adminPrimaryButtonClass}
+            >
+              {isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
+              Apply
+            </button>
           </div>
-          <select
-            value={filters.categoryId}
-            onChange={(event) =>
-              setFilters((current) => ({ ...current, categoryId: event.target.value }))
-            }
-            className={adminFieldClass}
-          >
-            <option value="all">All categories</option>
-            {data.categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={filters.itemType}
-            onChange={(event) =>
-              setFilters((current) => ({ ...current, itemType: event.target.value }))
-            }
-            className={adminFieldClass}
-          >
-            <option value="all">All types</option>
-            {ITEM_TYPES.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-          <select
-            value={filters.stockStatus}
-            onChange={(event) =>
-              setFilters((current) => ({
-                ...current,
-                stockStatus: event.target.value,
-              }))
-            }
-            className={adminFieldClass}
-          >
-            {STOCK_FILTERS.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => applyFilters()}
-            disabled={isPending}
-            className={adminPrimaryButtonClass}
-          >
-            {isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
-            Apply
-          </button>
         </div>
       </AdminPanel>
 
@@ -745,128 +918,165 @@ export function InventoryManagement({
             <AdminSectionHeader
               eyebrow="On hand"
               title="Stock ledger"
-              description="Counts are calculated from internal movements, not Swell stock levels."
+              description="Table view of internal counts. Filter by category or type to isolate sellable products, supplies, packaging, labels, and the rest."
             />
-            <div className="mt-3 grid gap-2 lg:grid-cols-2">
-              {data.items.map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-none border border-border/70 bg-background px-3 py-2.5"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <p className="truncate text-sm font-semibold">{item.name}</p>
-                        <Badge variant="outline" className="rounded-none text-[9px]">
-                          {item.code}
-                        </Badge>
-                      </div>
-                      <p className="mt-1 text-[10px] text-muted-foreground">
-                        {item.category?.name || "Uncategorized"} · {itemTypeLabel(item.itemType)}
-                        {item.location ? ` · ${item.location}` : ""}
-                      </p>
-                    </div>
-                    <span
-                      className={cn(
-                        "shrink-0 rounded-none border px-2 py-1 text-[10px] font-semibold",
-                        statusTone(item.stockStatus),
-                      )}
-                    >
-                      {statusLabel(item.stockStatus)}
-                    </span>
-                  </div>
+            <div className="mt-3 overflow-x-auto">
+              <table className="min-w-[1040px] w-full border-collapse text-left text-xs">
+                <thead>
+                  <tr className="border-b border-border/70 text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
+                    <th className="px-2 py-2 font-semibold">Item</th>
+                    <th className="px-2 py-2 font-semibold">Category / Type</th>
+                    <th className="px-2 py-2 text-right font-semibold">On hand</th>
+                    <th className="px-2 py-2 text-right font-semibold">Reorder</th>
+                    <th className="px-2 py-2 font-semibold">Status</th>
+                    <th className="px-2 py-2 font-semibold">Storefront mapping</th>
+                    <th className="px-2 py-2 font-semibold">Adjust</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/60">
+                  {visibleItems.map((item) => {
+                    const readinessStatus = getReadinessStatus(item);
+                    const missingStorefrontMapping =
+                      item.itemType === "sellable_product" && readinessStatus === "missing_mapping";
+                    const showStorefrontFields =
+                      item.itemType === "sellable_product" ||
+                      Boolean(item.sku || item.productHandle || item.swellProductId || item.swellVariantId);
 
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                    <div>
-                      <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
-                        On hand
-                      </p>
-                      <p className="text-lg font-semibold tracking-[-0.04em]">
-                        {item.currentQuantity}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
-                        Reorder
-                      </p>
-                      <p className="font-semibold">{item.reorderPoint}</p>
-                    </div>
-                    <div>
-                      <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
-                        Unit
-                      </p>
-                      <p className="font-semibold">{item.unit}</p>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        adjustItem(item.id, 1, `Quick add 1 ${item.unit}`)
-                      }
-                      disabled={busyKey === `adjust:${item.id}`}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-none border border-emerald-200 bg-emerald-50 px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-900 hover:bg-emerald-100"
-                    >
-                      <PackagePlus className="size-3.5" />
-                      Add 1
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        adjustItem(item.id, -1, `Quick remove 1 ${item.unit}`)
-                      }
-                      disabled={busyKey === `adjust:${item.id}`}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-none border border-amber-200 bg-amber-50 px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-900 hover:bg-amber-100"
-                    >
-                      <PackageMinus className="size-3.5" />
-                      Remove 1
-                    </button>
-                  </div>
-
-                  <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
-                    <Input
-                      value={adjustments[item.id] || ""}
-                      onChange={(event) =>
-                        setAdjustments((current) => ({
-                          ...current,
-                          [item.id]: event.target.value,
-                        }))
-                      }
-                      inputMode="numeric"
-                      placeholder="+10 or -2"
-                      className={adminFieldClass}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => adjustItem(item.id)}
-                      disabled={busyKey === `adjust:${item.id}`}
-                      className={adminSecondaryButtonClass}
-                    >
-                      {busyKey === `adjust:${item.id}` ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <PackageCheck className="size-3.5" />
-                      )}
-                      Adjust
-                    </button>
-                  </div>
-
-                  {item.sku || item.barcode || item.productHandle || item.swellVariantId ? (
-                    <div className="mt-2 space-y-0.5 break-all text-[10px] text-muted-foreground">
-                      {item.sku ? <p>SKU: {item.sku}</p> : null}
-                      {item.barcode ? <p>Barcode: {item.barcode}</p> : null}
-                      {item.productHandle ? <p>Handle: {item.productHandle}</p> : null}
-                      {item.swellVariantId ? <p>Swell variant: {item.swellVariantId}</p> : null}
-                    </div>
+                    return (
+                      <tr key={item.id} className="align-top hover:bg-muted/40">
+                        <td className="px-2 py-3">
+                          <div className="max-w-[260px]">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <p className="font-semibold leading-tight">{item.name}</p>
+                              <Badge variant="outline" className="rounded-none text-[9px]">
+                                {item.code}
+                              </Badge>
+                            </div>
+                            <p className="mt-1 text-[10px] text-muted-foreground">
+                              {item.location ? item.location : "No location"}
+                            </p>
+                          </div>
+                        </td>
+                        <td className="px-2 py-3">
+                          <p className="font-medium">{item.category?.name || "Uncategorized"}</p>
+                          <p className="mt-1 text-[10px] capitalize text-muted-foreground">
+                            {itemTypeLabel(item.itemType)}
+                          </p>
+                        </td>
+                        <td className="px-2 py-3 text-right">
+                          <p className="text-base font-semibold tabular-nums">{item.currentQuantity}</p>
+                          <p className="text-[10px] text-muted-foreground">{item.unit}</p>
+                        </td>
+                        <td className="px-2 py-3 text-right font-semibold tabular-nums">
+                          {item.reorderPoint}
+                        </td>
+                        <td className="px-2 py-3">
+                          <div className="flex flex-col items-start gap-1.5">
+                            <span
+                              className={cn(
+                                "rounded-none border px-2 py-1 text-[10px] font-semibold",
+                                statusTone(item.stockStatus),
+                              )}
+                            >
+                              {statusLabel(item.stockStatus)}
+                            </span>
+                            {item.itemType === "sellable_product" ? (
+                              <span
+                                className={cn(
+                                  "rounded-none border px-2 py-1 text-[10px] font-semibold",
+                                  readinessTone(readinessStatus),
+                                )}
+                              >
+                                {readinessLabel(readinessStatus)}
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="px-2 py-3">
+                          {showStorefrontFields || item.barcode ? (
+                            <div className="max-w-[260px] space-y-0.5 break-all text-[10px] text-muted-foreground">
+                              <p>SKU: {item.sku || "Not set"}</p>
+                              {item.barcode ? <p>Barcode: {item.barcode}</p> : null}
+                              <p>Handle: {item.productHandle || "Not set"}</p>
+                              <p>Swell product: {item.swellProductId || "Not set"}</p>
+                              <p>Swell variant: {item.swellVariantId || "Not set"}</p>
+                              {missingStorefrontMapping ? (
+                                <p className="mt-1 rounded-none border border-red-200 bg-red-50 px-2 py-1 font-medium text-red-900">
+                                  Missing mapping; customers see about 1 week due to high demand.
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground">Not storefront matched</span>
+                          )}
+                        </td>
+                        <td className="px-2 py-3">
+                          <div className="grid min-w-[230px] gap-2">
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  adjustItem(item.id, 1, `Quick add 1 ${item.unit}`)
+                                }
+                                disabled={busyKey === `adjust:${item.id}`}
+                                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-none border border-emerald-200 bg-emerald-50 px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-900 hover:bg-emerald-100"
+                              >
+                                <PackagePlus className="size-3.5" />
+                                Add 1
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  adjustItem(item.id, -1, `Quick remove 1 ${item.unit}`)
+                                }
+                                disabled={busyKey === `adjust:${item.id}`}
+                                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-none border border-amber-200 bg-amber-50 px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-900 hover:bg-amber-100"
+                              >
+                                <PackageMinus className="size-3.5" />
+                                Remove 1
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-[1fr_auto] gap-2">
+                              <Input
+                                value={adjustments[item.id] || ""}
+                                onChange={(event) =>
+                                  setAdjustments((current) => ({
+                                    ...current,
+                                    [item.id]: event.target.value,
+                                  }))
+                                }
+                                inputMode="numeric"
+                                placeholder="+10 or -2"
+                                className={cn(adminFieldClass, "h-8")}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => adjustItem(item.id)}
+                                disabled={busyKey === `adjust:${item.id}`}
+                                className={cn(adminSecondaryButtonClass, "h-8 px-2")}
+                              >
+                                {busyKey === `adjust:${item.id}` ? (
+                                  <Loader2 className="size-3.5 animate-spin" />
+                                ) : (
+                                  <PackageCheck className="size-3.5" />
+                                )}
+                                Adjust
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {visibleItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-2 py-8 text-center text-sm text-muted-foreground">
+                        No inventory items found.
+                      </td>
+                    </tr>
                   ) : null}
-                </div>
-              ))}
-              {data.items.length === 0 ? (
-                <div className="rounded-none border border-border/70 bg-background px-3 py-8 text-center text-sm text-muted-foreground lg:col-span-2">
-                  No inventory items found.
-                </div>
-              ) : null}
+                </tbody>
+              </table>
             </div>
           </AdminPanel>
 

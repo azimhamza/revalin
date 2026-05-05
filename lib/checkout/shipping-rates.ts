@@ -490,7 +490,7 @@ export function buildQuoteResponse(args: {
   discountAmount?: number;
   discountCode?: string;
   discounts?: CheckoutAppliedDiscount[];
-  paymentMethod?: 'card' | 'crypto' | 'interac';
+  paymentMethod?: 'card' | 'crypto' | 'interac' | 'square';
   services: CheckoutRatedService[];
 }) {
   const services = toCustomerFacingCheckoutServices(applyFreeShipping(

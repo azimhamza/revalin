@@ -12,8 +12,6 @@ import { CSSProperties, ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader } from '../ui/loader';
 import { getSwellProductId } from '@/lib/swell/utils';
-import { getInventoryState } from '@/lib/inventory';
-import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
 
 interface AddToCartProps extends ButtonProps {
   product: Product;
@@ -40,6 +38,12 @@ const getBaseProductVariant = (product: Product): ProductVariant => {
     availableForSale: product.availableForSale,
     stockStatus: product.stockStatus,
     stockLevel: product.stockLevel,
+    internalOnHand: product.internalOnHand,
+    internalAllocated: product.internalAllocated,
+    availableToShipNow: product.availableToShipNow,
+    isHighDemand: product.isHighDemand,
+    shippingLeadTimeLabel: product.shippingLeadTimeLabel,
+    internalInventoryMatched: product.internalInventoryMatched,
     selectedOptions: [],
     price: product.priceRange.minVariantPrice,
     compareAtPrice: product.compareAtPrice,
@@ -67,36 +71,16 @@ export function AddToCartButton({
     if (product.variants.length === 1) return product.variants[0];
     return undefined;
   }, [selectedVariant, product]);
-  const dosageSubstitution = useMemo(
-    () => resolveDosageSubstitution(product, resolvedVariant),
-    [product, resolvedVariant]
-  );
-  const cartVariant = dosageSubstitution.cartVariant;
-  const quantityMultiplier = dosageSubstitution.quantityMultiplier;
-  const inventory = useMemo(() => getInventoryState(product, cartVariant), [product, cartVariant]);
-  const existingCartQuantity = useMemo(() => {
-    if (!cartVariant) return 0;
-    return cartContext?.cart?.lines.find(line => line.merchandise.id === cartVariant.id)?.quantity || 0;
-  }, [cartContext?.cart, cartVariant]);
-  const hasReachedAvailableLimit =
-    inventory.availableQuantity !== null &&
-    existingCartQuantity + quantityMultiplier > inventory.availableQuantity;
+  const cartVariant = resolvedVariant;
 
   const getButtonText = () => {
     if (!cartContext) return 'Loading...';
-    if (inventory.isBackorder) return 'Available in next shipment';
     if (!cartVariant) return 'Select one';
-    if (hasReachedAvailableLimit) return 'Max quantity added';
     return 'Add To Cart';
   };
 
-  const isDisabled =
-    !cartContext ||
-    inventory.isBackorder ||
-    hasReachedAvailableLimit ||
-    !cartVariant ||
-    isLoading;
-  const isSelectOneState = !inventory.isBackorder && !cartVariant;
+  const isDisabled = !cartContext || !cartVariant || isLoading;
+  const isSelectOneState = !cartVariant;
   const buttonStyle = isSelectOneState && unselectedStyle ? unselectedStyle : style;
   const { onPointerEnter, onFocus, onTouchStart, ...restButtonProps } = buttonProps;
 
@@ -105,7 +89,7 @@ export function AddToCartButton({
       return;
     }
 
-    if (!cartVariant || hasReachedAvailableLimit || inventory.isBackorder) {
+    if (!cartVariant) {
       return;
     }
 
@@ -125,9 +109,9 @@ export function AddToCartButton({
       onSubmit={e => {
         e.preventDefault();
 
-        if (cartContext && cartVariant && !hasReachedAvailableLimit) {
+        if (cartContext && cartVariant) {
           startTransition(async () => {
-            cartContext.addItem(cartVariant, product, quantityMultiplier);
+            cartContext.addItem(cartVariant, product, 1);
             try {
               const refMatch = document.cookie.match(/(?:^|;\s*)revalin_ref=([^;]+)/);
               window.op?.track('product_added_to_cart', {
@@ -135,7 +119,7 @@ export function AddToCartButton({
                 productTitle: product.title,
                 variantTitle: cartVariant.title,
                 requestedVariantTitle: resolvedVariant?.title || null,
-                quantity: quantityMultiplier,
+                quantity: 1,
                 price: cartVariant.price?.amount || product.priceRange.minVariantPrice.amount,
                 affiliate_code: refMatch?.[1] ? decodeURIComponent(refMatch[1]) : null,
               });
@@ -147,7 +131,7 @@ export function AddToCartButton({
     >
       <Button
         type="submit"
-        aria-label={inventory.isBackorder ? 'Available in next shipment' : !cartVariant ? 'Select one' : 'Add to cart'}
+        aria-label={!cartVariant ? 'Select one' : 'Add to cart'}
         disabled={isDisabled}
         onPointerEnter={event => {
           onPointerEnter?.(event);

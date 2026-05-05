@@ -4,14 +4,12 @@ import { useSelectedVariant } from '@/components/products/variant-selector';
 import { Product } from '@/lib/swell/types';
 import { formatPrice, getDiscountPercentage, getDisplayCompareAtPrice, getDisplayPrice, resolveUnitPrice } from '@/lib/swell/utils';
 import { useProductQuantity } from './product-quantity-context';
-import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
 
 export function ProductPrice({ product }: { product: Product }) {
   const { quantity } = useProductQuantity();
   const selectedVariant = useSelectedVariant(product);
-  const dosageSubstitution = resolveDosageSubstitution(product, selectedVariant);
-  const displayVariant = dosageSubstitution.cartVariant;
-  const displayQuantity = quantity * dosageSubstitution.quantityMultiplier;
+  const displayVariant = selectedVariant || (product.variants.length === 1 ? product.variants[0] : null);
+  const displayQuantity = quantity;
   const basePrice = getDisplayPrice(product, displayVariant);
   const tiers = displayVariant?.bulkPriceTiers?.length ? displayVariant.bulkPriceTiers : product.bulkPriceTiers;
   const effectiveAmount = resolveUnitPrice(basePrice.amount, displayQuantity, tiers);

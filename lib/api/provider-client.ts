@@ -8,6 +8,7 @@ type ProviderName =
   | 'shieldclimb'
   | 'bankful'
   | 'nowpayments'
+  | 'square'
   | 'loops'
   | 'blob';
 
@@ -27,6 +28,7 @@ const PROVIDER_TIMEOUTS: Record<ProviderName, number> = {
   shieldclimb: 4_000,
   bankful: 8_000,
   nowpayments: 4_000,
+  square: 8_000,
   loops: 3_000,
   blob: 4_000,
 };

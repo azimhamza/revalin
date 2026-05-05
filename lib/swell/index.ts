@@ -85,6 +85,7 @@ function transformSwellVariants(variants: { edges: Array<{ node: any }> } | unde
     return {
       id: edge.node.id,
       title: edge.node.title || '',
+      sku: edge.node.sku || undefined,
       availableForSale: edge.node.availableForSale !== false,
       stockStatus: edge.node.stockStatus,
       stockLevel: edge.node.stockLevel,

@@ -10,7 +10,7 @@ import type {
   CheckoutShippingService,
   NowPaymentsPaymentData,
 } from './types.ts';
-import { isBankfulPayment, isInteracPayment, isNowPaymentsPayment, isShieldClimbPayment } from './types.ts';
+import { isBankfulPayment, isInteracPayment, isNowPaymentsPayment, isShieldClimbPayment, isSquarePayment } from './types.ts';
 
 const IMMUTABLE_NON_SUCCESS_STATUSES = new Set([
   'cancelled',
@@ -36,7 +36,7 @@ export const CHECKOUT_PROCESSING_STEPS = [
 export type CheckoutProcessingStepName =
   (typeof CHECKOUT_PROCESSING_STEPS)[number];
 
-export type PaymentLifecycleProvider = 'nowpayments' | 'shieldclimb' | 'interac' | 'bankful';
+export type PaymentLifecycleProvider = 'nowpayments' | 'shieldclimb' | 'interac' | 'bankful' | 'square';
 
 export type PaymentLifecycleEventSource =
   | 'nowpayments_ipn'
@@ -45,6 +45,8 @@ export type PaymentLifecycleEventSource =
   | 'shieldclimb_poll'
   | 'bankful_capture'
   | 'bankful_poll'
+  | 'square_webhook'
+  | 'square_poll'
   | 'interac_email'
   | 'interac_admin';
 
@@ -112,6 +114,7 @@ export type PaymentLifecycleDependencies = {
     order: CheckoutOrderRecord
   ) => Promise<unknown>;
   syncBankfulOrderToSwell: (order: CheckoutOrderRecord) => Promise<unknown>;
+  syncSquareOrderToSwell: (order: CheckoutOrderRecord) => Promise<unknown>;
   syncInteracOrderToSwell: (order: CheckoutOrderRecord) => Promise<unknown>;
   sendPaymentCompletedEvent: (order: CheckoutOrderRecord) => Promise<unknown>;
   trackPurchaseFromOrder: (order: CheckoutOrderRecord) => Promise<unknown>;
@@ -229,6 +232,7 @@ function isProviderMatch(
   if (provider === 'nowpayments') return isNowPaymentsPayment(order.payment);
   if (provider === 'interac') return isInteracPayment(order.payment);
   if (provider === 'bankful') return isBankfulPayment(order.payment);
+  if (provider === 'square') return isSquarePayment(order.payment);
   return isShieldClimbPayment(order.payment);
 }
 
@@ -447,9 +451,22 @@ export function createPaymentLifecycle(
       throw error;
     }
 
+    const labelPurchasedAt = new Date().toISOString();
+
     await dependencies.updateCheckoutOrder(order.orderId, current => ({
       ...current,
       fulfillmentStatus: 'label_ready',
+      fulfillment: {
+        ...(current.fulfillment || current.shipengine),
+        provider: 'shipengine' as const,
+        trackingCode: labelResult.trackingCode || undefined,
+        labelUrl: labelResult.labelUrl || undefined,
+        carrier: labelResult.carrier || undefined,
+        service: labelResult.service || undefined,
+        publicTrackingUrl: labelResult.publicTrackingUrl || undefined,
+        labelPurchasedAt,
+        labelError: undefined,
+      },
       shipengine: {
         ...current.shipengine,
         trackingCode: labelResult.trackingCode || undefined,
@@ -457,7 +474,7 @@ export function createPaymentLifecycle(
         carrier: labelResult.carrier || undefined,
         service: labelResult.service || undefined,
         publicTrackingUrl: labelResult.publicTrackingUrl || undefined,
-        labelPurchasedAt: new Date().toISOString(),
+        labelPurchasedAt,
         labelError: undefined,
       },
     }));
@@ -506,6 +523,11 @@ export function createPaymentLifecycle(
 
         if (isBankfulPayment(order.payment)) {
           await dependencies.syncBankfulOrderToSwell(order);
+          return { status: 'completed' };
+        }
+
+        if (isSquarePayment(order.payment)) {
+          await dependencies.syncSquareOrderToSwell(order);
           return { status: 'completed' };
         }
 
@@ -605,7 +627,8 @@ export function createPaymentLifecycle(
           orderId,
           step,
           status:
-            step === 'labelPurchase' && currentOrder.shipengine?.labelUrl
+            step === 'labelPurchase' &&
+            (currentOrder.fulfillment?.labelUrl || currentOrder.shipengine?.labelUrl)
               ? 'completed'
               : 'skipped',
         });
@@ -654,6 +677,10 @@ export function createPaymentLifecycle(
           await dependencies.updateCheckoutOrder(orderId, current => ({
             ...current,
             fulfillmentStatus: 'error',
+            fulfillment: {
+              ...(current.fulfillment || current.shipengine),
+              labelError: message,
+            },
             shipengine: {
               ...current.shipengine,
               labelError: message,
@@ -779,7 +806,8 @@ export function createPaymentLifecycle(
         orderId,
         step,
         status:
-          step === 'labelPurchase' && currentOrder.shipengine?.labelUrl
+          step === 'labelPurchase' &&
+          (currentOrder.fulfillment?.labelUrl || currentOrder.shipengine?.labelUrl)
             ? 'completed'
             : 'skipped',
       });
@@ -821,6 +849,10 @@ export function createPaymentLifecycle(
         await dependencies.updateCheckoutOrder(orderId, current => ({
           ...current,
           fulfillmentStatus: 'error',
+          fulfillment: {
+            ...(current.fulfillment || current.shipengine),
+            labelError: message,
+          },
           shipengine: {
             ...current.shipengine,
             labelError: message,
@@ -848,7 +880,7 @@ export function createPaymentLifecycle(
       );
     }
 
-    if (order.shipengine?.labelUrl) {
+    if (order.fulfillment?.labelUrl || order.shipengine?.labelUrl) {
       throw new Error(`Order ${orderId} already has a shipping label.`);
     }
 
@@ -857,7 +889,10 @@ export function createPaymentLifecycle(
       'labelPurchase'
     );
 
-    if (!afterLabelPurchase || !afterLabelPurchase.shipengine?.labelUrl) {
+    if (
+      !afterLabelPurchase ||
+      (!afterLabelPurchase.fulfillment?.labelUrl && !afterLabelPurchase.shipengine?.labelUrl)
+    ) {
       return afterLabelPurchase;
     }
 

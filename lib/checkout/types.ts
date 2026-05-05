@@ -1,4 +1,4 @@
-import type { Money } from '@/lib/swell/types';
+import type { Money, ProductFulfillmentEstimate } from '@/lib/swell/types';
 
 export type CheckoutShippingAddress = {
   firstName: string;
@@ -26,6 +26,7 @@ export type CheckoutOrderLine = {
   quantity: number;
   unitPrice: Money;
   lineTotal: Money;
+  fulfillmentEstimate?: ProductFulfillmentEstimate;
 };
 
 export type CheckoutAppliedDiscount = {
@@ -186,6 +187,43 @@ export type BankfulPaymentData = {
   supersededByOrderId?: string;
 };
 
+export type SquarePaymentData = {
+  provider: 'square';
+  paymentMethod?: 'card_debit';
+  status: string;
+  paymentLinkId: string;
+  squareOrderId: string;
+  checkoutUrl: string;
+  longUrl?: string | null;
+  locationId?: string | null;
+  expectedAmount: string;
+  expectedCurrency: 'CAD' | string;
+  paymentId?: string | null;
+  squareStatus?: string | null;
+  receiptUrl?: string | null;
+  buyerEmail?: string | null;
+  amountMoney?: {
+    amount?: number | null;
+    currency?: string | null;
+  } | null;
+  totalMoney?: {
+    amount?: number | null;
+    currency?: string | null;
+  } | null;
+  createdAt?: string;
+  updatedAt?: string;
+  paidAt?: string | null;
+  deletedAt?: string | null;
+  deletionError?: string | null;
+  swellPaymentId?: string;
+  swellPaymentSyncToken?: string | null;
+  swellPaymentSyncStartedAt?: string | null;
+  amountPaidToDate?: string;
+  attemptAmount?: string;
+  carryoverRootOrderId?: string;
+  supersededByOrderId?: string;
+};
+
 export type InteracPaymentData = {
   provider: 'interac';
   paymentMethod?: 'interac';
@@ -233,6 +271,7 @@ export type CheckoutOrderPayment =
   | NowPaymentsPaymentData
   | ShieldClimbPaymentData
   | BankfulPaymentData
+  | SquarePaymentData
   | InteracPaymentData;
 
 export type CheckoutPaymentCarryoverPublicData = {
@@ -271,10 +310,14 @@ export type ShieldClimbPublicPaymentData = {
 export type BankfulPublicPaymentData =
   BankfulPaymentData & CheckoutPaymentCarryoverPublicData;
 
+export type SquarePublicPaymentData =
+  SquarePaymentData & CheckoutPaymentCarryoverPublicData;
+
 export type CheckoutOrderPublicPayment =
   | NowPaymentsPublicPaymentData
   | ShieldClimbPublicPaymentData
   | BankfulPublicPaymentData
+  | SquarePublicPaymentData
   | (InteracPaymentData & CheckoutPaymentCarryoverPublicData);
 
 export function isShieldClimbPayment(payment: CheckoutOrderPayment): payment is ShieldClimbPaymentData {
@@ -291,6 +334,10 @@ export function isInteracPayment(payment: CheckoutOrderPayment): payment is Inte
 
 export function isBankfulPayment(payment: CheckoutOrderPayment): payment is BankfulPaymentData {
   return payment.provider === 'bankful';
+}
+
+export function isSquarePayment(payment: CheckoutOrderPayment): payment is SquarePaymentData {
+  return payment.provider === 'square';
 }
 
 export type CheckoutOrderSwell = {
@@ -336,6 +383,7 @@ export type CheckoutOrderFulfillment = {
   shippedEmailSentAt?: string;
   swellShipmentId?: string;
   markedShippedByUserId?: string;
+  shipengineRateId?: string;
   shippoTransactionId?: string;
   shippoRateId?: string;
   shippoShipmentId?: string;

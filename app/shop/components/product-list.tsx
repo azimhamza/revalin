@@ -5,7 +5,8 @@ import { ProductListContent } from './product-list-content';
 import { mapSortKeys } from '@/lib/swell/utils';
 import { storeCatalog } from '@/lib/swell/constants';
 import { resolveRequestCurrencyCode } from '@/lib/swell/currency';
-import { hasAnyVariantInStock } from '@/lib/inventory';
+import { getProductPurchaseMetricsByHandle, sortProductsForMerchandising } from '@/lib/product-ordering';
+import { hydrateProductsWithInternalAvailability } from '@/lib/internal-availability';
 
 interface ProductListProps {
   collection: string;
@@ -55,16 +56,9 @@ async function getProductListData({
     products = [];
   }
 
-  // Reverse Swell's default order so equal-purchase-count items are flipped
-  products.reverse();
-
-  // Sort: products with any in-stock variant first, then most purchased
-  products.sort((a, b) => {
-    const aHasStock = hasAnyVariantInStock(a) ? 0 : 1;
-    const bHasStock = hasAnyVariantInStock(b) ? 0 : 1;
-    if (aHasStock !== bHasStock) return aHasStock - bHasStock;
-    return (b.purchaseCount ?? 0) - (a.purchaseCount ?? 0);
-  });
+  products = await hydrateProductsWithInternalAvailability(products);
+  const purchaseMetricsByHandle = await getProductPurchaseMetricsByHandle();
+  products = sortProductsForMerchandising(products, purchaseMetricsByHandle);
 
   const collections = await getCollections();
 

@@ -38,3 +38,19 @@ export function getCardCheckoutMinimumMessage() {
     2,
   )} USD or more.`;
 }
+
+export function isSquareFallbackCheckoutEnabled() {
+  const configured =
+    (
+      process.env.CHECKOUT_SQUARE_FALLBACK_ENABLED ??
+      process.env.NEXT_PUBLIC_CHECKOUT_SQUARE_FALLBACK_ENABLED
+    )
+      ?.trim()
+      .toLowerCase();
+
+  if (!configured) {
+    return false;
+  }
+
+  return !DISABLED_CARD_DEBIT_ENV_VALUES.has(configured);
+}

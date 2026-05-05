@@ -3,6 +3,8 @@ import { isTerminalPaymentStatus } from '@/lib/checkout/constants';
 import { buildPublicCheckoutOrder } from '@/lib/checkout/public-order';
 import { getCheckoutOrder, updateCheckoutOrder } from '@/lib/checkout/order-store';
 import { cancelSwellOrder } from '@/lib/checkout/swell-order-management';
+import { deleteSquarePaymentLink } from '@/lib/checkout/square';
+import { isSquarePayment } from '@/lib/checkout/types';
 
 export async function getPublicCheckoutOrder(args: {
   orderId: string;
@@ -50,13 +52,45 @@ export async function releaseCheckoutOrder(args: {
 
   await cancelSwellOrder(order.swell.orderId, cancelReason);
 
+  let squareDeletionError: string | null = null;
+
+  if (isSquarePayment(order.payment)) {
+    await deleteSquarePaymentLink(order.payment.paymentLinkId).catch(async (error) => {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unable to deactivate Square payment link.';
+      squareDeletionError = message;
+
+      await updateCheckoutOrder(order.orderId, (current) => {
+        if (!isSquarePayment(current.payment)) return current;
+        return {
+          ...current,
+          payment: {
+            ...current.payment,
+            deletionError: message,
+            updatedAt: new Date().toISOString(),
+          },
+        };
+      }).catch(() => {});
+
+      console.error('Unable to deactivate Square payment link:', error);
+    });
+  }
+
   const updatedOrder = await updateCheckoutOrder(order.orderId, (current) => ({
     ...current,
-    payment: {
-      ...current.payment,
-      status: args.reason === 'switch_payment' ? 'replaced' : 'cancelled',
-      updatedAt: new Date().toISOString(),
-    },
+      payment: {
+        ...current.payment,
+        status: args.reason === 'switch_payment' ? 'replaced' : 'cancelled',
+        ...(isSquarePayment(current.payment)
+        ? {
+            deletedAt: squareDeletionError ? current.payment.deletedAt ?? null : new Date().toISOString(),
+            deletionError: squareDeletionError,
+          }
+        : {}),
+        updatedAt: new Date().toISOString(),
+      },
     latestError: cancelReason,
   }));
 

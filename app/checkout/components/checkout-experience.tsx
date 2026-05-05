@@ -42,6 +42,7 @@ import type {
   BankfulPublicPaymentData,
   ShieldClimbPublicPaymentData,
   NowPaymentsPublicPaymentData,
+  SquarePublicPaymentData,
 } from '@/lib/checkout/types';
 import {
   calculateCheckoutPricing,
@@ -50,14 +51,16 @@ import {
   isDirectPaymentDiscountMethod,
 } from '@/lib/checkout/pricing';
 import { cn } from '@/lib/utils';
-import type { Product } from '@/lib/swell/types';
+import type { CartItem, Product } from '@/lib/swell/types';
 import { formatPrice, getDiscountPercentage, getDisplayCompareAtPrice, getDisplayPrice } from '@/lib/swell/utils';
 import { useAuthSession } from '@/components/auth/session-provider';
 import { CheckoutAuthBanner } from './checkout-auth-banner';
 import { getApiData, getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
+import { getInventoryState, HIGH_DEMAND_SHIPPING_LABEL } from '@/lib/inventory';
 
 type CheckoutExperienceProps = {
   cardDebitCheckoutEnabled: boolean;
+  squareFallbackEnabled: boolean;
   quickAddProducts: Product[];
 };
 
@@ -92,7 +95,7 @@ type CheckoutQuote = {
   };
   discountCode?: string;
   discounts?: CheckoutAppliedDiscount[];
-  paymentMethod?: 'card' | 'crypto' | 'interac';
+  paymentMethod?: 'card' | 'crypto' | 'interac' | 'square';
   services: CheckoutShippingService[];
   selectedServiceId: string;
 };
@@ -108,6 +111,25 @@ type AppliedDiscount = {
   currencyCode: string;
   rate?: number;
 };
+
+function getCartItemFulfillmentEstimate(item: CartItem) {
+  const fallbackInventory = getInventoryState(item.merchandise.product);
+  const baseEstimate = item.fulfillmentEstimate || {
+    label: fallbackInventory.shippingLeadTimeLabel,
+    availableToShipNow: fallbackInventory.availableQuantity || 0,
+    isHighDemand: fallbackInventory.isHighDemand,
+  };
+
+  if (baseEstimate.isHighDemand || baseEstimate.availableToShipNow >= item.quantity) {
+    return baseEstimate;
+  }
+
+  return {
+    ...baseEstimate,
+    label: HIGH_DEMAND_SHIPPING_LABEL,
+    isHighDemand: true,
+  };
+}
 
 function getQuoteCouponDiscountAmount(quote: CheckoutQuote) {
   const couponDiscounts = (quote.discounts || []).filter(
@@ -169,7 +191,7 @@ function isInvalidDiscountMessage(message: string) {
 
 type CheckoutDraft = {
   shippingAddress: CheckoutShippingAddress;
-  paymentMethod: 'crypto' | 'card' | 'interac';
+  paymentMethod: 'crypto' | 'card' | 'interac' | 'square';
   paymentCurrency: string;
   sourceWalletAddress: string;
   interacSenderEmail: string;
@@ -424,7 +446,9 @@ function parseCheckoutDraft(rawDraft: string | null): CheckoutDraft | null {
           ? 'card'
           : parsed.paymentMethod === 'interac'
             ? 'interac'
-            : 'crypto',
+            : parsed.paymentMethod === 'square'
+              ? 'square'
+              : 'crypto',
       paymentCurrency:
         typeof parsed.paymentCurrency === 'string' && QUICK_PAYMENT_CURRENCIES.includes(parsed.paymentCurrency)
           ? parsed.paymentCurrency
@@ -613,10 +637,15 @@ function isBankfulOrder(payment: CheckoutOrderPublic['payment']): payment is Ban
   return payment.provider === 'bankful';
 }
 
+function isSquareOrder(payment: CheckoutOrderPublic['payment']): payment is SquarePublicPaymentData {
+  return payment.provider === 'square';
+}
+
 function getPollingId(payment: CheckoutOrderPublic['payment']): string | undefined {
   if (isShieldClimbOrder(payment)) return SHIELDCLIMB_PUBLIC_POLLING_ID;
   if (isNowPaymentsOrder(payment)) return payment.paymentId;
   if (isBankfulOrder(payment)) return payment.transactionRecordId || payment.attemptId;
+  if (isSquareOrder(payment)) return payment.paymentId || payment.squareOrderId || payment.paymentLinkId;
   if (isInteracOrder(payment)) return payment.messageCode || 'interac';
   return undefined;
 }
@@ -855,6 +884,9 @@ function StaticOrderLineCard({
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold">{line.productTitle}</p>
               <p className="mt-1 text-xs text-foreground/55">{line.variantTitle}</p>
+              {line.fulfillmentEstimate?.label ? (
+                <p className="mt-1 text-xs font-medium text-[#0B2E2F]/60">{line.fulfillmentEstimate.label}</p>
+              ) : null}
             </div>
             <p className="text-sm font-semibold">{formatPrice(line.lineTotal.amount, currencyCode)}</p>
           </div>
@@ -916,6 +948,7 @@ function CheckoutQuickAddCard({ product }: { product: Product }) {
   const displayPrice = getDisplayPrice(product, selectedVariant);
   const compareAtPrice = getDisplayCompareAtPrice(product, selectedVariant, displayPrice);
   const discountPercentage = getDiscountPercentage(compareAtPrice, displayPrice);
+  const inventory = getInventoryState(product, selectedVariant);
 
   return (
     <article className="rounded-[22px] border border-border/70 bg-background p-2.5">
@@ -941,6 +974,7 @@ function CheckoutQuickAddCard({ product }: { product: Product }) {
                   ? selectedVariant.selectedOptions.map(option => option.value).join(' / ')
                   : 'Ready to add'}
               </p>
+              <p className="mt-1 text-xs font-medium text-[#0B2E2F]/60">{inventory.message}</p>
             </div>
             <p className="flex items-baseline gap-1.5 text-sm font-semibold">
               <span>{formatPrice(displayPrice.amount, displayPrice.currencyCode)}</span>
@@ -1064,6 +1098,7 @@ function DevPaymentSimulator({
 
 export function CheckoutExperience({
   cardDebitCheckoutEnabled,
+  squareFallbackEnabled,
   quickAddProducts,
 }: CheckoutExperienceProps) {
   const { cart } = useCart();
@@ -1072,9 +1107,9 @@ export function CheckoutExperience({
   const searchParams = useSearchParams();
   const { data: authSession } = useAuthSession();
   const initialDiscountCode = (searchParams.get('discount') || '').toUpperCase();
-
   const [shippingAddress, setShippingAddress] = useState<CheckoutShippingAddress>(DEFAULT_SHIPPING_ADDRESS);
-  const [paymentMethod, setPaymentMethod] = useState<'crypto' | 'card' | 'interac'>('crypto');
+  const [paymentMethod, setPaymentMethod] = useState<'crypto' | 'card' | 'interac' | 'square'>('crypto');
+  const [cardPaymentFailed, setCardPaymentFailed] = useState(false);
   const [paymentCurrency, setPaymentCurrency] = useState(QUICK_PAYMENT_CURRENCIES[0]);
   const [sourceWalletAddress, setSourceWalletAddress] = useState('');
   const [interacSenderEmail, setInteracSenderEmail] = useState('');
@@ -1360,6 +1395,8 @@ export function CheckoutExperience({
     : getCardCheckoutMinimumMessage();
   const isCardCheckoutUnavailable =
     !cardDebitCheckoutEnabled || isCardCheckoutDisabled;
+  const squareFallbackAvailable =
+    squareFallbackEnabled && (isCardCheckoutUnavailable || cardPaymentFailed);
   const cardCheckoutUnavailableMessage = !cardDebitCheckoutEnabled
     ? getCardDebitCheckoutUnavailableMessage()
     : cardCheckoutMinimumMessage;
@@ -1401,6 +1438,7 @@ export function CheckoutExperience({
             amount: lineTotalAmount.toFixed(2),
             currencyCode: cart.cost.totalAmount.currencyCode,
           },
+          fulfillmentEstimate: getCartItemFulfillmentEstimate(item),
         };
       }),
     };
@@ -1551,8 +1589,12 @@ export function CheckoutExperience({
         setShippingAddress(checkoutDraft.shippingAddress);
         setPaymentMethod(
           checkoutDraft.paymentMethod === 'card' && !cardDebitCheckoutEnabled
-            ? 'crypto'
-            : checkoutDraft.paymentMethod,
+            ? squareFallbackEnabled
+              ? 'square'
+              : 'crypto'
+            : checkoutDraft.paymentMethod === 'square' && !squareFallbackEnabled
+              ? 'crypto'
+              : checkoutDraft.paymentMethod,
         );
         setPaymentCurrency(checkoutDraft.paymentCurrency);
         setSourceWalletAddress(checkoutDraft.sourceWalletAddress);
@@ -1585,7 +1627,7 @@ export function CheckoutExperience({
     } finally {
       setIsDraftHydrated(true);
     }
-  }, [cardDebitCheckoutEnabled, initialDiscountCode]);
+  }, [cardDebitCheckoutEnabled, initialDiscountCode, squareFallbackEnabled]);
 
   useEffect(() => {
     if (!isDraftHydrated || activeOrder || cart === undefined) return;
@@ -1873,6 +1915,9 @@ export function CheckoutExperience({
             setInteracSecurityQuestion(data.order.payment.securityQuestion || '');
             setInteracSecurityAnswer(data.order.payment.securityAnswer || '');
             setSourceWalletAddress('');
+          } else if (isSquareOrder(data.order.payment)) {
+            setPaymentMethod('square');
+            setSourceWalletAddress('');
           } else {
             setPaymentMethod('card');
             setSourceWalletAddress('');
@@ -2035,6 +2080,9 @@ export function CheckoutExperience({
           setInteracSecurityQuestion(data.order.payment.securityQuestion || '');
           setInteracSecurityAnswer(data.order.payment.securityAnswer || '');
           setSourceWalletAddress('');
+        } else if (isSquareOrder(data.order.payment)) {
+          setPaymentMethod('square');
+          setSourceWalletAddress('');
         } else {
           setPaymentMethod('card');
           setSourceWalletAddress('');
@@ -2143,8 +2191,8 @@ export function CheckoutExperience({
       return;
     }
 
-    setPaymentMethod('crypto');
-  }, [activeOrder, cardDebitCheckoutEnabled, isCardCheckoutDisabled, paymentMethod]);
+    setPaymentMethod(squareFallbackAvailable ? 'square' : 'crypto');
+  }, [activeOrder, cardDebitCheckoutEnabled, isCardCheckoutDisabled, paymentMethod, squareFallbackAvailable]);
 
   const pollingId = checkoutSession?.order.payment ? getPollingId(checkoutSession.order.payment) : undefined;
   const autoPollingId =
@@ -2242,9 +2290,9 @@ export function CheckoutExperience({
     };
   }, [shippingAddress]);
 
-  const selectPaymentMethod = useCallback((nextPaymentMethod: 'card' | 'crypto' | 'interac') => {
-    if (nextPaymentMethod === 'card' && !cardDebitCheckoutEnabled) {
-      setPaymentMethod('crypto');
+  const selectPaymentMethod = useCallback((nextPaymentMethod: 'card' | 'crypto' | 'interac' | 'square') => {
+    if (nextPaymentMethod === 'card' && (!cardDebitCheckoutEnabled || isCardCheckoutDisabled)) {
+      setPaymentMethod(squareFallbackEnabled ? 'square' : 'crypto');
       return;
     }
 
@@ -2252,8 +2300,12 @@ export function CheckoutExperience({
       fillInteracSenderDetails();
     }
 
+    if (nextPaymentMethod !== 'square') {
+      setCardPaymentFailed(false);
+    }
+
     setPaymentMethod(nextPaymentMethod);
-  }, [cardDebitCheckoutEnabled, fillInteracSenderDetails]);
+  }, [cardDebitCheckoutEnabled, fillInteracSenderDetails, isCardCheckoutDisabled, squareFallbackEnabled]);
 
   const handleShippingChange = (name: keyof CheckoutShippingAddress, value: string) => {
     setShippingAddress(current => ({ ...current, [name]: value }));
@@ -2770,6 +2822,11 @@ export function CheckoutExperience({
       return;
     }
 
+    if (paymentMethod === 'square' && !squareFallbackAvailable) {
+      setError('Hosted card checkout is not available right now.');
+      return;
+    }
+
     if (paymentMethod === 'interac' && (!effectiveInteracSenderEmail || !effectiveInteracSenderName)) {
       setError('Enter the email and name you will use for the Interac e-Transfer.');
       return;
@@ -2882,6 +2939,9 @@ export function CheckoutExperience({
         setInteracSecurityQuestion(data.order.payment.securityQuestion || '');
         setInteracSecurityAnswer(data.order.payment.securityAnswer || '');
         setSourceWalletAddress('');
+      } else if (isSquareOrder(data.order.payment)) {
+        setPaymentMethod('square');
+        setSourceWalletAddress('');
       } else {
         setSourceWalletAddress('');
       }
@@ -2930,6 +2990,12 @@ export function CheckoutExperience({
         shieldClimbPaymentWindow.current.close();
       }
       shieldClimbPaymentWindow.current = null;
+      if (paymentMethod === 'card') {
+        setCardPaymentFailed(true);
+        if (squareFallbackEnabled) {
+          setPaymentMethod('square');
+        }
+      }
       setError(submitError instanceof Error ? submitError.message : 'Unable to create payment.');
     } finally {
       paymentSubmitInFlight.current = false;
@@ -2943,6 +3009,7 @@ export function CheckoutExperience({
     createCheckoutApiSession,
     refreshCheckoutApiSession,
     isCardCheckoutDisabled,
+    squareFallbackAvailable,
     interacSenderEmail,
     interacSenderName,
     effectiveInteracSenderEmail,
@@ -3192,7 +3259,7 @@ export function CheckoutExperience({
   };
 
   const releaseActiveOrder = useCallback(
-    async (nextPaymentMethod: 'card' | 'crypto' | 'interac') => {
+    async (nextPaymentMethod: 'card' | 'crypto' | 'interac' | 'square') => {
       if (!checkoutSession || !activeOrder) return;
 
       setIsReleasingOrder(true);
@@ -3255,14 +3322,18 @@ export function CheckoutExperience({
   const nowPayment = activeOrder?.payment && isNowPaymentsOrder(activeOrder.payment) ? activeOrder.payment : null;
   const shieldClimbPayment = activeOrder?.payment && isShieldClimbOrder(activeOrder.payment) ? activeOrder.payment : null;
   const bankfulPayment = activeOrder?.payment && isBankfulOrder(activeOrder.payment) ? activeOrder.payment : null;
+  const squarePayment = activeOrder?.payment && isSquareOrder(activeOrder.payment) ? activeOrder.payment : null;
   const interacPayment = activeOrder?.payment && isInteracOrder(activeOrder.payment) ? activeOrder.payment : null;
-  const activeOrderUsesCardPayment = Boolean(shieldClimbPayment || bankfulPayment);
-  const alternatePaymentMethod: 'card' | 'crypto' | 'interac' = activeOrderUsesCardPayment
+  const hostedCardPaymentUrl = shieldClimbPayment?.redirectUrl || squarePayment?.checkoutUrl || null;
+  const activeOrderUsesCardPayment = Boolean(shieldClimbPayment || bankfulPayment || squarePayment);
+  const alternatePaymentMethod: 'card' | 'crypto' | 'interac' | 'square' = activeOrderUsesCardPayment
     ? 'crypto'
     : interacPayment
       ? 'crypto'
-      : cardDebitCheckoutEnabled
+      : cardDebitCheckoutEnabled && !isCardCheckoutDisabled
         ? 'card'
+        : squareFallbackAvailable
+          ? 'square'
         : 'interac';
   const paymentExpiresAt = nowPayment ? formatDateTime(nowPayment.validUntil || nowPayment.expirationEstimateDate) : null;
   const isPartiallyPaid = paymentStatus === 'partially_paid';
@@ -3402,6 +3473,7 @@ export function CheckoutExperience({
     !isCreatingPayment &&
     ageVerified &&
     !(paymentMethod === 'card' && (!cardDebitCheckoutEnabled || isCardCheckoutDisabled)) &&
+    !(paymentMethod === 'square' && !squareFallbackAvailable) &&
     !(
       paymentMethod === 'interac' &&
       (!effectiveInteracSenderEmail || !effectiveInteracSenderName)
@@ -3750,15 +3822,15 @@ export function CheckoutExperience({
                       <button
                         type="button"
                         onClick={() => {
-                          if (isCardCheckoutUnavailable) return;
-                          selectPaymentMethod('card');
+                          if (isCardCheckoutUnavailable && !squareFallbackAvailable) return;
+                          selectPaymentMethod(squareFallbackAvailable ? 'square' : 'card');
                         }}
-                        disabled={isCardCheckoutUnavailable}
+                        disabled={isCardCheckoutUnavailable && !squareFallbackAvailable}
                         className={cn(
                           'flex items-center gap-2.5 rounded-xl border px-3 py-3 text-left transition-all',
-                          isCardCheckoutUnavailable
+                          isCardCheckoutUnavailable && !squareFallbackAvailable
                             ? 'cursor-not-allowed border-border/70 bg-background/60 opacity-55'
-                            : paymentMethod === 'card'
+                            : paymentMethod === 'card' || paymentMethod === 'square'
                             ? 'border-[#0B2E2F] bg-[#0B2E2F]/5 ring-1 ring-[#0B2E2F]'
                             : 'border-border bg-background hover:border-[#0B2E2F]/30'
                         )}
@@ -3771,20 +3843,26 @@ export function CheckoutExperience({
                             <p className="text-sm font-semibold leading-5">Debit / Credit Card</p>
                             {isCardCheckoutUnavailable ? (
                               <span className="rounded-full border border-foreground/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-foreground/45">
-                                {cardDebitCheckoutEnabled ? `Min $${CARD_CHECKOUT_MINIMUM_USD} USD` : 'Currently disabled'}
+                                {squareFallbackAvailable
+                                  ? 'Hosted checkout'
+                                  : cardDebitCheckoutEnabled
+                                    ? `Min $${CARD_CHECKOUT_MINIMUM_USD} USD`
+                                    : 'Currently disabled'}
                               </span>
                             ) : null}
                           </div>
-                          {isCardCheckoutUnavailable ? (
+                          {isCardCheckoutUnavailable && !squareFallbackAvailable ? (
                             <p className="mt-1 text-xs text-foreground/45">
                               {cardCheckoutUnavailableMessage}
                             </p>
+                          ) : squareFallbackAvailable ? (
+                            <p className="mt-1 text-xs text-foreground/55">Secure Square-hosted card checkout</p>
                           ) : (
                             <PaymentBrandIcons className="mt-1" />
                           )}
                         </div>
-                        <div className={cn('flex size-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors', paymentMethod === 'card' ? 'border-[#0B2E2F]' : 'border-foreground/20')}>
-                          {paymentMethod === 'card' && <div className="size-2.5 rounded-full bg-[#0B2E2F]" />}
+                        <div className={cn('flex size-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors', paymentMethod === 'card' || paymentMethod === 'square' ? 'border-[#0B2E2F]' : 'border-foreground/20')}>
+                          {(paymentMethod === 'card' || paymentMethod === 'square') && <div className="size-2.5 rounded-full bg-[#0B2E2F]" />}
                         </div>
                       </button>
 
@@ -3959,6 +4037,20 @@ export function CheckoutExperience({
                             </label>
                           </div>
                         ) : null}
+                      </div>
+                    ) : paymentMethod === 'square' ? (
+                      <div className="mt-3 rounded-2xl border border-[#0B2E2F]/15 bg-[#0B2E2F]/5 px-4 py-4">
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F] text-[#F4F1EA]">
+                            <CreditCard className="size-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold">Secure hosted card checkout</p>
+                            <p className="mt-1 text-xs leading-5 text-foreground/55">
+                              Your order will be charged in CAD through Square. After placing the order, the payment page opens in a new tab and this page waits for confirmation.
+                            </p>
+                          </div>
+                        </div>
                       </div>
                     ) : paymentMethod === 'card' && isCardCheckoutUnavailable ? (
                       <div className="mt-3 rounded-2xl border border-border/70 bg-background/60 px-4 py-4">
@@ -4179,14 +4271,16 @@ export function CheckoutExperience({
                       ) : (
                         <>
                           <Lock className="size-4" />
-                          {paymentMethod === 'card' ? 'Place Order & Pay' : 'Place Order — Secure'}
+                          {paymentMethod === 'card' || paymentMethod === 'square' ? 'Place Order & Pay' : 'Place Order — Secure'}
                         </>
                       )}
                     </Button>
-                    {paymentMethod === 'card' ? (
+                    {paymentMethod === 'card' || paymentMethod === 'square' ? (
                       <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-foreground/45">
                         <Lock className="size-3" />
-                        Your information is protected with 256-bit SSL encryption
+                        {paymentMethod === 'square'
+                          ? 'Square opens in a new tab; this page tracks confirmation automatically.'
+                          : 'Your information is protected with 256-bit SSL encryption'}
                       </p>
                     ) : paymentMethod === 'interac' ? (
                       <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-foreground/45">
@@ -4238,6 +4332,9 @@ export function CheckoutExperience({
                                 <p className="text-sm font-medium truncate">{line.productTitle}</p>
                                 {line.variantTitle ? (
                                   <p className="text-xs text-foreground/50">{line.variantTitle}</p>
+                                ) : null}
+                                {line.fulfillmentEstimate?.label ? (
+                                  <p className="text-xs text-foreground/50">{line.fulfillmentEstimate.label}</p>
                                 ) : null}
                                 <p className="text-xs text-foreground/50">Qty: {line.quantity}</p>
                               </div>
@@ -4309,7 +4406,7 @@ export function CheckoutExperience({
                           <div className="mt-3 grid grid-cols-2 gap-2">
                             <div className="rounded-lg bg-[#0B2E2F]/5 px-2.5 py-1.5 text-xs">
                               <p className="text-foreground/45">Method</p>
-                              <p className="font-semibold">{shieldClimbPayment ? 'Card' : interacPayment ? 'Interac' : 'Crypto'}</p>
+                              <p className="font-semibold">{activeOrderUsesCardPayment ? 'Card' : interacPayment ? 'Interac' : 'Crypto'}</p>
                             </div>
                             <div className="rounded-lg bg-[#0B2E2F]/5 px-2.5 py-1.5 text-xs">
                               <p className="text-foreground/45">Status</p>
@@ -4378,7 +4475,7 @@ export function CheckoutExperience({
                             type="button"
                             variant="ghost"
                             size="sm"
-                            onClick={() => releaseActiveOrder(shieldClimbPayment ? 'crypto' : 'card')}
+                            onClick={() => releaseActiveOrder(activeOrderUsesCardPayment ? 'crypto' : 'card')}
                             disabled={isReleasingOrder || !canSwitchToAlternatePayment}
                           >
                             {isReleasingOrder && releaseAction === 'switch' ? (
@@ -4402,8 +4499,8 @@ export function CheckoutExperience({
 
                     <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_200px]">
                       <div className="space-y-4 rounded-2xl border border-border/70 bg-background/60 p-4 md:p-5">
-                        {/* ── ShieldClimb (card) payment view ── */}
-                        {shieldClimbPayment ? (
+                        {/* ── Hosted card payment view ── */}
+                        {hostedCardPaymentUrl ? (
                           <>
                             {/* ── Partial payment banner ── */}
                             {isPartiallyPaid && partialPaymentPaidDisplay ? (
@@ -4492,7 +4589,7 @@ export function CheckoutExperience({
                                 </div>
                               </div>
                               <a
-                                href={shieldClimbPayment.redirectUrl}
+                                href={hostedCardPaymentUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl px-5 py-3 text-sm font-semibold transition-colors"
@@ -4768,6 +4865,9 @@ export function CheckoutExperience({
                                   )}
                                   <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium truncate">{line.productTitle}</p>
+                                    {line.fulfillmentEstimate?.label ? (
+                                      <p className="text-xs text-foreground/50">{line.fulfillmentEstimate.label}</p>
+                                    ) : null}
                                     <p className="text-xs text-foreground/50">Qty: {line.quantity}</p>
                                   </div>
                                   <p className="text-sm font-semibold">{formatPrice(line.lineTotal.amount, line.lineTotal.currencyCode)}</p>

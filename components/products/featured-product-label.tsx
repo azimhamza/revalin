@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { VariantOptionSelector, useSelectedVariant } from './variant-selector';
 import { PlusIcon } from 'lucide-react';
 import { formatPrice, getDiscountPercentage, getDisplayCompareAtPrice, getDisplayPrice } from '@/lib/swell/utils';
+import { getInventoryState } from '@/lib/inventory';
 
 export function FeaturedProductLabel({
   product,
@@ -23,6 +24,8 @@ export function FeaturedProductLabel({
   const displayPrice = getDisplayPrice(product, selectedVariant);
   const compareAtPrice = getDisplayCompareAtPrice(product, selectedVariant, displayPrice);
   const discountPercentage = getDiscountPercentage(compareAtPrice, displayPrice);
+  const inventory = getInventoryState(product, selectedVariant);
+  const inventoryMessage = inventory.isHighDemand ? null : inventory.message;
   const hasSelectableOptions = product.options.length > 0 && !(product.options.length === 1 && product.options[0]?.values.length === 1);
 
   if (principal) {
@@ -67,7 +70,7 @@ export function FeaturedProductLabel({
                 option={option}
                 product={product}
                 variant="condensed"
-                backorderTooltipAlign="right"
+                highDemandTooltipAlign="right"
                 hideLabel
               />
             ))}
@@ -75,19 +78,26 @@ export function FeaturedProductLabel({
         )}
 
         {/* Price — left column, same row as CTA on desktop */}
-        <div className="col-start-1 row-start-3 mt-6 flex items-center gap-3 md:mt-4 md:self-end">
-          <span className="text-[2rem] font-bold leading-none tracking-tight text-[#0B2E2F] md:text-[1.75rem]">
-            {formatPrice(displayPrice.amount, displayPrice.currencyCode)}
-          </span>
-          {compareAtPrice && (
-            <span className="text-base line-through opacity-30">
-              {formatPrice(compareAtPrice.amount, compareAtPrice.currencyCode)}
+        <div className="col-start-1 row-start-3 mt-6 flex flex-col items-start gap-1.5 md:mt-4 md:self-end">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-[2rem] font-bold leading-none tracking-tight text-[#0B2E2F] md:text-[1.75rem]">
+              {formatPrice(displayPrice.amount, displayPrice.currencyCode)}
             </span>
-          )}
-          {discountPercentage ? (
-            <span className="rounded-full bg-[#2D6A4F]/12 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#2D6A4F]">
-              {discountPercentage}% off
-            </span>
+            {compareAtPrice && (
+              <span className="text-base line-through opacity-30">
+                {formatPrice(compareAtPrice.amount, compareAtPrice.currencyCode)}
+              </span>
+            )}
+            {discountPercentage ? (
+              <span className="rounded-full bg-[#2D6A4F]/12 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#2D6A4F]">
+                {discountPercentage}% off
+              </span>
+            ) : null}
+          </div>
+          {inventoryMessage ? (
+            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#0B2E2F]/55">
+              {inventoryMessage}
+            </p>
           ) : null}
         </div>
 
@@ -141,6 +151,11 @@ export function FeaturedProductLabel({
             </span>
           ) : null}
         </div>
+        {inventoryMessage ? (
+          <p className="mt-1 truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-[#0B2E2F]/45">
+            {inventoryMessage}
+          </p>
+        ) : null}
       </div>
       <Suspense fallback={<AddToCartButton product={product} iconOnly variant="default" size="icon-lg" />}>
         <AddToCart product={product} iconOnly variant="default" size="icon-lg" />

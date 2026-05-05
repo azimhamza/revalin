@@ -8,15 +8,9 @@ import { ColorSwatch } from '@/components/ui/color-picker';
 import { Button } from '@/components/ui/button';
 import { cn, getColorHex } from '@/lib/utils';
 import { getSwellProductId } from '@/lib/swell/utils';
-import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
+import { getInventoryState } from '@/lib/inventory';
 
-type Combination = {
-  id: string;
-  availableForSale: boolean;
-  [key: string]: string | boolean;
-};
-
-type BackorderTooltipAlign = 'left' | 'right';
+type HighDemandTooltipAlign = 'left' | 'right';
 
 const variantOptionSelectorVariants = cva('flex items-start gap-4', {
   variants: {
@@ -35,28 +29,31 @@ function VariantValueButton({
   name,
   optionName,
   isActive,
-  isBackordered,
+  isHighDemand,
+  showHighDemandTooltip,
   variant,
-  backorderTooltipAlign,
+  highDemandTooltipAlign,
   onSelect,
 }: {
   name: string;
   optionName: string;
   isActive: boolean;
-  isBackordered: boolean;
+  isHighDemand: boolean;
+  showHighDemandTooltip: boolean;
   variant: 'card' | 'condensed' | 'shop' | null | undefined;
-  backorderTooltipAlign?: BackorderTooltipAlign;
+  highDemandTooltipAlign?: HighDemandTooltipAlign;
   onSelect: () => void;
 }) {
   const [showTooltip, setShowTooltip] = useState(false);
+  const canShowHighDemandTooltip = showHighDemandTooltip && isHighDemand;
   const isCondensed = variant === 'condensed';
   const isLongCondensedLabel = isCondensed && name.length >= 5;
-  const tooltipAlign = backorderTooltipAlign ?? (variant === 'condensed' ? 'left' : 'right');
+  const tooltipAlign = highDemandTooltipAlign ?? (variant === 'condensed' ? 'left' : 'right');
 
   return (
     <span
       className="relative"
-      onMouseEnter={() => isBackordered && setShowTooltip(true)}
+      onMouseEnter={() => canShowHighDemandTooltip && setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
     >
       <Button
@@ -69,7 +66,7 @@ function VariantValueButton({
             ? `h-11 rounded-full border px-4 text-sm font-medium shadow-none ${
                 isActive
                   ? 'border-[#2d6a4f] bg-[#2d6a4f] text-[#f4f1ea] hover:bg-[#2d6a4f]'
-                  : isBackordered
+                  : isHighDemand
                     ? 'border-[#8B7340]/30 bg-white text-[#0B2E2F]/50 hover:bg-[#ece9e2]'
                     : 'border-[#0B2E2F]/10 bg-white text-[#0B2E2F] hover:bg-[#ece9e2]'
               }`
@@ -77,16 +74,16 @@ function VariantValueButton({
               ? 'h-7 min-w-0 rounded-sm px-2 text-sm leading-none shadow-none sm:px-2.5 sm:text-[15px]'
               : 'min-w-[40px]',
           isLongCondensedLabel && 'px-1.5 text-[13px] tracking-[-0.02em] sm:px-2 sm:text-sm',
-          isBackordered && !isActive && 'opacity-60'
+          isHighDemand && !isActive && 'opacity-60'
         )}
       >
         {name}
       </Button>
-      {showTooltip && (
+      {showTooltip && canShowHighDemandTooltip && (
         <span
           className={`absolute bottom-full z-[100] mb-2 whitespace-nowrap rounded bg-[#0B2E2F] px-2.5 py-1.5 text-[11px] font-medium text-[#F4F1EA] shadow-lg pointer-events-none ${tooltipAlign === 'left' ? 'left-0' : 'right-0'}`}
         >
-          Next shipment arriving soon
+          Ships in about 1 week due to high demand
           <span
             className={`absolute top-full border-4 border-transparent border-t-[#0B2E2F] ${tooltipAlign === 'left' ? 'left-4' : 'right-4'}`}
           />
@@ -102,7 +99,8 @@ interface VariantOptionSelectorComponentProps extends VariantProps<typeof varian
   selectedValue: string;
   selectedOptions: Record<string, string>;
   isTargetingProduct: boolean;
-  backorderTooltipAlign?: BackorderTooltipAlign;
+  highDemandTooltipAlign?: HighDemandTooltipAlign;
+  showHighDemandTooltip?: boolean;
   hideLabel?: boolean;
   onSelect?: (valueName: string) => void;
 }
@@ -114,27 +112,13 @@ export function VariantOptionSelectorComponent({
   selectedValue,
   selectedOptions,
   isTargetingProduct,
-  backorderTooltipAlign,
+  highDemandTooltipAlign,
+  showHighDemandTooltip = false,
   hideLabel = false,
   onSelect,
 }: VariantOptionSelectorComponentProps) {
   const { variants, options } = product;
   const optionNameLowerCase = option.name.toLowerCase();
-
-  const combinations: Combination[] = Array.isArray(variants)
-    ? variants.map(variant => ({
-        id: variant.id,
-        availableForSale: variant.availableForSale,
-        ...variant.selectedOptions.reduce(
-          (accumulator, option) => ({
-            ...accumulator,
-            [option.name.toLowerCase()]: option.value,
-          }),
-          {}
-        ),
-      }))
-    : [];
-
   const isColorOption = optionNameLowerCase === 'color';
 
   return (
@@ -151,9 +135,6 @@ export function VariantOptionSelectorComponent({
           const filtered = Object.entries(optionParams).filter(([key, value]) =>
             options.find(option => option.name.toLowerCase() === key && option.values.some(val => val.name === value))
           );
-          const isAvailableForSale = combinations.find(combination =>
-            filtered.every(([key, value]) => combination[key] === value && combination.availableForSale)
-          );
           const matchingVariant = variants.find(variant =>
             filtered.every(([key, value]) =>
               variant.selectedOptions.some(
@@ -161,9 +142,6 @@ export function VariantOptionSelectorComponent({
               )
             )
           );
-          const hasAvailableSubstitution =
-            !isAvailableForSale && resolveDosageSubstitution(product, matchingVariant).isSubstitution;
-
           const isActive = isTargetingProduct && selectedValue === value.name;
 
           if (isColorOption) {
@@ -196,7 +174,8 @@ export function VariantOptionSelectorComponent({
             );
           }
 
-          const isBackordered = !isAvailableForSale && !hasAvailableSubstitution;
+          const inventory = getInventoryState(product, matchingVariant);
+          const isHighDemand = inventory.isHighDemand;
 
           return (
             <VariantValueButton
@@ -204,9 +183,10 @@ export function VariantOptionSelectorComponent({
               name={value.name}
               optionName={option.name}
               isActive={isActive}
-              isBackordered={isBackordered}
+              isHighDemand={isHighDemand}
+              showHighDemandTooltip={showHighDemandTooltip}
               variant={variant}
-              backorderTooltipAlign={backorderTooltipAlign}
+              highDemandTooltipAlign={highDemandTooltipAlign}
               onSelect={() => onSelect?.(value.name)}
             />
           );
@@ -219,7 +199,7 @@ export function VariantOptionSelectorComponent({
 interface VariantOptionSelectorProps extends VariantProps<typeof variantOptionSelectorVariants> {
   option: ProductOption;
   product: Product;
-  backorderTooltipAlign?: BackorderTooltipAlign;
+  highDemandTooltipAlign?: HighDemandTooltipAlign;
   hideLabel?: boolean;
 }
 
@@ -227,7 +207,7 @@ export function VariantOptionSelector({
   option,
   variant,
   product,
-  backorderTooltipAlign,
+  highDemandTooltipAlign,
   hideLabel = false,
 }: VariantOptionSelectorProps) {
   const pathname = useParams<{ handle?: string }>();
@@ -247,28 +227,9 @@ export function VariantOptionSelector({
   const handleSelect = (valueName: string) => {
     startTransition(() => {
       const nextParams = new URLSearchParams(searchParams.toString());
-      const selectedOptionParams = {
-        ...selectedOptions,
-        [optionNameLowerCase]: valueName,
-      };
-      const matchingVariant = product.variants.find(variant =>
-        variant.selectedOptions.every(
-          option => selectedOptionParams[option.name.toLowerCase()] === option.value
-        )
-      );
-      const substitution = resolveDosageSubstitution(product, matchingVariant);
-
-      if (substitution.isSubstitution && substitution.cartVariant) {
-        substitution.cartVariant.selectedOptions.forEach(option => {
-          nextParams.set(option.name.toLowerCase(), option.value);
-        });
-        nextParams.set('qty', String(substitution.quantityMultiplier));
-        nextParams.set('substitute_size', valueName);
-      } else {
-        nextParams.set(optionNameLowerCase, valueName);
-        nextParams.delete('qty');
-        nextParams.delete('substitute_size');
-      }
+      nextParams.set(optionNameLowerCase, valueName);
+      nextParams.delete('qty');
+      nextParams.delete('substitute_size');
 
       if (!isProductPage) {
         nextParams.set('pid', getSwellProductId(product.id));
@@ -289,7 +250,8 @@ export function VariantOptionSelector({
       selectedValue={selectedValue}
       selectedOptions={selectedOptions}
       isTargetingProduct={isTargetingProduct}
-      backorderTooltipAlign={backorderTooltipAlign}
+      highDemandTooltipAlign={highDemandTooltipAlign}
+      showHighDemandTooltip={isProductPage}
       hideLabel={hideLabel}
       onSelect={handleSelect}
     />

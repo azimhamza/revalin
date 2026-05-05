@@ -10,6 +10,7 @@ import {
   isInteracPayment,
   isShieldClimbPayment,
   isBankfulPayment,
+  isSquarePayment,
 } from '@/lib/checkout/types';
 import { verifyAndFinalizeShieldClimbPayment } from '@/lib/checkout/shieldclimb-payment-verification';
 import { sendPaymentFailedEvent } from '@/lib/email/marketing-events';
@@ -146,6 +147,18 @@ export async function refreshCheckoutPaymentStatus(args: {
 
     if (isInteracPayment(order.payment)) {
       if (args.paymentId !== 'interac' && args.paymentId !== order.payment.messageCode) {
+        throw apiError.notFound('Checkout session not found.');
+      }
+
+      return buildPublicCheckoutOrder(order);
+    }
+
+    if (isSquarePayment(order.payment)) {
+      if (
+        args.paymentId !== order.payment.paymentLinkId &&
+        args.paymentId !== order.payment.squareOrderId &&
+        args.paymentId !== order.payment.paymentId
+      ) {
         throw apiError.notFound('Checkout session not found.');
       }
 

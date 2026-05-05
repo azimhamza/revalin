@@ -2,6 +2,7 @@ import { use } from 'react';
 import { getRelatedProducts } from '@/lib/swell';
 import { Product } from '@/lib/swell/types';
 import { ProductCard } from '@/app/shop/components/product-card';
+import { hydrateProductsWithInternalAvailability } from '@/lib/internal-availability';
 
 export function RelatedProducts({
   product,
@@ -12,7 +13,11 @@ export function RelatedProducts({
   currencyCode?: string;
   className?: string;
 }) {
-  const related = use(getRelatedProducts(product, 4, currencyCode, { live: true }));
+  const related = use(
+    getRelatedProducts(product, 4, currencyCode, { live: true }).then(products =>
+      hydrateProductsWithInternalAvailability(products)
+    )
+  );
 
   if (related.length === 0) return null;
 

@@ -24,7 +24,7 @@ export type CheckoutSessionRecord = {
   shippingAddress: CheckoutShippingAddress | null;
   selectedShippingServiceId: string | null;
   shipmentProtection: boolean;
-  paymentMethod: 'card' | 'crypto' | 'interac' | null;
+  paymentMethod: 'card' | 'crypto' | 'interac' | 'square' | null;
   paymentCurrency: string | null;
   sourceWalletAddress: string | null;
   interacSenderEmail: string | null;
@@ -50,7 +50,7 @@ type UpsertSessionInput = {
   shippingAddress?: CheckoutShippingAddress | null;
   selectedShippingServiceId?: string | null;
   shipmentProtection?: boolean;
-  paymentMethod?: 'card' | 'crypto' | 'interac' | null;
+  paymentMethod?: 'card' | 'crypto' | 'interac' | 'square' | null;
   paymentCurrency?: string | null;
   sourceWalletAddress?: string | null;
   interacSenderEmail?: string | null;

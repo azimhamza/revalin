@@ -11,6 +11,12 @@ export const checkoutMoneySchema = z.object({
   currencyCode: z.string(),
 });
 
+const checkoutFulfillmentEstimateSchema = z.object({
+  label: z.string().trim().min(1),
+  availableToShipNow: z.number().int().min(0),
+  isHighDemand: z.boolean(),
+});
+
 export const checkoutShippingAddressSchema = z.object({
   firstName: z.string().trim().min(1),
   lastName: z.string().trim().min(1),
@@ -46,6 +52,7 @@ export const checkoutCartSnapshotSchema = z.object({
         quantity: z.number().int().positive(),
         unitPrice: checkoutMoneySchema,
         lineTotal: checkoutMoneySchema,
+        fulfillmentEstimate: checkoutFulfillmentEstimateSchema.optional(),
       }),
     )
     .min(1),
@@ -55,7 +62,7 @@ export const checkoutSessionCreateSchema = z.object({
   cartId: z.string().trim().min(1).optional(),
   cartSnapshot: checkoutCartSnapshotSchema.optional(),
   shippingAddress: checkoutShippingAddressSchema.optional(),
-  paymentMethod: z.enum(['card', 'crypto', 'interac']).optional(),
+  paymentMethod: z.enum(['card', 'crypto', 'interac', 'square']).optional(),
   paymentCurrency: z.string().trim().min(2).optional(),
   sourceWalletAddress: z.string().trim().max(255).optional(),
   interacSenderEmail: z.string().trim().email().optional(),

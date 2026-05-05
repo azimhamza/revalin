@@ -105,6 +105,11 @@ export function CartItemCard({ item, onCloseCart }: CartItemProps) {
                 You save {formatPrice(lineSavings.toFixed(2), currencyCode)}
               </p>
             ) : null}
+            {item.fulfillmentEstimate?.label ? (
+              <p className="text-[11px] font-medium leading-tight text-[#0B2E2F]/55">
+                {item.fulfillmentEstimate.label}
+              </p>
+            ) : null}
           </div>
           <div className="flex justify-between items-center mt-auto">
             <div className="flex h-6 flex-row items-center rounded-md border border-neutral-200">

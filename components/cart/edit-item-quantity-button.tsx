@@ -29,11 +29,7 @@ export function EditItemQuantityButton({ item, type }: { item: CartItem; type: '
   const { updateItem, isPending } = useCart();
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const nextQuantity = type === 'plus' ? item.quantity + 1 : item.quantity - 1;
-  const maxQuantity =
-    item.merchandise.availableQuantity === null || item.merchandise.availableQuantity === undefined
-      ? null
-      : Math.max(item.quantity, item.merchandise.availableQuantity);
-  const isDisabled = type === 'plus' ? maxQuantity !== null && item.quantity >= maxQuantity : item.quantity <= 0;
+  const isDisabled = type === 'minus' && item.quantity <= 0;
 
   return (
     <>

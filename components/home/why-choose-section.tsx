@@ -15,8 +15,8 @@ import { SectionMarker } from '@/components/home/section-marker';
 const REASONS = [
   {
     icon: PackageCheck,
-    title: 'Always in Stock',
-    description: 'Top research peptides stocked continuously. No backorders, no wait times.',
+    title: 'Live Availability',
+    description: 'Internal stock controls the shipping estimate shown before checkout.',
   },
   {
     icon: TrendingDown,
@@ -84,7 +84,7 @@ export function WhyChooseSection() {
               viewport={{ once: true, amount: 0.4 }}
               transition={{ duration: 0.8, delay: 0.15, ease: EASE }}
             >
-              Documented quality, transparent pricing, and same-day fulfillment for research professionals.
+              Documented quality, transparent pricing, and clear fulfillment timelines for research professionals.
             </motion.p>
           </div>
 

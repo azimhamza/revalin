@@ -77,6 +77,12 @@ function formatRatePrice(rate: FulfillmentLabelPreview['rates'][number]) {
   }).format(Number(rate.price.amount));
 }
 
+function formatRateProvider(rate: FulfillmentLabelPreview['rates'][number]) {
+  if (rate.source === 'shippo') return 'Shippo';
+  if (rate.source === 'shipengine') return 'ShipEngine';
+  return 'Carrier';
+}
+
 function normalizeManualLabelAddress(form: ManualLabelForm): ManualLabelForm {
   return {
     ...form,
@@ -186,7 +192,7 @@ function ManualLabelModal({
 
       if (!response.ok) {
         throw new Error(
-          body?.error?.message || `Failed to get Shippo rates (${response.status}).`,
+          body?.error?.message || `Failed to get live carrier rates (${response.status}).`,
         );
       }
 
@@ -194,7 +200,7 @@ function ManualLabelModal({
         | FulfillmentLabelPreview
         | undefined;
       if (!nextPreview) {
-        throw new Error('Shippo did not return a label preview.');
+        throw new Error('No label preview was returned.');
       }
 
       setPreview(nextPreview);
@@ -210,7 +216,7 @@ function ManualLabelModal({
       setPreview(null);
       setSelectedShippingServiceId('');
       setPreviewError(
-        error instanceof Error ? error.message : 'Failed to get Shippo rates.',
+        error instanceof Error ? error.message : 'Failed to get live carrier rates.',
       );
     } finally {
       setPreviewLoading(false);
@@ -229,18 +235,17 @@ function ManualLabelModal({
   const canBuy =
     !loading &&
     !previewLoading &&
-    Boolean(preview?.shippoConfig.configured) &&
     Boolean(selectedRate) &&
     isManualLabelAddressReady(form);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!preview) {
-      setPreviewError('Refresh Shippo rates before buying the label.');
+      setPreviewError('Refresh live rates before buying the label.');
       return;
     }
     if (!selectedRate) {
-      setPreviewError('Select a Shippo rate before buying the label.');
+      setPreviewError('Select a carrier rate before buying the label.');
       return;
     }
 
@@ -258,7 +263,7 @@ function ManualLabelModal({
         className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
       >
         <h3 className="text-lg font-semibold text-[#0B2E2F]">
-          Buy Shippo Label
+          Buy Shipping Label
         </h3>
         <p className="mt-2 text-sm text-[#0B2E2F]/60">
           Review the destination, latest rates, and customs declaration for
@@ -315,7 +320,7 @@ function ManualLabelModal({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h4 className="text-sm font-semibold text-[#0B2E2F]">
-                Latest Shippo rates
+                Latest live rates
               </h4>
               <p className="mt-0.5 text-xs text-[#0B2E2F]/50">
                 Refresh after changing the address or customs values.
@@ -343,14 +348,37 @@ function ManualLabelModal({
             </div>
           ) : null}
 
-          {preview && !preview.shippoConfig.configured ? (
+          {preview &&
+          !preview.shippoConfig.configured &&
+          !preview.shipengineConfig.configured ? (
             <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
               <span>
-                Shippo env is incomplete:
+                No label provider is fully configured. Shippo missing:
                 {' '}
                 {preview.shippoConfig.missing.join(', ')}
+                . ShipEngine missing:
+                {' '}
+                {preview.shipengineConfig.missing.join(', ')}
+                .
               </span>
+            </div>
+          ) : null}
+
+          {preview?.rateErrors?.length ? (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              {preview.rateErrors.map((rateError) => (
+                <div key={rateError.provider} className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    {rateError.provider === 'shippo' ? 'Shippo' : 'ShipEngine'}
+                    {' '}
+                    rates unavailable:
+                    {' '}
+                    {rateError.message}
+                  </span>
+                </div>
+              ))}
             </div>
           ) : null}
 
@@ -367,7 +395,7 @@ function ManualLabelModal({
                 >
                   <input
                     type="radio"
-                    name="shippo-label-rate"
+                    name="carrier-label-rate"
                     value={rate.id}
                     checked={selectedShippingServiceId === rate.id}
                     onChange={(event) =>
@@ -376,7 +404,8 @@ function ManualLabelModal({
                     className="sr-only"
                   />
                   <span className="block text-xs font-semibold text-[#0B2E2F]/60">
-                    {rate.carrier || 'Shippo'}
+                    {formatRateProvider(rate)}
+                    {rate.carrier ? ` / ${rate.carrier}` : ''}
                   </span>
                   <span className="mt-1 block text-sm font-semibold text-[#0B2E2F]">
                     {rate.name}
@@ -390,7 +419,7 @@ function ManualLabelModal({
             </div>
           ) : previewLoading ? (
             <p className="mt-3 text-xs text-[#0B2E2F]/50">
-              Fetching live rates from Shippo...
+              Fetching live carrier rates...
             </p>
           ) : (
             <p className="mt-3 text-xs text-[#0B2E2F]/45">
@@ -634,7 +663,7 @@ function ManualLabelModal({
             </div>
           ) : (
             <p className="mt-2 text-xs text-[#0B2E2F]/50">
-              Domestic shipment. Shippo customs data is not required for this label.
+              No editable customs declaration is required for this label.
             </p>
           )}
         </div>
@@ -891,7 +920,7 @@ export function FulfillmentActions({ order, onActionComplete, isDev }: Props) {
           </button>
         ) : null}
 
-        {/* Buy Shippo label */}
+        {/* Buy label */}
         {canManualLabel ? (
           <button
             onClick={() => setShowManualLabelModal(true)}

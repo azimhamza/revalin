@@ -18,6 +18,8 @@ import { DEFAULT_PAGE_SIZE, DEFAULT_SORT_KEY } from './constants';
 import { DEFAULT_STORE_CURRENCY, normalizeCurrencyCode } from './currency';
 import { resolveUnitPrice } from './utils';
 import { TAGS } from '@/lib/constants';
+import { hydrateSwellProductWithInternalAvailability } from '@/lib/internal-availability';
+import { HIGH_DEMAND_SHIPPING_LABEL, READY_TO_SHIP_LABEL } from '@/lib/inventory';
 
 // Inner-fetch tags. Mirrors the tags used by `'use cache'` wrappers in
 // `lib/swell/index.ts` so that `revalidateTag(...)` busts both layers in one
@@ -106,6 +108,7 @@ type CartLineState = {
   variantId: string;
   quantity: number;
   bulkPriceTiers?: import('./types').BulkPriceTier[];
+  fulfillmentEstimate?: import('./types').ProductFulfillmentEstimate;
   merchandise: {
     id: string;
     title: string;
@@ -122,6 +125,12 @@ type CartLineState = {
       availableForSale?: boolean;
       stockStatus?: string;
       stockLevel?: number;
+      internalOnHand?: number | null;
+      internalAllocated?: number;
+      availableToShipNow?: number;
+      isHighDemand?: boolean;
+      shippingLeadTimeLabel?: string;
+      internalInventoryMatched?: boolean;
       compareAtPrice?: {
         amount: string;
         currencyCode: string;
@@ -1296,7 +1305,9 @@ async function getProductByVariantId(
         { currencyCode: normalizedCurrency, cache: options.cache }
       );
 
-      return mapSwellProduct(product, normalizedCurrency);
+      return hydrateSwellProductWithInternalAvailability(
+        mapSwellProduct(product, normalizedCurrency)
+      );
     } catch (error) {
       console.error('Unable to resolve Swell product for cart variant:', error);
       return null;
@@ -1339,6 +1350,7 @@ function toSwellCart(state: CartState, fallbackCurrencyCode?: string): AppCart {
           id: line.id,
           quantity: line.quantity,
           bulkPriceTiers: line.bulkPriceTiers,
+          fulfillmentEstimate: line.fulfillmentEstimate,
           merchandise: line.merchandise,
         },
       })),
@@ -1369,15 +1381,39 @@ function resolveCartAvailableQuantity(
   product: AppProduct,
   variant?: AppProduct['variants']['edges'][number]['node'] | null
 ): number | null {
-  if (typeof variant?.stockLevel === 'number') {
-    return variant.stockLevel;
-  }
-
-  if (!variant || product.variants.edges.length <= 1) {
-    return typeof product.stockLevel === 'number' ? product.stockLevel : null;
-  }
-
+  void product;
+  void variant;
   return null;
+}
+
+function getSwellProductFulfillmentEstimate(
+  product: AppProduct,
+  variant: AppProduct['variants']['edges'][number]['node'] | null | undefined,
+  requestedQuantity: number,
+) {
+  const availableToShipNow = Math.max(
+    0,
+    typeof variant?.availableToShipNow === 'number'
+      ? variant.availableToShipNow
+      : typeof product.availableToShipNow === 'number'
+        ? product.availableToShipNow
+        : 0,
+  );
+  const normalizedRequestedQuantity = Math.max(1, Math.floor(Number(requestedQuantity) || 1));
+  const isHighDemand =
+    variant?.isHighDemand === true ||
+    product.isHighDemand === true ||
+    availableToShipNow < normalizedRequestedQuantity;
+
+  return {
+    label: isHighDemand
+      ? HIGH_DEMAND_SHIPPING_LABEL
+      : availableToShipNow > 0 && availableToShipNow <= 3
+        ? `Only ${availableToShipNow} ready now. ${READY_TO_SHIP_LABEL}.`
+        : READY_TO_SHIP_LABEL,
+    availableToShipNow,
+    isHighDemand,
+  };
 }
 
 function applyProductSnapshotToCartLine(line: CartLineState, product: AppProduct) {
@@ -1387,6 +1423,7 @@ function applyProductSnapshotToCartLine(line: CartLineState, product: AppProduct
   const variantTiers = selectedVariant?.bulkPriceTiers;
 
   line.bulkPriceTiers = variantTiers?.length ? variantTiers : product.bulkPriceTiers || undefined;
+  line.fulfillmentEstimate = getSwellProductFulfillmentEstimate(product, selectedVariant, line.quantity);
   line.merchandise.title = selectedVariant?.title || product.title;
   line.merchandise.sku = selectedVariant?.sku || undefined;
   line.merchandise.price = selectedVariant?.price || product.priceRange.minVariantPrice;
@@ -1395,6 +1432,14 @@ function applyProductSnapshotToCartLine(line: CartLineState, product: AppProduct
   line.merchandise.product.availableForSale = selectedVariant?.availableForSale ?? product.availableForSale;
   line.merchandise.product.stockStatus = selectedVariant?.stockStatus ?? product.stockStatus;
   line.merchandise.product.stockLevel = selectedVariant?.stockLevel ?? product.stockLevel;
+  line.merchandise.product.internalOnHand = selectedVariant?.internalOnHand ?? product.internalOnHand;
+  line.merchandise.product.internalAllocated = selectedVariant?.internalAllocated ?? product.internalAllocated;
+  line.merchandise.product.availableToShipNow = selectedVariant?.availableToShipNow ?? product.availableToShipNow;
+  line.merchandise.product.isHighDemand = selectedVariant?.isHighDemand ?? product.isHighDemand;
+  line.merchandise.product.shippingLeadTimeLabel =
+    selectedVariant?.shippingLeadTimeLabel ?? product.shippingLeadTimeLabel;
+  line.merchandise.product.internalInventoryMatched =
+    selectedVariant?.internalInventoryMatched ?? product.internalInventoryMatched;
   line.merchandise.product.compareAtPrice =
     selectedVariant?.compareAtPrice ?? product.compareAtPriceRange?.minVariantPrice;
 }
@@ -1578,6 +1623,7 @@ export async function addCartLines(
       variantId: line.merchandiseId,
       quantity: clampedQuantity,
       bulkPriceTiers: lineTiers,
+      fulfillmentEstimate: getSwellProductFulfillmentEstimate(product, selectedVariant, clampedQuantity),
       merchandise: {
         id: line.merchandiseId,
         title: selectedVariant?.title || product.title,
@@ -1594,6 +1640,13 @@ export async function addCartLines(
           availableForSale: selectedVariant?.availableForSale ?? product.availableForSale,
           stockStatus: selectedVariant?.stockStatus ?? product.stockStatus,
           stockLevel: selectedVariant?.stockLevel ?? product.stockLevel,
+          internalOnHand: selectedVariant?.internalOnHand ?? product.internalOnHand,
+          internalAllocated: selectedVariant?.internalAllocated ?? product.internalAllocated,
+          availableToShipNow: selectedVariant?.availableToShipNow ?? product.availableToShipNow,
+          isHighDemand: selectedVariant?.isHighDemand ?? product.isHighDemand,
+          shippingLeadTimeLabel: selectedVariant?.shippingLeadTimeLabel ?? product.shippingLeadTimeLabel,
+          internalInventoryMatched:
+            selectedVariant?.internalInventoryMatched ?? product.internalInventoryMatched,
           compareAtPrice: selectedVariant?.compareAtPrice ?? product.compareAtPriceRange?.minVariantPrice,
           images: {
             edges: firstImage

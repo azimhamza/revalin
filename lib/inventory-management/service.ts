@@ -14,6 +14,8 @@ import {
   purchaseReceipts,
 } from "@/lib/db/schema";
 import type { CheckoutOrderLine, CheckoutOrderRecord } from "@/lib/checkout/types";
+import { getProducts } from "@/lib/swell";
+import type { Product, ProductVariant } from "@/lib/swell/types";
 
 export type InventoryStockStatus =
   | "in_stock"
@@ -188,6 +190,13 @@ export type FulfillmentConsumptionResult = {
   warnings: string[];
 };
 
+export type SwellInventorySyncResult = {
+  productsSeen: number;
+  variantsSeen: number;
+  created: number;
+  updated: number;
+};
+
 function normalizeCode(value: string) {
   return value
     .trim()
@@ -196,9 +205,30 @@ function normalizeCode(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+function normalizeCodeWithLimit(value: string, maxLength = 96) {
+  const normalized = normalizeCode(value);
+  if (normalized.length <= maxLength) return normalized;
+  return normalized.slice(0, maxLength).replace(/[-_]+$/g, "");
+}
+
 function normalizeOptionalString(value?: string | null) {
   const normalized = value?.trim();
   return normalized || null;
+}
+
+function normalizeComparable(value?: string | null) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || null;
+}
+
+function extractBackendProductId(productId: string) {
+  const match = productId.match(/^swell:\/\/product\/(.+)$/);
+  return match?.[1] ? decodeURIComponent(match[1]) : productId;
+}
+
+function extractBackendVariantId(variantId: string) {
+  const match = variantId.match(/^swell:product:[^:]+:variant:(.+)$/);
+  return match?.[1] ? decodeURIComponent(match[1]) : variantId;
 }
 
 function normalizeMoneyString(value?: string | number | null) {
@@ -630,6 +660,199 @@ export async function updateInventoryItem(
 
   if (!item) throw new Error("Inventory item not found.");
   return item;
+}
+
+function buildSwellSyncCode(args: {
+  product: Product;
+  variant: ProductVariant;
+  productId: string;
+  variantId: string | null;
+}) {
+  const raw =
+    args.variant.sku ||
+    `${args.product.handle}-${args.variant.title}` ||
+    `${args.productId}-${args.variantId || "product"}`;
+
+  return normalizeCodeWithLimit(raw);
+}
+
+function buildUniqueInventoryCode(baseCode: string, usedCodes: Set<string>, fallbackId: string) {
+  const normalizedBase = normalizeCodeWithLimit(baseCode || fallbackId || "SWELL-ITEM");
+  if (!usedCodes.has(normalizedBase)) {
+    usedCodes.add(normalizedBase);
+    return normalizedBase;
+  }
+
+  const suffix = normalizeCodeWithLimit(fallbackId || cryptoRandomSuffix(), 12);
+  const prefix = normalizeCodeWithLimit(normalizedBase, Math.max(1, 95 - suffix.length));
+  let candidate = `${prefix}-${suffix}`;
+  let attempt = 2;
+
+  while (usedCodes.has(candidate)) {
+    const attemptSuffix = `${suffix}-${attempt}`;
+    const attemptPrefix = normalizeCodeWithLimit(normalizedBase, Math.max(1, 95 - attemptSuffix.length));
+    candidate = `${attemptPrefix}-${attemptSuffix}`;
+    attempt += 1;
+  }
+
+  usedCodes.add(candidate);
+  return candidate;
+}
+
+function cryptoRandomSuffix() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function buildSwellSyncName(product: Product, variant: ProductVariant, hasMultipleVariants: boolean) {
+  const variantTitle = variant.title?.trim();
+  if (!hasMultipleVariants || !variantTitle || variantTitle.toLowerCase() === "default") {
+    return product.title;
+  }
+
+  return `${product.title} - ${variantTitle}`.slice(0, 256);
+}
+
+function findExistingSwellInventoryItem(args: {
+  existingItems: InventoryItemRow[];
+  product: Product;
+  variant: ProductVariant;
+  productId: string;
+  variantId: string | null;
+  hasMultipleVariants: boolean;
+}) {
+  const sku = normalizeComparable(args.variant.sku);
+  const handle = normalizeComparable(args.product.handle);
+
+  if (args.variantId) {
+    const match = args.existingItems.find(
+      item => item.swellVariantId === args.variantId,
+    );
+    if (match) return match;
+  }
+
+  if (sku) {
+    const match = args.existingItems.find(
+      item => normalizeComparable(item.sku) === sku,
+    );
+    if (match) return match;
+  }
+
+  if (!args.hasMultipleVariants) {
+    const productMatch = args.existingItems.find(
+      item => item.swellProductId === args.productId,
+    );
+    if (productMatch) return productMatch;
+
+    const handleMatch = args.existingItems.find(
+      item => normalizeComparable(item.productHandle) === handle,
+    );
+    if (handleMatch) return handleMatch;
+  }
+
+  return null;
+}
+
+export async function syncSwellProductsToInventory(): Promise<SwellInventorySyncResult> {
+  const products = await getProducts({
+    limit: 1000,
+    live: true,
+  });
+  const existingItems = await db
+    .select()
+    .from(inventoryItems)
+    .where(eq(inventoryItems.itemType, "sellable_product"));
+  const usedCodes = new Set(existingItems.map(item => item.code));
+  const result: SwellInventorySyncResult = {
+    productsSeen: products.length,
+    variantsSeen: 0,
+    created: 0,
+    updated: 0,
+  };
+
+  for (const product of products) {
+    const variants = product.variants.length > 0
+      ? product.variants
+      : [
+          {
+            id: product.id,
+            title: product.title,
+            sku: undefined,
+            availableForSale: product.availableForSale,
+            stockStatus: product.stockStatus,
+            stockLevel: product.stockLevel,
+            selectedOptions: [],
+            price: product.priceRange.minVariantPrice,
+          } satisfies ProductVariant,
+        ];
+    const productId = extractBackendProductId(product.id);
+    const hasMultipleVariants = variants.length > 1;
+
+    for (const variant of variants) {
+      result.variantsSeen += 1;
+
+      const variantId = variant.id === product.id ? null : extractBackendVariantId(variant.id);
+      const existingItem = findExistingSwellInventoryItem({
+        existingItems,
+        product,
+        variant,
+        productId,
+        variantId,
+        hasMultipleVariants,
+      });
+      const itemName = buildSwellSyncName(product, variant, hasMultipleVariants);
+
+      if (existingItem) {
+        await updateInventoryItem(existingItem.id, {
+          name: itemName,
+          sku: variant.sku || null,
+          itemType: "sellable_product",
+          unit: existingItem.unit || "unit",
+          swellProductId: productId,
+          swellVariantId: variantId,
+          productHandle: product.handle,
+          active: true,
+        });
+        existingItem.name = itemName;
+        existingItem.sku = variant.sku || null;
+        existingItem.swellProductId = productId;
+        existingItem.swellVariantId = variantId;
+        existingItem.productHandle = product.handle;
+        existingItem.active = true;
+        result.updated += 1;
+        continue;
+      }
+
+      const baseCode = buildSwellSyncCode({
+        product,
+        variant,
+        productId,
+        variantId,
+      });
+      const uniqueCode = buildUniqueInventoryCode(
+        baseCode,
+        usedCodes,
+        variantId || productId,
+      );
+      const created = await createInventoryItem({
+        name: itemName,
+        code: uniqueCode,
+        sku: variant.sku || null,
+        itemType: "sellable_product",
+        unit: "unit",
+        reorderPoint: 0,
+        swellProductId: productId,
+        swellVariantId: variantId,
+        productHandle: product.handle,
+        initialQuantity: 0,
+        notes: "Synced from Swell catalog. Internal inventory quantity remains controlled by ledger movements.",
+      });
+
+      existingItems.push(created);
+      result.created += 1;
+    }
+  }
+
+  return result;
 }
 
 export async function createManualInventoryAdjustment(input: {

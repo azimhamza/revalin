@@ -37,6 +37,11 @@ import {
   getNowPaymentsMinimumAmount,
 } from '@/lib/checkout/nowpayments';
 import {
+  createSquarePaymentLink,
+  deleteSquarePaymentLink,
+  type SquarePaymentLinkResponse,
+} from '@/lib/checkout/square';
+import {
   buildCarryoverComparableFromFinalizeInput,
   buildCarryoverContext,
   buildCheckoutCarryoverPublicData,
@@ -115,11 +120,13 @@ import type {
   BankfulPaymentData,
   NowPaymentsPaymentData,
   ShieldClimbPaymentData,
+  SquarePaymentData,
 } from '@/lib/checkout/types';
 import {
   isInteracPayment,
   isNowPaymentsPayment,
   isShieldClimbPayment,
+  isSquarePayment,
   toPublicCheckoutOrder,
 } from '@/lib/checkout/types';
 
@@ -141,10 +148,15 @@ type FinalizeCheckoutInput = {
       quantity: number;
       unitPrice: { amount: string; currencyCode: string };
       lineTotal: { amount: string; currencyCode: string };
+      fulfillmentEstimate?: {
+        label: string;
+        availableToShipNow: number;
+        isHighDemand: boolean;
+      };
     }>;
   };
   shippingAddress: CheckoutShippingAddress;
-  paymentMethod: 'card' | 'crypto' | 'interac';
+  paymentMethod: 'card' | 'crypto' | 'interac' | 'square';
   paymentCurrency?: string | null;
   card?: BankfulCardInput | null;
   sourceWalletAddress?: string | null;
@@ -193,6 +205,7 @@ export type FinalizeCheckoutDependencies = {
   getNowPaymentsEstimate: typeof getNowPaymentsEstimate;
   getNowPaymentsMinimumAmount: typeof getNowPaymentsMinimumAmount;
   createNowPaymentsPayment: typeof createNowPaymentsPayment;
+  createSquarePaymentLink: typeof createSquarePaymentLink;
   createBankfulPaymentAttempt: typeof createBankfulPaymentAttempt;
   claimBankfulPaymentAttemptCapture: typeof claimBankfulPaymentAttemptCapture;
   updateBankfulPaymentAttempt: typeof updateBankfulPaymentAttempt;
@@ -219,6 +232,12 @@ function createShieldClimbCallbackToken() {
 
 function createShieldClimbSessionId(ipnToken: string) {
   return `shieldclimb:${ipnToken}`;
+}
+
+function getHostedPaymentRedirectUrl(payment: CheckoutOrderRecord['payment']) {
+  if (isShieldClimbPayment(payment)) return payment.redirectUrl;
+  if (isSquarePayment(payment)) return payment.checkoutUrl;
+  return null;
 }
 
 function createBankfulAttemptId(sessionId: string, version: number) {
@@ -341,7 +360,9 @@ function doesExistingOrderMatchCheckoutAttempt(args: {
       ? 'card'
       : args.existingOrder.payment.provider === 'interac'
         ? 'interac'
-        : 'crypto';
+        : args.existingOrder.payment.provider === 'square'
+          ? 'square'
+          : 'crypto';
 
   if (orderPaymentMethod !== args.input.paymentMethod) {
     return false;
@@ -350,6 +371,13 @@ function doesExistingOrderMatchCheckoutAttempt(args: {
   if (
     args.input.paymentMethod === 'card' &&
     args.existingOrder.payment.provider !== 'bankful'
+  ) {
+    return false;
+  }
+
+  if (
+    args.input.paymentMethod === 'square' &&
+    !isSquarePayment(args.existingOrder.payment)
   ) {
     return false;
   }
@@ -505,6 +533,12 @@ async function supersedeCarryoverChainOrders(args: {
           console.error('Unable to cancel superseded carryover Swell order:', error);
         });
 
+      if (isSquarePayment(chainOrder.payment)) {
+        await deleteSquarePaymentLink(chainOrder.payment.paymentLinkId).catch((error) => {
+          console.error('Unable to delete superseded Square payment link:', error);
+        });
+      }
+
       await args.dependencies
         .updateCheckoutOrder(chainOrder.orderId, (current) => {
           if (isTerminalPaymentStatus(current.payment.status)) {
@@ -533,6 +567,9 @@ async function supersedeCarryoverChainOrders(args: {
               ...current.payment,
               status: keepHistoricalPartial ? current.payment.status : 'replaced',
               supersededByOrderId: args.checkoutOrder.orderId,
+              ...(isSquarePayment(current.payment) && !keepHistoricalPartial
+                ? { deletedAt: new Date().toISOString(), deletionError: null }
+                : {}),
               updatedAt: supersededAt,
             },
             latestError: keepHistoricalPartial ? current.latestError : reason,
@@ -579,6 +616,12 @@ async function replaceSupersededOpenOrders(args: {
           console.error('Unable to cancel superseded Swell order:', error);
         });
 
+      if (isSquarePayment(openOrder.payment)) {
+        await deleteSquarePaymentLink(openOrder.payment.paymentLinkId).catch((error) => {
+          console.error('Unable to delete superseded Square payment link:', error);
+        });
+      }
+
       await args.dependencies
         .updateCheckoutOrder(openOrder.orderId, (current) => {
           if (isTerminalPaymentStatus(current.payment.status)) {
@@ -604,6 +647,9 @@ async function replaceSupersededOpenOrders(args: {
               ...current.payment,
               status: 'replaced',
               supersededByOrderId: args.checkoutOrder.orderId,
+              ...(isSquarePayment(current.payment)
+                ? { deletedAt: new Date().toISOString(), deletionError: null }
+                : {}),
               updatedAt: replacedAt,
             },
             latestError: reason,
@@ -1196,6 +1242,117 @@ function buildBankfulOrderRecord(args: {
   };
 }
 
+function buildSquareOrderRecord(args: {
+  orderId: string;
+  accessKey: string;
+  cartId: string;
+  userId?: string | null;
+  swellAccountId: string;
+  swellCartId: string;
+  swellOrderId: string;
+  swellOrderNumber?: string;
+  currencyCode: string;
+  lines: CheckoutOrderLine[];
+  shippingAddress: CheckoutShippingAddress;
+  shippingService: CheckoutShippingService;
+  orderSubtotal: number;
+  orderDiscountTotal: number;
+  discountCode?: string;
+  discounts?: CheckoutOrderRecord['totals']['discounts'];
+  orderTaxTotal: number;
+  orderGrandTotal: number;
+  orderShipmentTotal: number;
+  orderLandedCostTotal?: number;
+  landedCost?: CheckoutLandedCost | null;
+  paymentLink: SquarePaymentLinkResponse;
+  locationId?: string | null;
+  amountPaidToDate?: string;
+  attemptAmount?: string;
+  carryoverRootOrderId?: string;
+  nowIso?: string;
+}): CheckoutOrderRecord {
+  const now = args.nowIso ?? new Date().toISOString();
+  const shippingStatus = args.orderShipmentTotal <= 0.009 ? 'free' : 'quoted';
+
+  const paymentData: SquarePaymentData = {
+    provider: 'square',
+    paymentMethod: 'card_debit',
+    status: 'pending',
+    paymentLinkId: args.paymentLink.id,
+    squareOrderId: args.paymentLink.orderId,
+    checkoutUrl: args.paymentLink.url,
+    longUrl: args.paymentLink.longUrl ?? null,
+    locationId: args.locationId ?? null,
+    expectedAmount: args.attemptAmount || args.orderGrandTotal.toFixed(2),
+    expectedCurrency: args.currencyCode,
+    squareStatus: null,
+    paymentId: null,
+    receiptUrl: null,
+    createdAt: args.paymentLink.createdAt || now,
+    updatedAt: now,
+    amountPaidToDate: args.amountPaidToDate,
+    attemptAmount: args.attemptAmount,
+    carryoverRootOrderId: args.carryoverRootOrderId,
+  };
+
+  return {
+    orderId: args.orderId,
+    accessKey: args.accessKey,
+    cartId: args.cartId,
+    userId: args.userId ?? null,
+    createdAt: now,
+    updatedAt: now,
+    currencyCode: args.currencyCode,
+    shippingAddress: args.shippingAddress,
+    shippingService: args.shippingService,
+    lines: args.lines,
+    totals: {
+      subtotalAmount: {
+        amount: args.orderSubtotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      discountAmount: {
+        amount: args.orderDiscountTotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      discountCode: args.discountCode,
+      discounts: args.discounts?.length ? args.discounts : undefined,
+      taxAmount: {
+        amount: args.orderTaxTotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      ...buildLandedCostTotalFields({
+        orderLandedCostTotal: args.orderLandedCostTotal,
+        currencyCode: args.currencyCode,
+        landedCost: args.landedCost,
+      }),
+      ...buildShipmentProtectionTotalFields(args.shippingService),
+      totalAmount: {
+        amount: args.orderGrandTotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      shippingAmount: {
+        amount: args.orderShipmentTotal.toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      shippingThresholdAmount: {
+        amount: getFreeShippingThresholdForCurrency(args.currencyCode).toFixed(2),
+        currencyCode: args.currencyCode,
+      },
+      shippingStatus,
+    },
+    payment: paymentData,
+    swell: {
+      accountId: args.swellAccountId,
+      cartId: args.swellCartId,
+      orderId: args.swellOrderId,
+      orderNumber: args.swellOrderNumber,
+    },
+    processing: buildInitialCheckoutOrderProcessing(),
+    latestError: null,
+  };
+}
+
 function buildInteracOrderRecord(args: {
   orderId: string;
   accessKey: string;
@@ -1356,6 +1513,7 @@ export function createFinalizeCheckoutSession(
     let swellOrderId: string | undefined;
     let checkoutOrderId: string | undefined;
     let temporaryCartId: string | undefined;
+    let squarePaymentLinkId: string | undefined;
 
     try {
       if (args.paymentMethod === 'card' && !isCardDebitCheckoutEnabled()) {
@@ -1433,10 +1591,7 @@ export function createFinalizeCheckoutSession(
         return {
           accessKey: existingOrder.accessKey,
           order: toPublicCheckoutOrderWithCarryover(existingOrder, cartOrders),
-          redirectUrl:
-            existingOrder.payment.provider === 'shieldclimb'
-              ? existingOrder.payment.redirectUrl
-              : null,
+          redirectUrl: getHostedPaymentRedirectUrl(existingOrder.payment),
         };
       }
 
@@ -1445,7 +1600,10 @@ export function createFinalizeCheckoutSession(
         skuNumber: line.skuNumber || undefined,
       })) satisfies CheckoutOrderLine[];
       const currencyCode = args.cartSnapshot.currencyCode;
-      const checkoutCurrencyCode = args.paymentMethod === 'interac' ? 'CAD' : currencyCode;
+      const checkoutCurrencyCode =
+        args.paymentMethod === 'interac' || args.paymentMethod === 'square'
+          ? 'CAD'
+          : currencyCode;
       const subtotalAmount = getCartSnapshotSubtotal(args.cartSnapshot);
       const itemCount = getCartSnapshotItemCount(args.cartSnapshot);
       const paymentCurrency = (args.paymentCurrency || '').toLowerCase();
@@ -1660,11 +1818,9 @@ export function createFinalizeCheckoutSession(
               carryoverContext.latestSuccessfulOrder,
               cartOrders,
             ),
-            redirectUrl:
-              carryoverContext.latestSuccessfulOrder.payment.provider ===
-              'shieldclimb'
-                ? carryoverContext.latestSuccessfulOrder.payment.redirectUrl
-                : null,
+            redirectUrl: getHostedPaymentRedirectUrl(
+              carryoverContext.latestSuccessfulOrder.payment,
+            ),
           };
         }
 
@@ -2078,11 +2234,9 @@ export function createFinalizeCheckoutSession(
             carryoverContext.latestSuccessfulOrder,
             cartOrders,
           ),
-          redirectUrl:
-            carryoverContext.latestSuccessfulOrder.payment.provider ===
-            'shieldclimb'
-              ? carryoverContext.latestSuccessfulOrder.payment.redirectUrl
-              : null,
+          redirectUrl: getHostedPaymentRedirectUrl(
+            carryoverContext.latestSuccessfulOrder.payment,
+          ),
         };
       }
 
@@ -2100,6 +2254,180 @@ export function createFinalizeCheckoutSession(
         carryoverContext.carryoverRootOrderId || orderId;
       const session = await dependencies.optionalSession();
       const userId = session?.user?.id ?? null;
+
+      if (args.paymentMethod === 'square') {
+        const cadCurrency = (swellOrder.currency || checkoutCurrencyCode).trim().toUpperCase();
+        if (cadCurrency !== 'CAD') {
+          throw apiError.providerUnavailable(
+            'Swell did not return a CAD Square checkout amount.',
+            {
+              provider: 'swell',
+              expectedCurrency: 'CAD',
+              receivedCurrency: cadCurrency,
+            },
+            false,
+          );
+        }
+
+        const squareRedirectUrl = new URL('/checkout', requestUrl.origin);
+        squareRedirectUrl.searchParams.set('order', orderId);
+        squareRedirectUrl.searchParams.set('key', accessKey);
+
+        const paymentLink = await dependencies.createSquarePaymentLink({
+          idempotencyKey: `square:${orderId}`,
+          amount: remainderPaymentAmount.toFixed(2),
+          currencyCode: cadCurrency,
+          orderReference: swellOrder.number || swellOrder.id,
+          customerEmail: args.shippingAddress.email,
+          redirectUrl: squareRedirectUrl.toString(),
+        });
+        squarePaymentLinkId = paymentLink.id;
+
+        await dependencies.updateSwellOrder(swellOrder.id, {
+          billing: {
+            ...(swellOrder.billing || {}),
+            method: manualMethod,
+            intent: {
+              provider: 'square',
+              payment_link_id: paymentLink.id,
+              square_order_id: paymentLink.orderId,
+              status: 'pending',
+            },
+          },
+          metadata: {
+            ...(swellOrder.metadata || {}),
+            checkout_reference: orderId,
+            coupon_code: appliedDiscountCode || null,
+            pricing: pricingMetadata,
+            landed_cost: landedCost ?? null,
+            square: {
+              payment_link_id: paymentLink.id,
+              square_order_id: paymentLink.orderId,
+              checkout_url: paymentLink.url,
+              expected_amount: remainderPaymentAmount.toFixed(2),
+              expected_currency: cadCurrency,
+              status: 'pending',
+            },
+            affiliate: resolvedAffiliate
+              ? {
+                  ...affiliateData,
+                  commissionOwed: (
+                    orderTotal *
+                    Number(
+                      commissionSnapshot?.effectiveRate ||
+                        resolvedAffiliate.commissionRate,
+                    )
+                  ).toFixed(2),
+                  currencyCode: cadCurrency,
+                  paymentProvider: 'square',
+                  status: 'pending',
+                }
+              : null,
+            promoter: promoterData
+              ? {
+                  ...promoterData,
+                  commissionOwed: (
+                    orderTotal * Number(promoterData.commissionRate)
+                  ).toFixed(2),
+                  currencyCode: cadCurrency,
+                  paymentProvider: 'square',
+                  status: 'pending',
+                }
+              : null,
+          },
+        });
+
+        const squareOrderRecord = buildSquareOrderRecord({
+          orderId,
+          accessKey,
+          cartId: fallbackCartId,
+          userId,
+          swellAccountId: account.id,
+          swellCartId: ratedCart.id,
+          swellOrderId: swellOrder.id,
+          swellOrderNumber: swellOrder.number,
+          currencyCode: orderCurrencyCode,
+          lines,
+          shippingAddress: args.shippingAddress,
+          shippingService: mapShippingService(
+            selectedServiceForOrder,
+            orderCurrencyCode,
+          ),
+          orderSubtotal: orderSubtotalAmount,
+          orderDiscountTotal,
+          discountCode: appliedDiscountCode,
+          discounts: pricing.discounts,
+          orderTaxTotal,
+          orderGrandTotal: orderTotal,
+          orderShipmentTotal,
+          orderLandedCostTotal,
+          landedCost,
+          paymentLink,
+          locationId: null,
+          amountPaidToDate,
+          attemptAmount: remainderPaymentAmount.toFixed(2),
+          carryoverRootOrderId,
+          nowIso: dependencies.nowIso(),
+        });
+
+        const checkoutOrder = await dependencies.saveCheckoutOrder({
+          ...squareOrderRecord,
+          affiliate: affiliateData,
+          promoter: promoterData,
+        });
+        checkoutOrderId = checkoutOrder.orderId;
+        squarePaymentLinkId = undefined;
+
+        await supersedeCarryoverChainOrders({
+          checkoutOrder,
+          chainOrders: carryoverContext.chainOrders,
+          dependencies,
+        });
+
+        await replaceSupersededOpenOrders({
+          checkoutOrder,
+          customerEmail: args.shippingAddress.email,
+          excludedOrderIds: new Set(
+            carryoverContext.chainOrders.map((order) => order.orderId),
+          ),
+          dependencies,
+        });
+
+        const publicRelatedOrders = await dependencies.findCheckoutOrdersByCartId(
+          fallbackCartId,
+        );
+
+        const initiationTelemetry = {
+          orderId,
+          userId,
+          currencyCode: cadCurrency,
+          orderTotal: orderTotal.toFixed(2),
+          itemCount,
+          paymentProvider: 'square' as const,
+          paymentMethod: 'card' as const,
+          affiliateCode: resolvedAffiliate?.code ?? null,
+          affiliateSource,
+        };
+
+        dependencies
+          .sendCheckoutPaymentInitiatedEvent({
+            ...initiationTelemetry,
+            customerEmail: args.shippingAddress.email,
+          })
+          .catch(() => {});
+        dependencies
+          .trackCheckoutPaymentInitiated(initiationTelemetry)
+          .catch(() => {});
+
+        return {
+          accessKey,
+          order: toPublicCheckoutOrderWithCarryover(
+            checkoutOrder,
+            publicRelatedOrders,
+          ) satisfies CheckoutOrderPublic,
+          redirectUrl: paymentLink.url,
+        };
+      }
 
       if (args.paymentMethod === 'interac') {
         const expectedSenderEmail = args.interacSenderEmail?.trim();
@@ -2476,6 +2804,12 @@ export function createFinalizeCheckoutSession(
           });
       }
 
+      if (squarePaymentLinkId) {
+        await deleteSquarePaymentLink(squarePaymentLinkId).catch((deleteError) => {
+          console.error('Unable to delete failed Square payment link:', deleteError);
+        });
+      }
+
       if (checkoutOrderId) {
         await dependencies
           .updateCheckoutOrder(checkoutOrderId, (current) => {
@@ -2532,6 +2866,7 @@ export const finalizeCheckoutSession = createFinalizeCheckoutSession({
   getNowPaymentsEstimate,
   getNowPaymentsMinimumAmount,
   createNowPaymentsPayment,
+  createSquarePaymentLink,
   createBankfulPaymentAttempt,
   claimBankfulPaymentAttemptCapture,
   updateBankfulPaymentAttempt,

@@ -203,7 +203,7 @@ const SWELL_INTERAC_PAYMENT_METHOD = (
   process.env.SWELL_INTERAC_PAYMENT_METHOD || "interac"
 ).trim();
 
-export type SwellCheckoutPaymentMethod = "card" | "crypto" | "interac";
+export type SwellCheckoutPaymentMethod = "card" | "crypto" | "interac" | "square";
 
 function normalizeExplicitApiBase(apiUrl: string): string {
   const trimmed = apiUrl.trim();
@@ -541,7 +541,7 @@ export function getSwellManualPaymentMethod(
   paymentMethod?: SwellCheckoutPaymentMethod,
 ) {
   if (paymentMethod === "crypto") return SWELL_CRYPTO_PAYMENT_METHOD;
-  if (paymentMethod === "card") return SWELL_CARD_DEBIT_PAYMENT_METHOD;
+  if (paymentMethod === "card" || paymentMethod === "square") return SWELL_CARD_DEBIT_PAYMENT_METHOD;
   if (paymentMethod === "interac") return SWELL_INTERAC_PAYMENT_METHOD;
   return SWELL_MANUAL_PAYMENT_METHOD;
 }

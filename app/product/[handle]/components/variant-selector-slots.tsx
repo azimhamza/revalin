@@ -22,6 +22,7 @@ export function VariantSelectorSlots({ product, fallback = false }: { product: P
             selectedValue=""
             isTargetingProduct
             selectedOptions={{}}
+            showHighDemandTooltip
           />
         ))}
       </div>

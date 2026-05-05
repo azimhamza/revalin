@@ -46,16 +46,17 @@ type CheckoutQuoteInput = {
   cartSnapshot: CheckoutSessionCartSnapshot;
   shippingAddress: CheckoutShippingAddress;
   discountCode?: string | null;
-  paymentMethod?: 'card' | 'crypto' | 'interac' | null;
+  paymentMethod?: 'card' | 'crypto' | 'interac' | 'square' | null;
   selectedShippingServiceId?: string | null;
   shipmentProtection?: boolean;
 };
 
 function normalizeCheckoutPaymentMethod(
   paymentMethod?: CheckoutQuoteInput['paymentMethod'],
-): 'card' | 'crypto' | 'interac' {
+): 'card' | 'crypto' | 'interac' | 'square' {
   if (paymentMethod === 'crypto') return 'crypto';
   if (paymentMethod === 'interac') return 'interac';
+  if (paymentMethod === 'square') return 'square';
   return 'card';
 }
 
@@ -165,7 +166,8 @@ async function estimateTaxForSelectedService(args: {
 }
 
 export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
-  const currencyCode = args.cartSnapshot.currencyCode;
+  const paymentMethod = normalizeCheckoutPaymentMethod(args.paymentMethod);
+  const currencyCode = paymentMethod === 'square' ? 'CAD' : args.cartSnapshot.currencyCode;
   const subtotalAmount = getCartSnapshotSubtotal(args.cartSnapshot);
   const itemCount = getCartSnapshotItemCount(args.cartSnapshot);
   let liveShippingErrorMessage: string | null = null;
@@ -197,7 +199,6 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       );
     }
 
-    const paymentMethod = normalizeCheckoutPaymentMethod(args.paymentMethod);
     const manualMethod = getSwellManualPaymentMethod(paymentMethod);
     const swellShipping = toSwellAddress({
       ...args.shippingAddress,
@@ -229,13 +230,16 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
       couponCode: args.discountCode ?? undefined,
     });
     swellCartId = swellCart.id;
+    const checkoutSubtotalAmount = Number.isFinite(Number(swellCart.sub_total))
+      ? Number(swellCart.sub_total)
+      : subtotalAmount;
 
     const couponDiscountAmount = Number(
       swellCart.discount_total ?? swellCart.item_discount ?? 0,
     );
     const pricing = calculateCheckoutPricing({
       currencyCode: swellCart.currency || currencyCode,
-      subtotalAmount,
+      subtotalAmount: checkoutSubtotalAmount,
       couponDiscountAmount,
       couponCode: args.discountCode || swellCart.coupon_code,
       paymentMethod,
@@ -246,19 +250,19 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
         swellCart.shipment_rating?.services || [],
         swellCart.currency || currencyCode,
       ),
-      subtotalAmount,
+      subtotalAmount: checkoutSubtotalAmount,
       currencyCode: swellCart.currency || currencyCode,
     });
     const fallbackServices = applyShipmentProtectionToServices({
       services: fallbackServicesWithProtectionQuote,
       shipmentProtection: args.shipmentProtection,
-      subtotalAmount,
+      subtotalAmount: checkoutSubtotalAmount,
       currencyCode: swellCart.currency || currencyCode,
     });
 
     const quote = buildQuoteResponse({
       currencyCode: swellCart.currency || currencyCode,
-      subtotalAmount,
+      subtotalAmount: checkoutSubtotalAmount,
       discountAmount: pricing.discountTotalValue,
       discountCode: args.discountCode || swellCart.coupon_code,
       discounts: pricing.discounts,

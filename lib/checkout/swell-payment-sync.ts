@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { CheckoutOrderRecord } from '@/lib/checkout/types';
-import { isBankfulPayment, isInteracPayment, isShieldClimbPayment } from '@/lib/checkout/types';
+import { isBankfulPayment, isInteracPayment, isShieldClimbPayment, isSquarePayment } from '@/lib/checkout/types';
 import { createSwellOrderPayment, getSwellManualPaymentMethod, updateSwellOrder } from '@/lib/checkout/swell-order-management';
 import type { NowPaymentsPaymentResponse } from '@/lib/checkout/nowpayments';
 import { isNowPaymentsPayment } from '@/lib/checkout/types';
@@ -275,6 +275,137 @@ export async function syncBankfulOrderToSwell(order: CheckoutOrderRecord) {
   });
 
   return swellPayment;
+}
+
+export async function syncSquareOrderToSwell(order: CheckoutOrderRecord) {
+  if (!isSquarePayment(order.payment)) {
+    return null;
+  }
+
+  const manualMethod = getSwellManualPaymentMethod('card');
+  const syncToken = crypto.randomUUID();
+  const syncStartedAt = new Date().toISOString();
+
+  const claimedOrder = await updateCheckoutOrder(order.orderId, current => {
+    if (!isSquarePayment(current.payment)) return current;
+    if (current.payment.status !== 'paid') return current;
+    if (current.payment.swellPaymentId) return current;
+
+    const existingStartedAt = Date.parse(current.payment.swellPaymentSyncStartedAt || '');
+    const hasFreshClaim = Boolean(
+      current.payment.swellPaymentSyncToken &&
+        Number.isFinite(existingStartedAt) &&
+        Date.now() - existingStartedAt < SWELL_PAYMENT_SYNC_CLAIM_MS,
+    );
+    if (hasFreshClaim) return current;
+
+    return {
+      ...current,
+      payment: {
+        ...current.payment,
+        swellPaymentSyncToken: syncToken,
+        swellPaymentSyncStartedAt: syncStartedAt,
+      },
+    };
+  });
+
+  if (!claimedOrder || !isSquarePayment(claimedOrder.payment)) {
+    return null;
+  }
+  if (claimedOrder.payment.status !== 'paid' || claimedOrder.payment.swellPaymentId) {
+    return null;
+  }
+  if (claimedOrder.payment.swellPaymentSyncToken !== syncToken) {
+    return null;
+  }
+
+  try {
+    await updateSwellOrder(claimedOrder.swell.orderId, {
+      $notify: false,
+      account_id: claimedOrder.swell.accountId,
+      billing: {
+        method: manualMethod,
+        intent: {
+          provider: 'square',
+          payment_link_id: claimedOrder.payment.paymentLinkId,
+          square_order_id: claimedOrder.payment.squareOrderId,
+          payment_id: claimedOrder.payment.paymentId ?? null,
+          status: claimedOrder.payment.status,
+        },
+      },
+      metadata: {
+        checkout_reference: claimedOrder.orderId,
+        pricing: buildCheckoutPricingMetadata({
+          currencyCode: claimedOrder.currencyCode,
+          subtotalAmount: claimedOrder.totals.subtotalAmount.amount,
+          shippingAmount: claimedOrder.totals.shippingAmount?.amount,
+          taxAmount: claimedOrder.totals.taxAmount?.amount,
+          landedCostAmount: claimedOrder.totals.landedCostAmount?.amount,
+          totalAmount: claimedOrder.totals.totalAmount.amount,
+          discounts: claimedOrder.totals.discounts,
+          discountAmount: claimedOrder.totals.discountAmount?.amount,
+          discountCode: claimedOrder.totals.discountCode,
+          paymentMethod: 'card',
+        }),
+        square: {
+          payment_link_id: claimedOrder.payment.paymentLinkId,
+          square_order_id: claimedOrder.payment.squareOrderId,
+          payment_id: claimedOrder.payment.paymentId ?? null,
+          square_status: claimedOrder.payment.squareStatus ?? null,
+          expected_amount: claimedOrder.payment.expectedAmount,
+          expected_currency: claimedOrder.payment.expectedCurrency,
+          receipt_url: claimedOrder.payment.receiptUrl ?? null,
+          paid_at: claimedOrder.payment.paidAt ?? null,
+        },
+      },
+    });
+
+    const swellPayment = await createSwellOrderPayment({
+      account_id: claimedOrder.swell.accountId,
+      order_id: claimedOrder.swell.orderId,
+      amount: Number(claimedOrder.totals.totalAmount.amount),
+      currency: claimedOrder.currencyCode,
+      method: manualMethod,
+      transaction_id:
+        claimedOrder.payment.paymentId ||
+        claimedOrder.payment.squareOrderId ||
+        claimedOrder.payment.paymentLinkId,
+      authorized: true,
+      captured: true,
+    });
+
+    await updateCheckoutOrder(claimedOrder.orderId, current => {
+      if (!isSquarePayment(current.payment)) return current;
+      if (current.payment.swellPaymentId) return current;
+      if (current.payment.swellPaymentSyncToken !== syncToken) return current;
+      return {
+        ...current,
+        payment: {
+          ...current.payment,
+          swellPaymentId: swellPayment.id,
+          swellPaymentSyncToken: null,
+          swellPaymentSyncStartedAt: null,
+        },
+      };
+    });
+
+    return swellPayment;
+  } catch (error) {
+    await updateCheckoutOrder(claimedOrder.orderId, current => {
+      if (!isSquarePayment(current.payment)) return current;
+      if (current.payment.swellPaymentSyncToken !== syncToken) return current;
+      return {
+        ...current,
+        payment: {
+          ...current.payment,
+          swellPaymentSyncToken: null,
+          swellPaymentSyncStartedAt: null,
+        },
+      };
+    }).catch(() => {});
+
+    throw error;
+  }
 }
 
 export async function syncInteracOrderToSwell(order: CheckoutOrderRecord) {

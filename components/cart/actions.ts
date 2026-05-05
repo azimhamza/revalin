@@ -29,6 +29,7 @@ function adaptCartLine(swellLine: SwellCartLine): CartItem {
     id: swellLine.id,
     quantity: swellLine.quantity,
     bulkPriceTiers: swellLine.bulkPriceTiers,
+    fulfillmentEstimate: swellLine.fulfillmentEstimate,
     cost: {
       totalAmount: {
         amount: (parseFloat(unitPrice) * swellLine.quantity).toString(),
@@ -60,6 +61,12 @@ function adaptCartLine(swellLine: SwellCartLine): CartItem {
         currencyCode: merchandise.price.currencyCode,
         stockStatus: product.stockStatus,
         stockLevel: product.stockLevel,
+        internalOnHand: product.internalOnHand,
+        internalAllocated: product.internalAllocated,
+        availableToShipNow: product.availableToShipNow,
+        isHighDemand: product.isHighDemand,
+        shippingLeadTimeLabel: product.shippingLeadTimeLabel,
+        internalInventoryMatched: product.internalInventoryMatched,
         priceRange: {
           minVariantPrice: merchandise.price,
           maxVariantPrice: merchandise.price,

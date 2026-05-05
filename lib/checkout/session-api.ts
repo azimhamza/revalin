@@ -14,7 +14,7 @@ export type QuoteReadyCheckoutSession = CheckoutSessionRecord & {
 
 export type FinalizeReadyCheckoutSession = QuoteReadyCheckoutSession & {
   selectedShippingServiceId: string;
-  paymentMethod: 'card' | 'crypto' | 'interac';
+  paymentMethod: 'card' | 'crypto' | 'interac' | 'square';
   paymentCurrency: string | null;
 };
 
@@ -54,7 +54,7 @@ export function buildSessionChanges(body: {
   shippingAddress?: CheckoutShippingAddress;
   selectedShippingServiceId?: string;
   shipmentProtection?: boolean;
-  paymentMethod?: 'card' | 'crypto' | 'interac';
+  paymentMethod?: 'card' | 'crypto' | 'interac' | 'square';
   paymentCurrency?: string;
   sourceWalletAddress?: string;
   interacSenderEmail?: string;
@@ -109,6 +109,10 @@ export function assertSessionReadyForFinalize(
     if (!session.interacSenderEmail || !session.interacSenderName) {
       throw apiError.badRequest('Enter the Interac sender email and name before creating the payment.');
     }
+    return;
+  }
+
+  if (session.paymentMethod === 'square') {
     return;
   }
 

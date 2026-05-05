@@ -96,6 +96,12 @@ function describeInactivePaymentStatus(status: string) {
   return 'This payment request is no longer active. Start a new checkout to create a fresh payment link.';
 }
 
+function getHostedPaymentUrl(order: CheckoutOrderPublic) {
+  if (order.payment.provider === 'square') return order.payment.checkoutUrl;
+  if (order.payment.provider === 'shieldclimb') return order.payment.redirectUrl;
+  return null;
+}
+
 function StatusTimeline({ currentStatus }: { currentStatus: OrderStatus }) {
   const currentIdx = STEPS.findIndex(s => s.key === currentStatus);
 
@@ -164,6 +170,7 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
     discountAmount: order.totals.discountAmount?.amount,
     discountCode: order.totals.discountCode,
   });
+  const hostedPaymentUrl = !isPaid && !isInactive ? getHostedPaymentUrl(order) : null;
 
   // Live polling every 15 seconds
   useEffect(() => {
@@ -281,9 +288,22 @@ export function OrderStatusView({ initialOrder, accessKey }: Props) {
             </div>
           </div>
         ) : !isPaid ? (
-          <div className="mt-4 flex items-center gap-2 rounded-xl bg-amber-50 px-3.5 py-2.5 text-sm text-amber-900">
-            <Clock className="size-4 shrink-0" />
-            <p>Payment is still being processed. This page will update automatically.</p>
+          <div className="mt-4 rounded-xl bg-amber-50 px-3.5 py-2.5 text-sm text-amber-900">
+            <div className="flex items-center gap-2">
+              <Clock className="size-4 shrink-0" />
+              <p>Payment is still being processed. This page will update automatically.</p>
+            </div>
+            {hostedPaymentUrl ? (
+              <a
+                href={hostedPaymentUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#0B2E2F] px-4 py-2.5 text-sm font-semibold text-[#F4F1EA] transition-colors hover:bg-[#0B2E2F]/90"
+              >
+                Open payment
+                <ExternalLink className="size-4" />
+              </a>
+            ) : null}
           </div>
         ) : null}
       </div>
