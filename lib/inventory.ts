@@ -96,7 +96,7 @@ export function getInventoryState(product: Product, variant?: ProductVariant | n
       isLowStock: false,
       label: 'Backorder',
       shortLabel: 'Get notified',
-      message: 'This item is out of stock. Leave your email and we will notify you as soon as it is ready again.',
+      message: BACK_IN_STOCK_LABEL,
       shippingLeadTimeLabel: BACK_IN_STOCK_LABEL,
     };
   }

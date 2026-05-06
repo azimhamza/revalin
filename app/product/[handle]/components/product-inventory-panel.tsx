@@ -77,9 +77,6 @@ export function ProductInventoryPanel({ product }: { product: Product }) {
             <p className="text-sm font-semibold leading-tight text-[#6F5D34]">
               {requiresVariantSelection ? 'Select an option to get notified' : 'Get notified when available'}
             </p>
-            <p className="mt-1 text-xs leading-snug text-[#6F5D34]/80">
-              {inventory.message}
-            </p>
           </div>
         </div>
 
