@@ -30,7 +30,7 @@ export function Footer() {
               {disclaimer}
             </p>
           </div>
-          <span className="mt-3 italic font-semibold md:hidden">Research-grade peptides. &gt;99% purity. Third-party tested.</span>
+          <span className="mt-3 italic font-semibold md:hidden">Research-grade chemicals. &gt;99% purity. Third-party tested.</span>
           <p className="mt-4 text-sm leading-tight opacity-70 md:hidden">{disclaimer}</p>
           <div className="mt-4 md:hidden flex flex-wrap gap-x-4 gap-y-2 text-sm">
             {footerLinks.map((link) => (

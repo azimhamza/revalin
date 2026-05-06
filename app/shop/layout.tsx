@@ -12,14 +12,14 @@ import { ProductsProvider } from './providers/products-provider';
 export const metadata: Metadata = {
   title: 'Revalin | Shop',
   description:
-    'Shop Revalin research peptides for legitimate laboratory and pre-clinical studies. Purchase from a trusted research product distributor.',
+    'Shop Revalin research chemicals for legitimate laboratory and pre-clinical studies. Purchase from a trusted research product distributor.',
   keywords: [
-    'peptide shop',
-    'research peptides purchase',
-    'buy research peptides',
-    'peptide distributor',
+    'research chemical shop',
+    'research chemicals purchase',
+    'buy research chemicals',
+    'research chemical distributor',
     'research chemical supplier',
-    'laboratory peptide products',
+    'laboratory research chemicals',
   ],
 };
 

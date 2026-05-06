@@ -140,7 +140,7 @@ function PeptideHeroBlock({ peptide }: { peptide: PeptideData }) {
   return (
     <section className="px-sides text-[#0B2E2F] md:px-0 md:pr-sides">
       <p className="text-[10px] uppercase tracking-[0.24em] text-[#0B2E2F]/55">
-        Peptide profile
+        Compound profile
       </p>
       <h1 className="mt-3 max-w-3xl text-balance text-3xl tracking-[-0.05em] md:text-[3.1rem] md:leading-[0.95]">
         {peptide.name}

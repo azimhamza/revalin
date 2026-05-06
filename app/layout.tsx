@@ -39,13 +39,13 @@ export const metadata: Metadata = {
     template: '%s',
   },
   description:
-    'Revalin is a research peptide distributor for qualified buyers, offering lab-use peptide products for in-vitro and pre-clinical research.',
+    'Revalin is a research chemical distributor for qualified buyers, offering lab-use research chemicals for in-vitro and pre-clinical research.',
   keywords: [
-    'research peptides',
-    'peptide purchase',
-    'buy peptides for research',
+    'research chemicals',
+    'research chemical purchase',
+    'buy research chemicals',
     'research company distributor',
-    'laboratory peptide supplier',
+    'laboratory research chemical supplier',
     'in-vitro research products',
   ],
   applicationName: 'Revalin',
@@ -56,13 +56,13 @@ export const metadata: Metadata = {
     title: 'Revalin',
     url: siteUrl,
     description:
-      'Revalin is a research peptide distributor for qualified buyers, offering lab-use peptide products for in-vitro and pre-clinical research.',
+      'Revalin is a research chemical distributor for qualified buyers, offering lab-use research chemicals for in-vitro and pre-clinical research.',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Revalin',
     description:
-      'Revalin is a research peptide distributor for qualified buyers, offering lab-use peptide products for in-vitro and pre-clinical research.',
+      'Revalin is a research chemical distributor for qualified buyers, offering lab-use research chemicals for in-vitro and pre-clinical research.',
   },
   generator: 'v0.app',
 };

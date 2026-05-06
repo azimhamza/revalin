@@ -170,7 +170,7 @@ export function AboutContent() {
               variants={staggerContainer}
             >
               <Paragraph>
-                We started Revalin because the research peptide market didn't reflect the
+                We started Revalin because the research chemical market didn't reflect the
                 seriousness of the science. Grey-market suppliers with no documentation,
                 no third-party testing, and packaging that felt more like a back-alley
                 transaction than a considered purchase. The compounds existed — but the
@@ -224,7 +224,7 @@ export function AboutContent() {
               variants={staggerContainer}
             >
               <Paragraph>
-                The peptide space has a trust problem. Most suppliers can't substantiate their
+                The research chemical space has a trust problem. Most suppliers can't substantiate their
                 claims — and don't try. We believe that's the wrong foundation for a category
                 where what's in the vial actually matters.
               </Paragraph>
@@ -235,7 +235,7 @@ export function AboutContent() {
                 to meet the same standard they hold themselves to.
               </Paragraph>
               <Paragraph>
-                The research peptide category has operated without accountability for too long.
+                The research chemical category has operated without accountability for too long.
                 We intend to change that.
               </Paragraph>
             </motion.div>
@@ -271,7 +271,7 @@ export function AboutContent() {
             >
               <Paragraph>
                 Every batch is independently tested by Janoshik Analytical — one of the most
-                respected peptide testing laboratories in the world. Our Certificates of Analysis
+                respected research chemical testing laboratories in the world. Our Certificates of Analysis
                 are published openly with verification keys you can confirm directly with the lab.
                 No request form. No gatekeeping. Just proof.
               </Paragraph>

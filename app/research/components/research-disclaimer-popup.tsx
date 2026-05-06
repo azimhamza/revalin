@@ -16,7 +16,7 @@ import {
 const LEGACY_STORAGE_KEY = 'revalin_research_verified';
 
 const INFO_POINTS = [
-  { icon: FlaskConical, text: 'Research-grade peptides for in-vitro and pre-clinical use' },
+  { icon: FlaskConical, text: 'Research-grade chemicals for in-vitro and pre-clinical use' },
   { icon: ShieldCheck, text: 'Independently tested by Janoshik Analytical' },
   { icon: FileCheck2, text: 'Published COAs with every batch' },
 ] as const;

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { and, asc, count, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 
 import { db } from "@/lib/db";
@@ -50,6 +51,8 @@ export type PurchasePaymentStatus =
 type InventoryItemRow = typeof inventoryItems.$inferSelect;
 type InventoryMovementRow = typeof inventoryMovements.$inferSelect;
 type PurchaseOrderRow = typeof purchaseOrders.$inferSelect;
+
+const INVENTORY_MOVEMENT_IDEMPOTENCY_KEY_MAX_LENGTH = 180;
 
 export type InventoryItemSummary = {
   id: string;
@@ -219,6 +222,23 @@ function normalizeOptionalString(value?: string | null) {
 function normalizeComparable(value?: string | null) {
   const normalized = value?.trim().toLowerCase();
   return normalized || null;
+}
+
+function normalizeInventoryMovementIdempotencyKey(value?: string | null) {
+  const normalized = value?.trim();
+  if (!normalized) return null;
+  if (normalized.length <= INVENTORY_MOVEMENT_IDEMPOTENCY_KEY_MAX_LENGTH) {
+    return normalized;
+  }
+
+  const hash = crypto
+    .createHash("sha256")
+    .update(normalized)
+    .digest("hex")
+    .slice(0, 32);
+  const prefixLength = INVENTORY_MOVEMENT_IDEMPOTENCY_KEY_MAX_LENGTH - hash.length - 1;
+
+  return `${normalized.slice(0, prefixLength)}:${hash}`;
 }
 
 function extractBackendProductId(productId: string) {
@@ -478,7 +498,7 @@ async function insertMovement(args: {
       checkoutOrderNumber: args.checkoutOrderNumber ?? null,
       sourceType: args.sourceType ?? null,
       sourceId: args.sourceId ?? null,
-      idempotencyKey: args.idempotencyKey ?? null,
+      idempotencyKey: normalizeInventoryMovementIdempotencyKey(args.idempotencyKey),
       createdByUserId: args.createdByUserId ?? null,
       notes: args.notes ?? null,
       metadata: args.metadata,

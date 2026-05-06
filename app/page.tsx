@@ -18,7 +18,7 @@ import { getSiteUrl } from '@/lib/site';
 export const metadata = {
   title: 'Revalin',
   description:
-    'Research-grade peptides with published COAs, independent batch testing, and clear fulfillment timelines for qualified buyers.',
+    'Research-grade chemicals with published COAs, independent batch testing, and clear fulfillment timelines for qualified buyers.',
   alternates: {
     canonical: '/',
   },
@@ -91,7 +91,7 @@ export default async function Home() {
     name: 'Revalin',
     url: siteUrl,
     description:
-      'Research peptide supplier offering independently tested, lab-grade compounds for in-vitro and pre-clinical research.',
+      'Research chemical supplier offering independently tested, lab-grade compounds for in-vitro and pre-clinical research.',
     contactPoint: {
       '@type': 'ContactPoint',
       email: 'support@revalin.ca',

@@ -26,7 +26,7 @@ const REASONS = [
   {
     icon: Truck,
     title: 'Protected Shipping',
-    description: 'Cold-pack shipping keeps peptides stable. Free insurance on every order.',
+    description: 'Cold-pack shipping keeps compounds stable. Free insurance on every order.',
   },
   {
     icon: FlaskConical,

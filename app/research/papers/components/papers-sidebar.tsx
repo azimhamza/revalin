@@ -48,7 +48,7 @@ export function PapersSidebar({
             Peer-reviewed papers, curated.
           </p>
           <div className="mt-4 space-y-1 text-sm leading-tight text-[#0B2E2F]/72">
-            <p>Every paper cross-linked to the peptide it studies.</p>
+            <p>Every paper cross-linked to the compound it studies.</p>
             <p>Filter by compound or topic.</p>
             <p>No marketing copy — the literature, as published.</p>
           </div>
@@ -68,7 +68,7 @@ export function PapersSidebar({
         {peptides.length > 0 ? (
           <div className="space-y-3">
             <p className="text-[10px] uppercase tracking-[0.22em] text-[#0B2E2F]/55">
-              Peptide
+              Compound
             </p>
             <div className="flex flex-wrap gap-1.5">
               <SidebarChip

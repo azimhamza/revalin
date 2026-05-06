@@ -4,7 +4,7 @@ import Link from 'next/link';
 
 export const metadata: Metadata = {
   title: 'Contact | Revalin',
-  description: 'Contact Revalin for research peptide inquiries, order support, and compliance questions.',
+  description: 'Contact Revalin for research chemical inquiries, order support, and compliance questions.',
   alternates: {
     canonical: '/contact',
   },

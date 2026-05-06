@@ -76,7 +76,7 @@ export default function TermsOfServicePage() {
               </p>
               <ul className="list-disc pl-6 space-y-1.5">
                 <li><strong>&quot;Revalin&quot;</strong> or <strong>&quot;Company&quot;</strong> refers to Revalin and its affiliates, operating under Canadian jurisdiction.</li>
-                <li><strong>&quot;Products&quot;</strong> refers to all research chemicals, peptides, and related materials sold through the Revalin website.</li>
+                <li><strong>&quot;Products&quot;</strong> refers to all research chemicals and related materials sold through the Revalin website.</li>
                 <li><strong>&quot;Research purposes&quot;</strong> means lawful in-vitro experimentation, pre-clinical laboratory research, analytical testing, or other non-clinical scientific investigation.</li>
                 <li><strong>&quot;Qualified researcher&quot;</strong> means an individual who possesses appropriate training, facilities, and institutional oversight to handle research chemicals in accordance with applicable safety standards.</li>
                 <li><strong>&quot;Laboratory use&quot;</strong> means use within a controlled research environment with proper safety equipment, protocols, and waste disposal procedures.</li>

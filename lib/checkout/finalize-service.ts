@@ -33,6 +33,7 @@ import {
 import {
   claimBankfulPaymentAttemptCapture,
   createBankfulPaymentAttempt,
+  findRecentSafeBankfulFallbackAttempt,
   updateBankfulPaymentAttempt,
 } from '@/lib/checkout/bankful-attempt-store';
 import {
@@ -211,6 +212,7 @@ export type FinalizeCheckoutDependencies = {
   createNowPaymentsPayment: typeof createNowPaymentsPayment;
   createSquarePaymentLink: typeof createSquarePaymentLink;
   createBankfulPaymentAttempt: typeof createBankfulPaymentAttempt;
+  findRecentSafeBankfulFallbackAttempt: typeof findRecentSafeBankfulFallbackAttempt;
   claimBankfulPaymentAttemptCapture: typeof claimBankfulPaymentAttemptCapture;
   updateBankfulPaymentAttempt: typeof updateBankfulPaymentAttempt;
   createBankfulSale: typeof createBankfulSale;
@@ -254,6 +256,8 @@ function createBankfulAttemptId(sessionId: string, version: number) {
 
   return `BF${digest}`;
 }
+
+const BANKFUL_SAFE_FAILURE_DEDUPE_MS = 7 * 24 * 60 * 60 * 1000;
 
 function normalizeComparableValue(value?: string | null) {
   return (value || '').trim();
@@ -1674,62 +1678,76 @@ export function createFinalizeCheckoutSession(
       }
 
       const affiliateRefCode = args.affiliateCode?.trim() || null;
-      let resolvedAffiliate: Awaited<
-        ReturnType<typeof getApprovedAffiliateByDiscountCode>
-      > = null;
-      let affiliateSource: 'url' | 'discount_code' | null = null;
 
-      if (args.discountCode) {
-        resolvedAffiliate =
-          await dependencies.getApprovedAffiliateByDiscountCode(
-            args.discountCode,
-          );
-        if (resolvedAffiliate) {
-          affiliateSource = affiliateRefCode ? 'url' : 'discount_code';
+      async function resolveCheckoutAttribution(discountCode?: string | null) {
+        let resolvedAffiliate: Awaited<
+          ReturnType<typeof getApprovedAffiliateByDiscountCode>
+        > = null;
+        let affiliateSource: 'url' | 'discount_code' | null = null;
+
+        const appliedDiscountCode = discountCode?.trim();
+        if (appliedDiscountCode) {
+          resolvedAffiliate =
+            await dependencies.getApprovedAffiliateByDiscountCode(
+              appliedDiscountCode,
+            );
+          if (resolvedAffiliate) {
+            affiliateSource = affiliateRefCode ? 'url' : 'discount_code';
+          }
         }
-      }
-      if (!resolvedAffiliate && affiliateRefCode) {
-        resolvedAffiliate =
-          await dependencies.getApprovedAffiliateByCode(affiliateRefCode);
-        if (resolvedAffiliate) {
-          affiliateSource = 'url';
+        if (!resolvedAffiliate && affiliateRefCode) {
+          resolvedAffiliate =
+            await dependencies.getApprovedAffiliateByCode(affiliateRefCode);
+          if (resolvedAffiliate) {
+            affiliateSource = 'url';
+          }
         }
+
+        const commissionSnapshot = resolvedAffiliate
+          ? await dependencies
+              .getAffiliateCommissionSnapshot({
+                affiliateId: resolvedAffiliate.id,
+              })
+              .catch((commissionError) => {
+                console.error(
+                  'Unable to load affiliate commission snapshot during checkout finalize; falling back to affiliate base rate.',
+                  {
+                    affiliateId: resolvedAffiliate?.id,
+                    error:
+                      commissionError instanceof Error
+                        ? commissionError.message
+                        : commissionError,
+                  },
+                );
+                return null;
+              })
+          : null;
+        const affiliateData = buildAffiliateData({
+          resolvedAffiliate,
+          affiliateSource,
+          commissionSnapshot,
+          fallbackCommissionMonthKey: dependencies.getCommissionMonthKey(
+            dependencies.nowDate(),
+          ),
+        });
+        const promoterAttribution = affiliateData
+          ? await dependencies.getSuccessfulPromoterForAffiliate(affiliateData.id)
+          : null;
+        const promoterData = buildPromoterData({
+          promoterAttribution,
+          affiliateData,
+        });
+
+        return {
+          resolvedAffiliate,
+          affiliateSource,
+          commissionSnapshot,
+          affiliateData,
+          promoterData,
+        };
       }
 
-      const commissionSnapshot = resolvedAffiliate
-        ? await dependencies
-            .getAffiliateCommissionSnapshot({
-              affiliateId: resolvedAffiliate.id,
-            })
-            .catch((commissionError) => {
-              console.error(
-                'Unable to load affiliate commission snapshot during checkout finalize; falling back to affiliate base rate.',
-                {
-                  affiliateId: resolvedAffiliate?.id,
-                  error:
-                    commissionError instanceof Error
-                      ? commissionError.message
-                      : commissionError,
-                },
-              );
-              return null;
-            })
-        : null;
-      const affiliateData = buildAffiliateData({
-        resolvedAffiliate,
-        affiliateSource,
-        commissionSnapshot,
-        fallbackCommissionMonthKey: dependencies.getCommissionMonthKey(
-          dependencies.nowDate(),
-        ),
-      });
-      const promoterAttribution = affiliateData
-        ? await dependencies.getSuccessfulPromoterForAffiliate(affiliateData.id)
-        : null;
-      const promoterData = buildPromoterData({
-        promoterAttribution,
-        affiliateData,
-      });
+      let checkoutAttribution = await resolveCheckoutAttribution(args.discountCode);
 
       const cartOrders = await dependencies.findCheckoutOrdersByCartId(
         fallbackCartId,
@@ -1950,6 +1968,7 @@ export function createFinalizeCheckoutSession(
           ? Number(ratedCart.sub_total)
           : subtotalAmount;
         const appliedDiscountCode = args.discountCode || ratedCart.coupon_code;
+        checkoutAttribution = await resolveCheckoutAttribution(appliedDiscountCode);
         const couponDiscountRate = await getSwellCouponDiscountRate(appliedDiscountCode);
         const pricing = calculateCheckoutPricing({
           currencyCode: orderCurrencyCode,
@@ -2055,6 +2074,32 @@ export function createFinalizeCheckoutSession(
           },
           shippingStatus: orderShipmentTotal <= 0.009 ? 'free' : 'quoted',
         };
+
+        const previousSafeFailure =
+          await dependencies.findRecentSafeBankfulFallbackAttempt({
+            email: args.shippingAddress.email,
+            amount: remainderPaymentAmount.toFixed(2),
+            currencyCode: orderCurrencyCode,
+            shippingAddress: args.shippingAddress,
+            shippingService,
+            lines,
+            totals,
+            newerThan: new Date(Date.now() - BANKFUL_SAFE_FAILURE_DEDUPE_MS),
+          });
+
+        if (previousSafeFailure && isSquareFallbackEligible()) {
+          throw createBankfulSafeFallbackError({
+            message: 'Bankful already failed for this checkout. Continue with secure hosted card checkout.',
+            code: 'bankful_previous_safe_failure',
+            reason: 'bankful_previous_safe_failure',
+            attemptId: previousSafeFailure.attemptId,
+            bankfulStatus: previousSafeFailure.bankful?.statusName ?? previousSafeFailure.status,
+            originalError: {
+              message: previousSafeFailure.latestError || 'Previous Bankful attempt failed safely before fulfillment.',
+              status: previousSafeFailure.status,
+            },
+          });
+        }
 
         await dependencies.createBankfulPaymentAttempt({
           attemptId,
@@ -2244,8 +2289,8 @@ export function createFinalizeCheckoutSession(
 
           const checkoutOrder = await dependencies.saveCheckoutOrder({
             ...bankfulOrderRecord,
-            affiliate: affiliateData,
-            promoter: promoterData,
+            affiliate: checkoutAttribution.affiliateData,
+            promoter: checkoutAttribution.promoterData,
           });
           checkoutOrderId = checkoutOrder.orderId;
           swellOrderId = undefined;
@@ -2308,8 +2353,8 @@ export function createFinalizeCheckoutSession(
             itemCount,
             paymentProvider: 'bankful' as const,
             paymentMethod: 'card' as const,
-            affiliateCode: resolvedAffiliate?.code ?? null,
-            affiliateSource,
+            affiliateCode: checkoutAttribution.resolvedAffiliate?.code ?? null,
+            affiliateSource: checkoutAttribution.affiliateSource,
           };
 
           dependencies
@@ -2400,6 +2445,7 @@ export function createFinalizeCheckoutSession(
           ? Number(swellOrder.sub_total)
           : subtotalAmount;
         const appliedDiscountCode = args.discountCode || swellOrder.coupon_code;
+        checkoutAttribution = await resolveCheckoutAttribution(appliedDiscountCode);
         const couponDiscountRate = await getSwellCouponDiscountRate(appliedDiscountCode);
         const pricing = calculateCheckoutPricing({
           currencyCode: orderCurrencyCode,
@@ -2532,14 +2578,15 @@ export function createFinalizeCheckoutSession(
               expected_currency: cadCurrency,
               status: 'pending',
             },
-            affiliate: resolvedAffiliate
+            affiliate: checkoutAttribution.resolvedAffiliate &&
+              checkoutAttribution.affiliateData
               ? {
-                  ...affiliateData,
+                  ...checkoutAttribution.affiliateData,
                   commissionOwed: (
                     orderTotal *
                     Number(
-                      commissionSnapshot?.effectiveRate ||
-                        resolvedAffiliate.commissionRate,
+                      checkoutAttribution.commissionSnapshot?.effectiveRate ||
+                        checkoutAttribution.resolvedAffiliate.commissionRate,
                     )
                   ).toFixed(2),
                   currencyCode: cadCurrency,
@@ -2547,11 +2594,11 @@ export function createFinalizeCheckoutSession(
                   status: 'pending',
                 }
               : null,
-            promoter: promoterData
+            promoter: checkoutAttribution.promoterData
               ? {
-                  ...promoterData,
+                  ...checkoutAttribution.promoterData,
                   commissionOwed: (
-                    orderTotal * Number(promoterData.commissionRate)
+                    orderTotal * Number(checkoutAttribution.promoterData.commissionRate)
                   ).toFixed(2),
                   currencyCode: cadCurrency,
                   paymentProvider: 'square',
@@ -2599,8 +2646,8 @@ export function createFinalizeCheckoutSession(
 
         const checkoutOrder = await dependencies.saveCheckoutOrder({
           ...squareOrderRecord,
-          affiliate: affiliateData,
-          promoter: promoterData,
+          affiliate: checkoutAttribution.affiliateData,
+          promoter: checkoutAttribution.promoterData,
         });
         checkoutOrderId = checkoutOrder.orderId;
         squarePaymentLinkId = undefined;
@@ -2641,8 +2688,8 @@ export function createFinalizeCheckoutSession(
           itemCount,
           paymentProvider: 'square' as const,
           paymentMethod: 'card' as const,
-          affiliateCode: resolvedAffiliate?.code ?? null,
-          affiliateSource,
+          affiliateCode: checkoutAttribution.resolvedAffiliate?.code ?? null,
+          affiliateSource: checkoutAttribution.affiliateSource,
         };
 
         dependencies
@@ -2713,6 +2760,7 @@ export function createFinalizeCheckoutSession(
         ? Number(swellOrder.sub_total)
         : subtotalAmount;
       const appliedDiscountCode = args.discountCode || swellOrder.coupon_code;
+      checkoutAttribution = await resolveCheckoutAttribution(appliedDiscountCode);
       const couponDiscountRate = await getSwellCouponDiscountRate(appliedDiscountCode);
       const pricing = calculateCheckoutPricing({
         currencyCode: orderCurrencyCode,
@@ -2850,16 +2898,17 @@ export function createFinalizeCheckoutSession(
               expires_at: expiresAt,
               status: 'awaiting_transfer',
             },
-            affiliate: resolvedAffiliate
+            affiliate: checkoutAttribution.resolvedAffiliate &&
+              checkoutAttribution.affiliateData
               ? {
-                  ...affiliateData,
+                  ...checkoutAttribution.affiliateData,
                   paymentProvider: 'interac',
                   status: 'pending',
                 }
               : null,
-            promoter: promoterData
+            promoter: checkoutAttribution.promoterData
               ? {
-                  ...promoterData,
+                  ...checkoutAttribution.promoterData,
                   paymentProvider: 'interac',
                   status: 'pending',
                 }
@@ -2911,8 +2960,8 @@ export function createFinalizeCheckoutSession(
 
         const checkoutOrder = await dependencies.saveCheckoutOrder({
           ...interacOrderRecord,
-          affiliate: affiliateData,
-          promoter: promoterData,
+          affiliate: checkoutAttribution.affiliateData,
+          promoter: checkoutAttribution.promoterData,
         });
         checkoutOrderId = checkoutOrder.orderId;
 
@@ -2943,8 +2992,8 @@ export function createFinalizeCheckoutSession(
           itemCount,
           paymentProvider: 'interac' as const,
           paymentMethod: 'interac' as const,
-          affiliateCode: resolvedAffiliate?.code ?? null,
-          affiliateSource,
+          affiliateCode: checkoutAttribution.resolvedAffiliate?.code ?? null,
+          affiliateSource: checkoutAttribution.affiliateSource,
         };
 
         dependencies
@@ -3034,26 +3083,27 @@ export function createFinalizeCheckoutSession(
             source_wallet_address: args.sourceWalletAddress || null,
             pay_amount: payment.pay_amount,
           },
-          affiliate: resolvedAffiliate
+          affiliate: checkoutAttribution.resolvedAffiliate &&
+            checkoutAttribution.affiliateData
             ? {
-                ...affiliateData,
+                ...checkoutAttribution.affiliateData,
                 commissionOwed: (
                   orderTotal *
                   Number(
-                    commissionSnapshot?.effectiveRate ||
-                      resolvedAffiliate.commissionRate,
+                    checkoutAttribution.commissionSnapshot?.effectiveRate ||
+                      checkoutAttribution.resolvedAffiliate.commissionRate,
                   )
                 ).toFixed(2),
                 currencyCode: fiatCurrency.toUpperCase(),
                 paymentProvider: 'nowpayments',
                 status: 'pending',
-              }
+            }
             : null,
-          promoter: promoterData
+          promoter: checkoutAttribution.promoterData
             ? {
-                ...promoterData,
+                ...checkoutAttribution.promoterData,
                 commissionOwed: (
-                  orderTotal * Number(promoterData.commissionRate)
+                  orderTotal * Number(checkoutAttribution.promoterData.commissionRate)
                 ).toFixed(2),
                 currencyCode: fiatCurrency.toUpperCase(),
                 paymentProvider: 'nowpayments',
@@ -3103,8 +3153,8 @@ export function createFinalizeCheckoutSession(
 
       const checkoutOrder = await dependencies.saveCheckoutOrder({
         ...npOrderRecord,
-        affiliate: affiliateData,
-        promoter: promoterData,
+        affiliate: checkoutAttribution.affiliateData,
+        promoter: checkoutAttribution.promoterData,
       });
       checkoutOrderId = checkoutOrder.orderId;
 
@@ -3135,8 +3185,8 @@ export function createFinalizeCheckoutSession(
         itemCount,
         paymentProvider: 'nowpayments' as const,
         paymentMethod: 'crypto' as const,
-        affiliateCode: resolvedAffiliate?.code ?? null,
-        affiliateSource,
+        affiliateCode: checkoutAttribution.resolvedAffiliate?.code ?? null,
+        affiliateSource: checkoutAttribution.affiliateSource,
       };
 
       dependencies
@@ -3242,6 +3292,7 @@ export const finalizeCheckoutSession = createFinalizeCheckoutSession({
   createNowPaymentsPayment,
   createSquarePaymentLink,
   createBankfulPaymentAttempt,
+  findRecentSafeBankfulFallbackAttempt,
   claimBankfulPaymentAttemptCapture,
   updateBankfulPaymentAttempt,
   createBankfulSale,

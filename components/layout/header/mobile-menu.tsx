@@ -143,13 +143,13 @@ export default function MobileMenu({ collections }: MobileMenuProps) {
                 <ShopLinks label="Categories" collections={collections} />
 
                 <div className="mt-auto mb-6 text-sm leading-tight opacity-50">
-                  <p className="italic">Research-grade peptides. &gt;99% purity.</p>
+                  <p className="italic">Research-grade chemicals. &gt;99% purity.</p>
                   <div className="mt-3">
                     <p>Third-party batch testing. COAs included.</p>
                     <p>Ships same day. Free Shipping over $250 USD / $350 CAD.</p>
                   </div>
                   <div className="mt-3">
-                    <p>Peptides that don&apos;t need promises, just proof.</p>
+                    <p>Compounds that don&apos;t need promises, just proof.</p>
                     <p>Pure chemistry, zero hype.</p>
                     <p>Transparency with teeth — results over rhetoric.</p>
                   </div>

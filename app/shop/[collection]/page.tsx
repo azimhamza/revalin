@@ -16,14 +16,14 @@ export async function generateMetadata(props: { params: Promise<{ collection: st
     description:
       collection.seo?.description ||
       collection.description ||
-      `${collection.title} research peptide products available for qualified purchase through Revalin.`,
+      `${collection.title} research chemical products available for qualified purchase through Revalin.`,
     keywords: [
-      `${collection.title} peptides`,
-      `${collection.title} peptide purchase`,
-      'research peptides',
-      'peptide distributor',
+      `${collection.title} research chemicals`,
+      `${collection.title} research chemical purchase`,
+      'research chemicals',
+      'research chemical distributor',
       'research product supplier',
-      'laboratory peptides',
+      'laboratory research chemicals',
     ],
     alternates: {
       canonical: `/shop/${params.collection}`,

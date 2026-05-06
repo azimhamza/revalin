@@ -14,7 +14,7 @@ export const revalidate = 300;
 export const metadata: Metadata = {
   title: "Research Papers | Revalin",
   description:
-    "Browse published peptide research papers, protocols, and literature summaries from the Revalin research library.",
+    "Browse published research papers, protocols, and literature summaries from the Revalin research library.",
   alternates: {
     canonical: "/research/papers",
   },
@@ -63,7 +63,7 @@ export default async function PapersIndexPage({ searchParams }: PapersPageProps)
               Papers &amp; protocols, as published.
             </h1>
             <p className="max-w-xl text-sm leading-relaxed text-[#0B2E2F]/72 md:text-base">
-              Curated peptide research from the Revalin team. All content is
+              Curated research chemical literature from the Revalin team. All content is
               intended for licensed researchers working in laboratory settings.
             </p>
           </header>
@@ -125,7 +125,7 @@ function MobileFilters({
       {peptides.length > 0 ? (
         <div className="space-y-2">
           <p className="text-[10px] uppercase tracking-[0.22em] text-[#0B2E2F]/55">
-            Peptide
+            Compound
           </p>
           <div className="flex flex-wrap gap-1.5">
             <MobileChip

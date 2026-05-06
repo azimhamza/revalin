@@ -41,7 +41,7 @@ export function ResearchCard({ peptide }: { peptide: Peptide }) {
           }`}
         >
           <p className="text-[10px] uppercase tracking-[0.22em] opacity-75">
-            Peptide profile
+            Compound profile
           </p>
           <p className="mt-1 text-base font-medium tracking-[-0.02em] md:text-lg">
             {peptide.name}
@@ -62,7 +62,7 @@ export function ResearchCard({ peptide }: { peptide: Peptide }) {
           <div className="flex justify-between items-start gap-2">
             <div>
               <p className="text-[10px] uppercase tracking-[0.22em] text-[#0B2E2F]/55">
-                Peptide profile
+                Compound profile
               </p>
               <p className="mt-1 text-lg tracking-[-0.02em]">{peptide.name}</p>
             </div>

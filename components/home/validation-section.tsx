@@ -26,7 +26,7 @@ const VALIDATION_PANELS = [
   {
     icon: BadgeCheck,
     eyebrow: 'Purity',
-    headline: '>99% average purity across active peptides.',
+    headline: '>99% average purity across active compounds.',
     detail:
       'Documented on the COA, not in a headline. Research-grade material for in-vitro and pre-clinical work.',
     href: '/about',
@@ -54,17 +54,17 @@ const QUICK_FAQ = [
   {
     question: 'What is Revalin?',
     answer:
-      'Revalin is a proudly Canadian research peptide supplier providing independently tested, lab-grade peptides for qualified research institutions and professionals conducting in-vitro and pre-clinical research.',
+      'Revalin is a proudly Canadian research chemical supplier providing independently tested, lab-grade compounds for qualified research institutions and professionals conducting in-vitro and pre-clinical research.',
   },
   {
-    question: 'Are Revalin peptides for human use?',
+    question: 'Are Revalin compounds for human use?',
     answer:
       'No. All Revalin products are sold exclusively for lawful in-vitro and pre-clinical research purposes. They are not intended for human consumption, veterinary use, or any clinical application.',
   },
   {
-    question: 'Who tests Revalin research peptides?',
+    question: 'Who tests Revalin research chemicals?',
     answer:
-      'All Revalin research peptides are independently tested by Janoshik Analytical, a third-party laboratory specializing in peptide purity and identity verification. Every batch ships with a Certificate of Analysis traceable to the original lab report.',
+      'All Revalin research chemicals are independently tested by Janoshik Analytical, a third-party laboratory specializing in compound purity and identity verification. Every batch ships with a Certificate of Analysis traceable to the original lab report.',
   },
   {
     question: 'How can I verify product purity?',
@@ -74,12 +74,12 @@ const QUICK_FAQ = [
   {
     question: 'What is a Certificate of Analysis (COA)?',
     answer:
-      'A Certificate of Analysis is a lab-issued document confirming the purity, identity, and quality of a research peptide. Revalin publishes a COA for every batch with a verification key that can be cross-checked directly with Janoshik Analytical.',
+      'A Certificate of Analysis is a lab-issued document confirming the purity, identity, and quality of a research compound. Revalin publishes a COA for every batch with a verification key that can be cross-checked directly with Janoshik Analytical.',
   },
   {
     question: 'Where does Revalin ship?',
     answer:
-      'Revalin ships research peptides across Canada and the United States. Orders placed before the daily cutoff are dispatched same-day with full tracking, and free shipping is available on orders over $250 USD or $350 CAD.',
+      'Revalin ships research chemicals across Canada and the United States. Orders placed before the daily cutoff are dispatched same-day with full tracking, and free shipping is available on orders over $250 USD or $350 CAD.',
   },
 ] as const;
 
@@ -153,7 +153,7 @@ export function ValidationSection() {
               variants={fadeUp}
               className="text-base leading-[1.7] text-[#0B2E2F]/78 md:text-[1.0625rem]"
             >
-              Revalin is a proudly Canadian research peptide supplier. Every
+              Revalin is a proudly Canadian research chemical supplier. Every
               compound we ship is independently tested by Janoshik Analytical, published with an
               open Certificate of Analysis, and dispatched same-day to qualified researchers
               across Canada and the United States. Lab-grade material for in-vitro and pre-clinical

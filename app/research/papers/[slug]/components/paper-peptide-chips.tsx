@@ -11,7 +11,7 @@ export function PaperPeptideChips({ peptides }: PaperPeptideChipsProps) {
     <section className="mt-14 px-sides text-[#0B2E2F]">
       <div className="mx-auto max-w-[72ch]">
         <p className="text-[10px] uppercase tracking-[0.24em] text-[#0B2E2F]/55">
-          Related peptides
+          Related compounds
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           {peptides.map((peptide) => (

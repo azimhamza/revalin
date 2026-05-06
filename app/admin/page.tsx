@@ -25,6 +25,7 @@ import {
   user,
 } from "@/lib/db/schema";
 import { getAffiliateVisitReferrerBreakdown } from "@/lib/checkout/affiliate-visit-service";
+import { sumPayoutAmountSql } from "@/lib/checkout/payout-amount-sql";
 
 import {
   AdminPanel,
@@ -193,7 +194,10 @@ async function getManualAffiliateTelemetryAdjustments(
     .select({
       affiliateCode: affiliatePayouts.affiliateCode,
       purchases: sql<number>`count(*)`,
-      revenue: sql<number>`coalesce(sum(coalesce(nullif(${affiliatePayouts.normalizedOrderTotal}, '')::numeric, nullif(${affiliatePayouts.orderTotal}, '')::numeric, 0)), 0)`,
+      revenue: sumPayoutAmountSql(
+        affiliatePayouts.normalizedOrderTotal,
+        affiliatePayouts.orderTotal,
+      ),
     })
     .from(affiliatePayouts)
     .where(

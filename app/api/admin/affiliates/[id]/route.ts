@@ -24,6 +24,10 @@ import {
   setAffiliateCommissionOverride,
   updateAffiliateBaselineCommission,
 } from "@/lib/checkout/commission-service";
+import {
+  payoutAmountSql,
+  sumPayoutAmountSql,
+} from "@/lib/checkout/payout-amount-sql";
 
 const paramsSchema = z.object({
   id: z.string().trim().min(1),
@@ -144,15 +148,21 @@ async function getAffiliateAdminPerformance(args: {
       db
         .select({
           orderCount: sql<number>`count(*)`,
-          revenue: sql<string>`coalesce(sum(coalesce(nullif(${affiliatePayouts.normalizedOrderTotal}, '')::numeric, nullif(${affiliatePayouts.orderTotal}, '')::numeric, 0)), 0)`,
-          commission: sql<string>`coalesce(sum(coalesce(nullif(${affiliatePayouts.normalizedCommissionAmount}, '')::numeric, nullif(${affiliatePayouts.commissionAmount}, '')::numeric, 0)), 0)`,
+          revenue: sumPayoutAmountSql(
+            affiliatePayouts.normalizedOrderTotal,
+            affiliatePayouts.orderTotal,
+          ),
+          commission: sumPayoutAmountSql(
+            affiliatePayouts.normalizedCommissionAmount,
+            affiliatePayouts.commissionAmount,
+          ),
         })
         .from(affiliatePayouts)
         .where(payoutScope),
       db
         .select({
-          currentMonthCommission: sql<string>`coalesce(sum(coalesce(nullif(${affiliatePayouts.normalizedCommissionAmount}, '')::numeric, nullif(${affiliatePayouts.commissionAmount}, '')::numeric, 0)) filter (where coalesce(${affiliatePayouts.commissionMonthKey}, to_char(coalesce(${affiliatePayouts.earnedAt}, ${affiliatePayouts.createdAt}), 'YYYY-MM')) = ${monthKey}), 0)`,
-          currentYearCommission: sql<string>`coalesce(sum(coalesce(nullif(${affiliatePayouts.normalizedCommissionAmount}, '')::numeric, nullif(${affiliatePayouts.commissionAmount}, '')::numeric, 0)) filter (where left(coalesce(${affiliatePayouts.commissionMonthKey}, to_char(coalesce(${affiliatePayouts.earnedAt}, ${affiliatePayouts.createdAt}), 'YYYY-MM')), 4) = ${yearKey}), 0)`,
+          currentMonthCommission: sql<string>`coalesce(sum(${payoutAmountSql(affiliatePayouts.normalizedCommissionAmount, affiliatePayouts.commissionAmount)}) filter (where coalesce(${affiliatePayouts.commissionMonthKey}, to_char(coalesce(${affiliatePayouts.earnedAt}, ${affiliatePayouts.createdAt}), 'YYYY-MM')) = ${monthKey}), 0)`,
+          currentYearCommission: sql<string>`coalesce(sum(${payoutAmountSql(affiliatePayouts.normalizedCommissionAmount, affiliatePayouts.commissionAmount)}) filter (where left(coalesce(${affiliatePayouts.commissionMonthKey}, to_char(coalesce(${affiliatePayouts.earnedAt}, ${affiliatePayouts.createdAt}), 'YYYY-MM')), 4) = ${yearKey}), 0)`,
         })
         .from(affiliatePayouts)
         .where(eq(affiliatePayouts.affiliateId, args.affiliateId)),

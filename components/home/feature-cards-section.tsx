@@ -71,7 +71,7 @@ export function FeatureCardsSection() {
             Everything you need for your research.
           </h2>
           <p className="mt-4 max-w-lg text-[15px] leading-relaxed text-[#0B2E2F]/55 md:text-base">
-            Lab-grade peptides backed by transparent testing, fast fulfillment, and dedicated support.
+            Lab-grade research chemicals backed by transparent testing, fast fulfillment, and dedicated support.
           </p>
         </motion.div>
 

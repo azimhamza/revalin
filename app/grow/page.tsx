@@ -9,12 +9,12 @@ export const metadata: Metadata = {
   keywords: [
     'Revalin',
     'partner program',
-    'research peptides',
+    'research chemicals',
     'growth partner',
     'promoter',
     'earn commission',
     'research community',
-    'peptide partner',
+    'research chemical partner',
   ],
   alternates: {
     canonical: '/grow',

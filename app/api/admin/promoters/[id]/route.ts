@@ -14,6 +14,10 @@ import {
   getPromoterById,
   listPromoterInvites,
 } from "@/lib/checkout/promoter-service";
+import {
+  payoutAmountSql,
+  sumPayoutAmountSql,
+} from "@/lib/checkout/payout-amount-sql";
 
 const paramsSchema = z.object({
   id: z.string().trim().min(1),
@@ -70,15 +74,21 @@ async function getPromoterAdminPerformance(args: {
     db
       .select({
         orderCount: sql<number>`count(*)`,
-        revenue: sql<string>`coalesce(sum(coalesce(nullif(${promoterPayouts.normalizedOrderTotal}, '')::numeric, nullif(${promoterPayouts.orderTotal}, '')::numeric, 0)), 0)`,
-        commission: sql<string>`coalesce(sum(coalesce(nullif(${promoterPayouts.normalizedCommissionAmount}, '')::numeric, nullif(${promoterPayouts.commissionAmount}, '')::numeric, 0)), 0)`,
+        revenue: sumPayoutAmountSql(
+          promoterPayouts.normalizedOrderTotal,
+          promoterPayouts.orderTotal,
+        ),
+        commission: sumPayoutAmountSql(
+          promoterPayouts.normalizedCommissionAmount,
+          promoterPayouts.commissionAmount,
+        ),
       })
       .from(promoterPayouts)
       .where(payoutScope),
     db
       .select({
-        currentMonthCommission: sql<string>`coalesce(sum(coalesce(nullif(${promoterPayouts.normalizedCommissionAmount}, '')::numeric, nullif(${promoterPayouts.commissionAmount}, '')::numeric, 0)) filter (where coalesce(${promoterPayouts.commissionMonthKey}, to_char(coalesce(${promoterPayouts.earnedAt}, ${promoterPayouts.createdAt}), 'YYYY-MM')) = ${monthKey}), 0)`,
-        currentYearCommission: sql<string>`coalesce(sum(coalesce(nullif(${promoterPayouts.normalizedCommissionAmount}, '')::numeric, nullif(${promoterPayouts.commissionAmount}, '')::numeric, 0)) filter (where left(coalesce(${promoterPayouts.commissionMonthKey}, to_char(coalesce(${promoterPayouts.earnedAt}, ${promoterPayouts.createdAt}), 'YYYY-MM')), 4) = ${yearKey}), 0)`,
+        currentMonthCommission: sql<string>`coalesce(sum(${payoutAmountSql(promoterPayouts.normalizedCommissionAmount, promoterPayouts.commissionAmount)}) filter (where coalesce(${promoterPayouts.commissionMonthKey}, to_char(coalesce(${promoterPayouts.earnedAt}, ${promoterPayouts.createdAt}), 'YYYY-MM')) = ${monthKey}), 0)`,
+        currentYearCommission: sql<string>`coalesce(sum(${payoutAmountSql(promoterPayouts.normalizedCommissionAmount, promoterPayouts.commissionAmount)}) filter (where left(coalesce(${promoterPayouts.commissionMonthKey}, to_char(coalesce(${promoterPayouts.earnedAt}, ${promoterPayouts.createdAt}), 'YYYY-MM')), 4) = ${yearKey}), 0)`,
       })
       .from(promoterPayouts)
       .where(eq(promoterPayouts.promoterId, args.promoterId)),

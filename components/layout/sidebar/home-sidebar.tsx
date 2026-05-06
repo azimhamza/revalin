@@ -9,7 +9,7 @@ export function HomeSidebar({ collections }: HomeSidebarProps) {
   return (
     <aside className="max-md:hidden col-span-4 h-screen sticky top-0 p-sides pt-top-spacing flex flex-col justify-between pb-8">
       <div>
-        <p className="italic tracking-tighter text-base">Research Peptides You Can Trust.</p>
+        <p className="italic tracking-tighter text-base">Research Chemicals You Can Trust.</p>
 
         <div className="mt-5 text-base leading-tight">
           <p>Certificate of Analysis on every batch.</p>

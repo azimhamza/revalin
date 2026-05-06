@@ -22,13 +22,13 @@ export function FinalCtaSection() {
           variants={fadeUp}
           className="text-[1.75rem] font-semibold tracking-[-0.04em] md:text-[3.5rem] md:leading-[1.05]"
         >
-          Research-grade peptides. Shipped today.
+          Research-grade compounds. Shipped today.
         </motion.h2>
         <motion.p
           variants={fadeUp}
           className="mx-auto mt-5 max-w-lg text-[15px] leading-relaxed text-[#0B2E2F]/55 md:text-base"
         >
-          All the research peptides you need, with independently verified quality and same-day dispatch. Proudly Canadian.
+          All the research chemicals you need, with independently verified quality and same-day dispatch. Proudly Canadian.
         </motion.p>
         <motion.div variants={fadeUp} className="mt-10">
           <Link

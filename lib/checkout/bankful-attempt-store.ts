@@ -66,6 +66,80 @@ export type BankfulPaymentAttemptRecord = {
   updatedAt: string;
 };
 
+function normalizeEmail(value?: string | null) {
+  return value?.trim().toLowerCase() || null;
+}
+
+function normalizeAmount(value?: string | number | null) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : '0.00';
+}
+
+function normalizeCurrency(value?: string | null) {
+  return value?.trim().toUpperCase() || '';
+}
+
+function normalizeText(value?: string | null) {
+  return value?.trim().toLowerCase() || '';
+}
+
+function buildAttemptCheckoutSignature(args: {
+  amount: string;
+  currencyCode: string;
+  shippingAddress: CheckoutShippingAddress;
+  shippingService?: CheckoutShippingService | null;
+  lines: CheckoutOrderLine[];
+  totals: CheckoutOrderTotals;
+}) {
+  return JSON.stringify({
+    amount: normalizeAmount(args.amount),
+    currencyCode: normalizeCurrency(args.currencyCode),
+    shippingAddress: {
+      country: normalizeCurrency(args.shippingAddress.country),
+      province: normalizeCurrency(args.shippingAddress.province),
+      postalCode: normalizeText(args.shippingAddress.postalCode).replace(/\s+/g, ''),
+      city: normalizeText(args.shippingAddress.city),
+      address1: normalizeText(args.shippingAddress.address1),
+      address2: normalizeText(args.shippingAddress.address2),
+    },
+    shippingService: {
+      id: args.shippingService?.id || '',
+      price: normalizeAmount(args.shippingService?.price?.amount),
+      currencyCode: normalizeCurrency(args.shippingService?.price?.currencyCode),
+      shipmentProtection: normalizeAmount(
+        args.shippingService?.shipmentProtection?.totalAmount.amount,
+      ),
+    },
+    lines: [...args.lines]
+      .map((line) => ({
+        id: line.id || '',
+        merchandiseId: line.merchandiseId || '',
+        skuNumber: line.skuNumber || '',
+        selectedOptions: line.selectedOptions
+          .map((option) => ({
+            name: normalizeText(option.name),
+            value: normalizeText(option.value),
+          }))
+          .sort((left, right) => left.name.localeCompare(right.name)),
+        quantity: line.quantity,
+      }))
+      .sort((left, right) =>
+        `${left.id}:${left.merchandiseId}:${left.skuNumber}`.localeCompare(
+          `${right.id}:${right.merchandiseId}:${right.skuNumber}`,
+        ),
+      ),
+    totals: {
+      subtotal: normalizeAmount(args.totals.subtotalAmount?.amount),
+      shipping: normalizeAmount(args.totals.shippingAmount?.amount),
+      discount: normalizeAmount(args.totals.discountAmount?.amount),
+      tax: normalizeAmount(args.totals.taxAmount?.amount),
+      total: normalizeAmount(args.totals.totalAmount?.amount),
+      discountCode: normalizeText(args.totals.discountCode),
+      shipmentProtection: normalizeAmount(args.totals.shipmentProtectionAmount?.amount),
+    },
+  });
+}
+
 function rowToAttempt(
   row: typeof bankfulPaymentAttempts.$inferSelect,
 ): BankfulPaymentAttemptRecord {
@@ -113,7 +187,7 @@ export async function createBankfulPaymentAttempt(args: {
     checkoutSessionId: args.checkoutSessionId,
     checkoutSessionVersion: args.checkoutSessionVersion,
     cartId: args.cartId ?? null,
-    email: args.email?.trim().toLowerCase() || null,
+    email: normalizeEmail(args.email),
     status: 'created',
     amount: args.amount,
     currencyCode: args.currencyCode,
@@ -154,6 +228,58 @@ export async function createBankfulPaymentAttempt(args: {
   }
 
   return existing;
+}
+
+export async function findRecentSafeBankfulFallbackAttempt(args: {
+  email?: string | null;
+  amount: string;
+  currencyCode: string;
+  shippingAddress: CheckoutShippingAddress;
+  shippingService?: CheckoutShippingService | null;
+  lines: CheckoutOrderLine[];
+  totals: CheckoutOrderTotals;
+  newerThan?: Date;
+}) {
+  const email = normalizeEmail(args.email);
+  if (!email) {
+    return null;
+  }
+
+  const targetSignature = buildAttemptCheckoutSignature(args);
+  const rows = await db
+    .select()
+    .from(bankfulPaymentAttempts)
+    .where(
+      and(
+        eq(bankfulPaymentAttempts.email, email),
+        eq(bankfulPaymentAttempts.amount, normalizeAmount(args.amount)),
+        eq(bankfulPaymentAttempts.currencyCode, normalizeCurrency(args.currencyCode)),
+        sql`${bankfulPaymentAttempts.status} in ('declined', 'failed')`,
+        args.newerThan
+          ? sql`${bankfulPaymentAttempts.updatedAt} >= ${args.newerThan}`
+          : sql`true`,
+      ),
+    )
+    .orderBy(desc(bankfulPaymentAttempts.updatedAt))
+    .limit(20);
+
+  for (const row of rows) {
+    const attempt = rowToAttempt(row);
+    const attemptSignature = buildAttemptCheckoutSignature({
+      amount: attempt.amount,
+      currencyCode: attempt.currencyCode,
+      shippingAddress: attempt.shippingAddress,
+      shippingService: attempt.shippingService,
+      lines: attempt.lines,
+      totals: attempt.totals,
+    });
+
+    if (attemptSignature === targetSignature) {
+      return attempt;
+    }
+  }
+
+  return null;
 }
 
 export async function findBankfulPaymentAttemptBySessionVersion(args: {

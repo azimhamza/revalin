@@ -26,7 +26,7 @@ export function ResearchListContent() {
       ) : (
         <div className="mr-sides flex flex-1 items-center justify-center border border-[#0B2E2F]/12 bg-[#F4F1EA]/78 p-10 text-[#0B2E2F]">
           <p className="text-sm uppercase tracking-[0.18em] text-[#0B2E2F]/55">
-            No peptides found
+            No compounds found
           </p>
         </div>
       )}

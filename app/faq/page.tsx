@@ -5,7 +5,7 @@ import { LegalSidebar } from '@/components/layout/sidebar/legal-sidebar';
 export const metadata: Metadata = {
   title: 'FAQ | Revalin',
   description:
-    'Frequently asked questions about Revalin research peptides, purity verification, shipping, returns, and payment.',
+    'Frequently asked questions about Revalin research chemicals, purity verification, shipping, returns, and payment.',
   alternates: {
     canonical: '/faq',
   },
@@ -22,7 +22,7 @@ const FAQ_ITEMS = [
   {
     question: 'What is Revalin?',
     answer:
-      'Revalin is a Canadian research peptide supplier. We provide lab-grade peptides for qualified research institutions, laboratories, and professionals conducting in-vitro and pre-clinical research. Every product we sell is independently tested and comes with a published Certificate of Analysis.',
+      'Revalin is a Canadian research chemical supplier. We provide lab-grade compounds for qualified research institutions, laboratories, and professionals conducting in-vitro and pre-clinical research. Every product we sell is independently tested and comes with a published Certificate of Analysis.',
   },
   {
     question: 'Are these products for human use?',
