@@ -1377,12 +1377,30 @@ function buildLineId(cartId: string, variantId: string) {
   return `${cartId}:${variantId}`;
 }
 
+function normalizeStockStatus(value?: string) {
+  return value?.trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
 function resolveCartAvailableQuantity(
   product: AppProduct,
   variant?: AppProduct['variants']['edges'][number]['node'] | null
 ): number | null {
-  void product;
-  void variant;
+  const subject = variant ?? product;
+  const stockStatus = normalizeStockStatus(subject.stockStatus ?? product.stockStatus);
+  const explicitlyBackordered = ['backorder', 'preorder', 'out_of_stock', 'sold_out'].includes(stockStatus || '');
+
+  if (explicitlyBackordered || subject.availableForSale === false) {
+    return 0;
+  }
+
+  if (typeof variant?.stockLevel === 'number') {
+    return Math.max(0, variant.stockLevel);
+  }
+
+  if (typeof product.stockLevel === 'number') {
+    return Math.max(0, product.stockLevel);
+  }
+
   return null;
 }
 

@@ -74,7 +74,7 @@ export const ADMIN_NAVIGATION_ITEMS: AdminNavigationItem[] = [
   {
     title: "Invoices",
     href: "/admin/invoices",
-    description: "Review Bankful card invoices, captures, and failed order promotions.",
+    description: "Review Bankful and Square card invoices, captures, and payment exceptions.",
     icon: FileText,
   },
   {

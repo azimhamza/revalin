@@ -4,6 +4,7 @@ const DEFAULT_BACKORDER_THRESHOLD = 0;
 const LOW_STOCK_THRESHOLD = 3;
 export const READY_TO_SHIP_LABEL = 'Ships in 2-3 days';
 export const HIGH_DEMAND_SHIPPING_LABEL = 'Ships in about 1 week due to high demand';
+export const BACK_IN_STOCK_LABEL = 'Get notified when available';
 
 function normalizeStockStatus(value?: string) {
   return value?.trim().toLowerCase().replace(/[\s-]+/g, '_');
@@ -19,13 +20,13 @@ export type InventoryState = {
   isBackorder: boolean;
   isHighDemand: boolean;
   isLowStock: boolean;
-  label: 'In stock' | 'Low stock' | 'High demand';
-  shortLabel: 'Ready' | 'Low stock' | 'High demand';
+  label: 'In stock' | 'Low stock' | 'High demand' | 'Backorder';
+  shortLabel: 'Ready' | 'Low stock' | 'High demand' | 'Get notified';
   message: string;
   shippingLeadTimeLabel: string;
 };
 
-export function resolveAvailableQuantity(product: Product, variant?: ProductVariant | null): number | null {
+export function resolveInternalAvailableQuantity(product: Product, variant?: ProductVariant | null): number | null {
   if (typeof variant?.availableToShipNow === 'number') {
     return Math.max(0, variant.availableToShipNow);
   }
@@ -35,6 +36,35 @@ export function resolveAvailableQuantity(product: Product, variant?: ProductVari
   }
 
   return null;
+}
+
+export function resolveSwellAvailableQuantity(product: Product, variant?: ProductVariant | null): number | null {
+  if (typeof variant?.stockLevel === 'number') {
+    return Math.max(0, variant.stockLevel);
+  }
+
+  if (typeof product.stockLevel === 'number') {
+    return Math.max(0, product.stockLevel);
+  }
+
+  return null;
+}
+
+export function isSwellBackorder(product: Product, variant?: ProductVariant | null): boolean {
+  const subject = variant ?? product;
+  const stockStatus = normalizeStockStatus(subject.stockStatus ?? product.stockStatus);
+  const availableQuantity = resolveSwellAvailableQuantity(product, variant);
+  const explicitlyBackordered = ['backorder', 'preorder', 'out_of_stock', 'sold_out'].includes(stockStatus || '');
+
+  return (
+    explicitlyBackordered ||
+    subject.availableForSale === false ||
+    (availableQuantity !== null && availableQuantity <= getBackorderThreshold())
+  );
+}
+
+export function resolveAvailableQuantity(product: Product, variant?: ProductVariant | null): number | null {
+  return resolveInternalAvailableQuantity(product, variant);
 }
 
 /**
@@ -54,7 +84,23 @@ export function hasAnyVariantInStock(product: Product): boolean {
 
 export function getInventoryState(product: Product, variant?: ProductVariant | null): InventoryState {
   const backorderThreshold = getBackorderThreshold();
-  const availableQuantity = resolveAvailableQuantity(product, variant);
+  const internalAvailableQuantity = resolveInternalAvailableQuantity(product, variant);
+  const swellAvailableQuantity = resolveSwellAvailableQuantity(product, variant);
+  const backorder = isSwellBackorder(product, variant);
+
+  if (backorder) {
+    return {
+      availableQuantity: swellAvailableQuantity,
+      isBackorder: true,
+      isHighDemand: false,
+      isLowStock: false,
+      label: 'Backorder',
+      shortLabel: 'Get notified',
+      message: 'This item is out of stock. Leave your email and we will notify you as soon as it is ready again.',
+      shippingLeadTimeLabel: BACK_IN_STOCK_LABEL,
+    };
+  }
+
   const hasExactAvailability =
     typeof variant?.availableToShipNow === 'number' ||
     typeof product.availableToShipNow === 'number' ||
@@ -62,12 +108,12 @@ export function getInventoryState(product: Product, variant?: ProductVariant | n
     typeof product.internalInventoryMatched === 'boolean';
   const isHighDemand =
     hasExactAvailability &&
-    (availableQuantity === null || availableQuantity <= backorderThreshold);
+    (internalAvailableQuantity === null || internalAvailableQuantity <= backorderThreshold);
 
   if (isHighDemand) {
     return {
-      availableQuantity,
-      isBackorder: true,
+      availableQuantity: internalAvailableQuantity,
+      isBackorder: false,
       isHighDemand: true,
       isLowStock: false,
       label: 'High demand',
@@ -77,23 +123,24 @@ export function getInventoryState(product: Product, variant?: ProductVariant | n
     };
   }
 
-  const isLowStock = availableQuantity !== null && availableQuantity <= LOW_STOCK_THRESHOLD;
+  const displayQuantity = internalAvailableQuantity ?? swellAvailableQuantity;
+  const isLowStock = displayQuantity !== null && displayQuantity <= LOW_STOCK_THRESHOLD;
 
   if (isLowStock) {
     return {
-      availableQuantity,
+      availableQuantity: displayQuantity,
       isBackorder: false,
       isHighDemand: false,
       isLowStock: true,
       label: 'Low stock',
       shortLabel: 'Low stock',
-      message: `Only ${availableQuantity} ready now. ${READY_TO_SHIP_LABEL}.`,
+      message: `Only ${displayQuantity} ready now. ${READY_TO_SHIP_LABEL}.`,
       shippingLeadTimeLabel: READY_TO_SHIP_LABEL,
     };
   }
 
   return {
-    availableQuantity,
+    availableQuantity: displayQuantity,
     isBackorder: false,
     isHighDemand: false,
     isLowStock: false,
@@ -110,6 +157,14 @@ export function getProductFulfillmentEstimate(
   requestedQuantity = 1,
 ): ProductFulfillmentEstimate {
   const inventory = getInventoryState(product, variant);
+  if (inventory.isBackorder) {
+    return {
+      label: inventory.message,
+      availableToShipNow: 0,
+      isHighDemand: false,
+    };
+  }
+
   const availableToShipNow = inventory.availableQuantity ?? 0;
   const normalizedRequestedQuantity = Math.max(1, Math.floor(Number(requestedQuantity) || 1));
   const isHighDemand =

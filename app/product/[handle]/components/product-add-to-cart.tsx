@@ -12,6 +12,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { getSwellProductId } from '@/lib/swell/utils';
 import { useProductQuantity } from './product-quantity-context';
 import { useProductAvailabilityProduct } from './product-availability-context';
+import { getInventoryState } from '@/lib/inventory';
 
 export function ProductAddToCart({
   product,
@@ -58,13 +59,15 @@ export function ProductAddToCart({
     return variants.find(v => v.id === selectedVariantId);
   }, [variants, availabilityProduct, isTargetingProduct, defaultVariantId, selectedVariantId]);
   const cartVariant = resolvedVariant;
-  const isDisabled = !cartVariant || isLoading;
+  const inventory = cartVariant ? getInventoryState(availabilityProduct, cartVariant) : null;
+  const isBackorder = inventory?.isBackorder === true;
+  const isDisabled = !cartVariant || isBackorder || isLoading;
   const isSelectOneState = !cartVariant;
-  const buttonText = cartVariant ? 'Add To Cart' : 'Select one';
+  const buttonText = isBackorder ? 'Get Notified' : cartVariant ? 'Add To Cart' : 'Select one';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cartVariant) return;
+    if (!cartVariant || isBackorder) return;
 
     startTransition(async () => {
       await addItem(cartVariant, availabilityProduct, quantity);

@@ -5,13 +5,50 @@ import {
   buildBankfulAttemptFromOrder,
   type BankfulPaymentAttemptRecord,
 } from '@/lib/checkout/bankful-attempt-store';
-import type { CheckoutOrderPayment, CheckoutOrderRecord } from '@/lib/checkout/types';
+import {
+  isBankfulPayment,
+  isSquarePayment,
+  type CheckoutOrderPayment,
+  type CheckoutOrderRecord,
+  type SquarePaymentData,
+} from '@/lib/checkout/types';
 
-export type AdminBankfulInvoice = BankfulPaymentAttemptRecord & {
+export type AdminSquareInvoiceSnapshot = Pick<
+  SquarePaymentData,
+  | 'paymentLinkId'
+  | 'squareOrderId'
+  | 'checkoutUrl'
+  | 'longUrl'
+  | 'locationId'
+  | 'expectedAmount'
+  | 'expectedCurrency'
+  | 'paymentId'
+  | 'squareStatus'
+  | 'receiptUrl'
+  | 'buyerEmail'
+  | 'amountMoney'
+  | 'totalMoney'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'paidAt'
+  | 'deletedAt'
+  | 'deletionError'
+  | 'swellPaymentId'
+>;
+
+export type AdminPaymentInvoice = Omit<
+  BankfulPaymentAttemptRecord,
+  'bankful' | 'status'
+> & {
+  provider: 'bankful' | 'square';
   source: 'order' | 'attempt';
+  invoiceId: string;
+  status: string;
   orderNumber?: string | null;
   paymentStatus?: string | null;
   fulfillmentStatus?: string | null;
+  bankful?: BankfulPaymentAttemptRecord['bankful'] | null;
+  square?: AdminSquareInvoiceSnapshot | null;
 };
 
 type ListBankfulInvoicesArgs = {
@@ -50,20 +87,95 @@ function rowToOrderRecord(row: typeof checkoutOrders.$inferSelect): CheckoutOrde
 }
 
 function attemptMatchesStatus(
-  invoice: AdminBankfulInvoice,
+  invoice: AdminPaymentInvoice,
   status: NonNullable<ListBankfulInvoicesArgs['status']>,
 ) {
   if (status === 'all') return true;
-  if (status === 'paid') return invoice.status === 'paid' || invoice.status === 'order_created';
-  if (status === 'pending') return invoice.status === 'pending';
-  if (status === 'failed') return invoice.status === 'failed' || invoice.status === 'declined';
+  const normalizedStatus = invoice.status.toLowerCase();
+
+  if (status === 'paid') {
+    return ['paid', 'finished', 'order_created'].includes(normalizedStatus);
+  }
+  if (status === 'pending') return normalizedStatus === 'pending';
+  if (status === 'failed') {
+    return ['failed', 'declined', 'cancelled', 'expired', 'replaced'].includes(normalizedStatus);
+  }
   return (
-    invoice.status === 'paid' ||
-    invoice.status === 'pending' ||
-    invoice.status === 'capture_pending' ||
-    invoice.status === 'capture_unknown' ||
-    invoice.status === 'paid_order_creation_failed'
+    normalizedStatus === 'paid' ||
+    normalizedStatus === 'pending' ||
+    normalizedStatus === 'capture_pending' ||
+    normalizedStatus === 'capture_unknown' ||
+    normalizedStatus === 'paid_order_creation_failed' ||
+    normalizedStatus === 'review_required' ||
+    Boolean(invoice.latestError) ||
+    Boolean(invoice.square?.deletionError)
   );
+}
+
+function buildSquareInvoiceFromOrder(order: CheckoutOrderRecord, row: typeof checkoutOrders.$inferSelect): AdminPaymentInvoice | null {
+  if (!isSquarePayment(order.payment)) {
+    return null;
+  }
+
+  return {
+    provider: 'square',
+    source: 'order',
+    invoiceId: order.orderId,
+    attemptId: order.payment.paymentLinkId,
+    checkoutSessionId: '',
+    checkoutSessionVersion: 0,
+    cartId: order.cartId,
+    orderId: order.orderId,
+    orderNumber: order.swell.orderNumber ?? null,
+    email: order.shippingAddress.email,
+    status: order.payment.status,
+    amount: order.payment.expectedAmount,
+    currencyCode: order.payment.expectedCurrency,
+    customer: {
+      firstName: order.shippingAddress.firstName,
+      lastName: order.shippingAddress.lastName,
+      email: order.shippingAddress.email,
+      phone: order.shippingAddress.phone,
+    },
+    shippingAddress: order.shippingAddress,
+    shippingService: order.shippingService ?? null,
+    lines: order.lines,
+    totals: order.totals,
+    swell: {
+      accountId: order.swell.accountId,
+      cartId: order.swell.cartId,
+      orderId: order.swell.orderId,
+      orderNumber: order.swell.orderNumber,
+      paymentId: order.payment.swellPaymentId,
+    },
+    bankful: null,
+    square: {
+      paymentLinkId: order.payment.paymentLinkId,
+      squareOrderId: order.payment.squareOrderId,
+      checkoutUrl: order.payment.checkoutUrl,
+      longUrl: order.payment.longUrl ?? null,
+      locationId: order.payment.locationId ?? null,
+      expectedAmount: order.payment.expectedAmount,
+      expectedCurrency: order.payment.expectedCurrency,
+      paymentId: order.payment.paymentId ?? null,
+      squareStatus: order.payment.squareStatus ?? null,
+      receiptUrl: order.payment.receiptUrl ?? null,
+      buyerEmail: order.payment.buyerEmail ?? null,
+      amountMoney: order.payment.amountMoney ?? null,
+      totalMoney: order.payment.totalMoney ?? null,
+      createdAt: order.payment.createdAt,
+      updatedAt: order.payment.updatedAt,
+      paidAt: order.payment.paidAt ?? null,
+      deletedAt: order.payment.deletedAt ?? null,
+      deletionError: order.payment.deletionError ?? null,
+      swellPaymentId: order.payment.swellPaymentId,
+    },
+    latestError: order.latestError || order.payment.deletionError || null,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    paymentStatus: row.paymentStatus,
+    fulfillmentStatus: row.fulfillmentStatus ?? null,
+  };
 }
 
 export async function listAdminBankfulInvoices(args: ListBankfulInvoicesArgs = {}) {
@@ -75,7 +187,7 @@ export async function listAdminBankfulInvoices(args: ListBankfulInvoicesArgs = {
     db
       .select()
       .from(checkoutOrders)
-      .where(sql`${checkoutOrders.payment}->>'provider' = 'bankful'`)
+      .where(sql`${checkoutOrders.payment}->>'provider' in ('bankful', 'square')`)
       .orderBy(desc(checkoutOrders.updatedAt))
       .limit(300),
     db
@@ -86,38 +198,50 @@ export async function listAdminBankfulInvoices(args: ListBankfulInvoicesArgs = {
       .limit(300),
   ]);
 
-  const orderInvoices: AdminBankfulInvoice[] = orderRows.map((row) => {
-    const order = rowToOrderRecord(row);
-    const attempt = buildBankfulAttemptFromOrder(order);
-    return {
-      ...attempt,
-      source: 'order',
-      orderNumber: order.swell.orderNumber ?? null,
-      paymentStatus: row.paymentStatus,
-      fulfillmentStatus: row.fulfillmentStatus ?? null,
-    };
-  });
+  const orderInvoices: AdminPaymentInvoice[] = orderRows
+    .map((row) => {
+      const order = rowToOrderRecord(row);
+      if (isBankfulPayment(order.payment)) {
+        const attempt = buildBankfulAttemptFromOrder(order);
+        return {
+          ...attempt,
+          provider: 'bankful' as const,
+          source: 'order' as const,
+          invoiceId: order.orderId,
+          orderNumber: order.swell.orderNumber ?? null,
+          paymentStatus: row.paymentStatus,
+          fulfillmentStatus: row.fulfillmentStatus ?? null,
+          square: null,
+        };
+      }
+
+      return buildSquareInvoiceFromOrder(order, row);
+    })
+    .filter((invoice): invoice is AdminPaymentInvoice => Boolean(invoice));
 
   const orderAttemptIds = new Set(orderInvoices.map((invoice) => invoice.attemptId));
-  const attemptInvoices: AdminBankfulInvoice[] = attemptRows
+  const attemptInvoices: AdminPaymentInvoice[] = attemptRows
     .filter((row) => !orderAttemptIds.has(row.attemptId))
     .map((row) => ({
+      provider: 'bankful',
       attemptId: row.attemptId,
+      invoiceId: row.attemptId,
       checkoutSessionId: row.checkoutSessionId,
       checkoutSessionVersion: row.checkoutSessionVersion,
       cartId: row.cartId,
       orderId: row.orderId,
       email: row.email,
-      status: row.status as AdminBankfulInvoice['status'],
+      status: row.status,
       amount: row.amount,
       currencyCode: row.currencyCode,
-      customer: row.customer as AdminBankfulInvoice['customer'],
-      shippingAddress: row.shippingAddress as AdminBankfulInvoice['shippingAddress'],
-      shippingService: (row.shippingService as AdminBankfulInvoice['shippingService']) ?? null,
-      lines: row.lines as AdminBankfulInvoice['lines'],
-      totals: row.totals as AdminBankfulInvoice['totals'],
-      swell: (row.swell as AdminBankfulInvoice['swell']) ?? null,
-      bankful: (row.bankful as AdminBankfulInvoice['bankful']) ?? null,
+      customer: row.customer as AdminPaymentInvoice['customer'],
+      shippingAddress: row.shippingAddress as AdminPaymentInvoice['shippingAddress'],
+      shippingService: (row.shippingService as AdminPaymentInvoice['shippingService']) ?? null,
+      lines: row.lines as AdminPaymentInvoice['lines'],
+      totals: row.totals as AdminPaymentInvoice['totals'],
+      swell: (row.swell as AdminPaymentInvoice['swell']) ?? null,
+      bankful: (row.bankful as AdminPaymentInvoice['bankful']) ?? null,
+      square: null,
       latestError: row.latestError,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
@@ -152,10 +276,13 @@ export async function getAdminBankfulInvoiceByAttempt(attemptId: string) {
     const attempt = buildBankfulAttemptFromOrder(order);
     return {
       ...attempt,
+      provider: 'bankful' as const,
       source: 'order' as const,
+      invoiceId: order.orderId,
       orderNumber: order.swell.orderNumber ?? null,
       paymentStatus: orderRows[0].paymentStatus,
       fulfillmentStatus: orderRows[0].fulfillmentStatus ?? null,
+      square: null,
     };
   }
 
@@ -169,22 +296,25 @@ export async function getAdminBankfulInvoiceByAttempt(attemptId: string) {
 
   const row = rows[0];
   return {
+    provider: 'bankful' as const,
     attemptId: row.attemptId,
+    invoiceId: row.attemptId,
     checkoutSessionId: row.checkoutSessionId,
     checkoutSessionVersion: row.checkoutSessionVersion,
     cartId: row.cartId,
     orderId: row.orderId,
     email: row.email,
-    status: row.status as AdminBankfulInvoice['status'],
+    status: row.status,
     amount: row.amount,
     currencyCode: row.currencyCode,
-    customer: row.customer as AdminBankfulInvoice['customer'],
-    shippingAddress: row.shippingAddress as AdminBankfulInvoice['shippingAddress'],
-    shippingService: (row.shippingService as AdminBankfulInvoice['shippingService']) ?? null,
-    lines: row.lines as AdminBankfulInvoice['lines'],
-    totals: row.totals as AdminBankfulInvoice['totals'],
-    swell: (row.swell as AdminBankfulInvoice['swell']) ?? null,
-    bankful: (row.bankful as AdminBankfulInvoice['bankful']) ?? null,
+    customer: row.customer as AdminPaymentInvoice['customer'],
+    shippingAddress: row.shippingAddress as AdminPaymentInvoice['shippingAddress'],
+    shippingService: (row.shippingService as AdminPaymentInvoice['shippingService']) ?? null,
+    lines: row.lines as AdminPaymentInvoice['lines'],
+    totals: row.totals as AdminPaymentInvoice['totals'],
+    swell: (row.swell as AdminPaymentInvoice['swell']) ?? null,
+    bankful: (row.bankful as AdminPaymentInvoice['bankful']) ?? null,
+    square: null,
     latestError: row.latestError,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

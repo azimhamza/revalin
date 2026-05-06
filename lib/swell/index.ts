@@ -13,6 +13,7 @@ import {
 } from './swell';
 import { thumbhashToDataURL } from './utils';
 import { DEFAULT_STORE_CURRENCY, normalizeCurrencyCode } from './currency';
+import { hydrateProductWithInternalAvailability } from '@/lib/internal-availability';
 import type {
   SwellProduct,
   SwellCollection,
@@ -299,7 +300,9 @@ export async function getLiveProduct(handle: string, currencyCode?: string): Pro
     const swellProduct = await getSwellProduct(handle, currencyCode, {
       cache: 'no-store',
     });
-    return swellProduct ? adaptSwellProduct(swellProduct) : null;
+    return hydrateProductWithInternalAvailability(
+      swellProduct ? adaptSwellProduct(swellProduct) : null
+    );
   } catch (error) {
     console.error(`getLiveProduct(${handle}): error fetching product:`, error);
     return null;

@@ -1,8 +1,9 @@
 import Link from 'next/link';
+import { Fragment } from 'react';
 import { AdminPanel, AdminSectionHeader, AdminStatCard } from '@/app/admin/_components/admin-shell';
 import {
   listAdminBankfulInvoices,
-  type AdminBankfulInvoice,
+  type AdminPaymentInvoice,
 } from '@/lib/checkout/bankful-invoice-service';
 import { formatPrice } from '@/lib/swell/utils';
 
@@ -31,9 +32,10 @@ function formatDateTime(value?: string | null) {
   }).format(date);
 }
 
-function statusLabel(invoice: AdminBankfulInvoice) {
+function statusLabel(invoice: AdminPaymentInvoice) {
   if (invoice.status === 'order_created') return 'Order created';
   if (invoice.status === 'paid_order_creation_failed') return 'Paid, order failed';
+  if (invoice.status === 'review_required') return 'Review required';
   return invoice.status.replace(/_/g, ' ');
 }
 
@@ -53,12 +55,41 @@ function invoiceSortLink(status: string, label: string, active: boolean) {
   );
 }
 
-function DetailBlock({ invoice }: { invoice: AdminBankfulInvoice }) {
-  const bankful = invoice.bankful || {};
-  const swell = invoice.swell || {};
+function formatSquareMoney(money?: { amount?: number | null; currency?: string | null } | null) {
+  if (!money || typeof money.amount !== 'number') return '—';
+  return formatPrice((money.amount / 100).toFixed(2), money.currency || 'CAD');
+}
+
+function diagnosticsOrderQuery(invoice: AdminPaymentInvoice) {
+  return invoice.orderNumber || invoice.orderId || invoice.invoiceId;
+}
+
+function ProviderSummary({ invoice }: { invoice: AdminPaymentInvoice }) {
+  if (invoice.provider === 'square') {
+    return (
+      <>
+        <p className="break-all text-[10px]">Square order: {invoice.square?.squareOrderId || '—'}</p>
+        <p className="mt-1 break-all text-[10px] text-muted-foreground">Payment: {invoice.square?.paymentId || '—'}</p>
+      </>
+    );
+  }
 
   return (
-    <details className="mt-3 rounded-none border border-border/70 bg-background/80 px-3 py-2">
+    <>
+      <p className="break-all text-[10px]">Record: {invoice.bankful?.recordId || '—'}</p>
+      <p className="mt-1 break-all text-[10px] text-muted-foreground">Order: {invoice.bankful?.orderId || '—'}</p>
+    </>
+  );
+}
+
+function DetailBlock({ invoice }: { invoice: AdminPaymentInvoice }) {
+  const bankful = invoice.bankful || {};
+  const square = (invoice.square || {}) as Partial<NonNullable<AdminPaymentInvoice['square']>>;
+  const swell = invoice.swell || {};
+  const diagnosticsQuery = diagnosticsOrderQuery(invoice);
+
+  return (
+    <details className="rounded-none border border-border/70 bg-background/80 px-3 py-2">
       <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
         Details
       </summary>
@@ -86,18 +117,68 @@ function DetailBlock({ invoice }: { invoice: AdminBankfulInvoice }) {
         <div>
           <p className="font-semibold">Provider IDs</p>
           <div className="mt-1 space-y-1 break-all text-muted-foreground">
-            <p>Attempt: {invoice.attemptId}</p>
-            <p>Request: {bankful.requestId || '—'}</p>
-            <p>Record: {bankful.recordId || '—'}</p>
-            <p>Bankful order: {bankful.orderId || '—'}</p>
+            <p>Provider: {invoice.provider}</p>
+            {invoice.provider === 'square' ? (
+              <>
+                <p>Payment link: {square.paymentLinkId || '—'}</p>
+                <p>Square order: {square.squareOrderId || '—'}</p>
+                <p>Square payment: {square.paymentId || '—'}</p>
+                <p>Square status: {square.squareStatus || '—'}</p>
+                <p>Location: {square.locationId || '—'}</p>
+              </>
+            ) : (
+              <>
+                <p>Attempt: {invoice.attemptId}</p>
+                <p>Request: {bankful.requestId || '—'}</p>
+                <p>Record: {bankful.recordId || '—'}</p>
+                <p>Bankful order: {bankful.orderId || '—'}</p>
+              </>
+            )}
             <p>Swell order: {swell.orderNumber || swell.orderId || '—'}</p>
             <p>Swell payment: {swell.paymentId || '—'}</p>
           </div>
         </div>
       </div>
-      {invoice.latestError || bankful.errorMessage ? (
+      {invoice.provider === 'square' ? (
+        <div className="mt-3 grid gap-3 text-xs md:grid-cols-3">
+          <div>
+            <p className="font-semibold">Square amount check</p>
+            <div className="mt-1 space-y-1 text-muted-foreground">
+              <p>Expected: {formatPrice(square.expectedAmount || invoice.amount, square.expectedCurrency || invoice.currencyCode)}</p>
+              <p>Amount money: {formatSquareMoney(square.amountMoney)}</p>
+              <p>Total money: {formatSquareMoney(square.totalMoney)}</p>
+            </div>
+          </div>
+          <div>
+            <p className="font-semibold">Square lifecycle</p>
+            <div className="mt-1 space-y-1 text-muted-foreground">
+              <p>Created: {formatDateTime(square.createdAt)}</p>
+              <p>Updated: {formatDateTime(square.updatedAt)}</p>
+              <p>Paid: {formatDateTime(square.paidAt)}</p>
+              <p>Deleted: {formatDateTime(square.deletedAt)}</p>
+            </div>
+          </div>
+          <div>
+            <p className="font-semibold">Links</p>
+            <div className="mt-1 space-y-1 break-all text-muted-foreground">
+              {square.checkoutUrl ? (
+                <p><a className="underline underline-offset-2" href={square.checkoutUrl} target="_blank" rel="noreferrer">Square checkout</a></p>
+              ) : null}
+              {square.receiptUrl ? (
+                <p><a className="underline underline-offset-2" href={square.receiptUrl} target="_blank" rel="noreferrer">Square receipt</a></p>
+              ) : null}
+              <p>
+                <Link className="underline underline-offset-2" href={`/admin/payment-diagnostics?order=${encodeURIComponent(diagnosticsQuery)}`}>
+                  Run payment diagnostics
+                </Link>
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {invoice.latestError || bankful.errorMessage || square.deletionError ? (
         <div className="mt-3 rounded-none border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
-          {invoice.latestError || bankful.errorMessage}
+          {invoice.latestError || bankful.errorMessage || square.deletionError}
         </div>
       ) : null}
     </details>
@@ -118,26 +199,28 @@ export default async function AdminInvoicesPage({
     pageSize: 100,
   });
   const reviewCount = result.data.filter(
-    (invoice) =>
-      invoice.status === 'paid' ||
-      invoice.status === 'pending' ||
-      invoice.status === 'capture_pending' ||
-      invoice.status === 'capture_unknown' ||
-      invoice.status === 'paid_order_creation_failed',
+    (invoice) => {
+      const normalizedStatus = invoice.status.toLowerCase();
+      return (
+        ['paid', 'pending', 'capture_pending', 'capture_unknown', 'paid_order_creation_failed', 'review_required'].includes(normalizedStatus) ||
+        Boolean(invoice.latestError) ||
+        Boolean(invoice.square?.deletionError)
+      );
+    },
   ).length;
   const paidCount = result.data.filter(
-    (invoice) => invoice.status === 'paid' || invoice.status === 'order_created',
+    (invoice) => ['paid', 'finished', 'order_created'].includes(invoice.status.toLowerCase()),
   ).length;
   const failedCount = result.data.filter(
-    (invoice) => invoice.status === 'failed' || invoice.status === 'declined',
+    (invoice) => ['failed', 'declined', 'cancelled', 'expired', 'replaced'].includes(invoice.status.toLowerCase()),
   ).length;
 
   return (
     <div className="space-y-4">
       <AdminSectionHeader
-        eyebrow="Bankful"
+        eyebrow="Card payments"
         title="Invoices"
-        description="Internal invoice snapshots for Bankful card orders and payment attempts that need review."
+        description="Internal invoice snapshots and provider diagnostics for Bankful and Square card payments."
       />
 
       <div className="grid gap-3 md:grid-cols-4">
@@ -166,46 +249,60 @@ export default async function AdminInvoicesPage({
                 <th className="px-2 py-2 font-semibold">Customer</th>
                 <th className="px-2 py-2 font-semibold">Status</th>
                 <th className="px-2 py-2 font-semibold">Total</th>
-                <th className="px-2 py-2 font-semibold">Bankful</th>
+                <th className="px-2 py-2 font-semibold">Provider</th>
                 <th className="px-2 py-2 font-semibold">Updated</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
               {result.data.map((invoice) => (
-                <tr key={`${invoice.source}:${invoice.attemptId}`} className="align-top">
-                  <td className="px-2 py-3">
-                    <p className="font-semibold">{invoice.orderNumber || invoice.orderId || invoice.attemptId}</p>
-                    <p className="mt-1 text-[10px] text-muted-foreground">{invoice.source === 'order' ? 'Order' : 'Attempt'}</p>
-                  </td>
-                  <td className="px-2 py-3">
-                    <p className="font-semibold">{invoice.shippingAddress.firstName} {invoice.shippingAddress.lastName}</p>
-                    <p className="mt-1 break-all text-[10px] text-muted-foreground">{invoice.email || invoice.shippingAddress.email}</p>
-                  </td>
-                  <td className="px-2 py-3">
-                    <span className="inline-flex rounded-none border border-border bg-background px-2 py-1 text-[10px] font-semibold capitalize">
-                      {statusLabel(invoice)}
-                    </span>
-                    {invoice.fulfillmentStatus ? (
-                      <p className="mt-1 text-[10px] text-muted-foreground">{invoice.fulfillmentStatus}</p>
-                    ) : null}
-                  </td>
-                  <td className="px-2 py-3 font-semibold">
-                    {formatPrice(invoice.totals.totalAmount.amount, invoice.totals.totalAmount.currencyCode)}
-                    <p className="mt-1 text-[10px] font-normal text-muted-foreground">{invoice.lines.length} line{invoice.lines.length === 1 ? '' : 's'}</p>
-                  </td>
-                  <td className="px-2 py-3">
-                    <p className="break-all text-[10px]">Record: {invoice.bankful?.recordId || '—'}</p>
-                    <p className="mt-1 break-all text-[10px] text-muted-foreground">Order: {invoice.bankful?.orderId || '—'}</p>
-                  </td>
-                  <td className="px-2 py-3 text-[10px] text-muted-foreground">
-                    {formatDateTime(invoice.updatedAt)}
-                  </td>
-                </tr>
+                <Fragment key={`${invoice.source}:${invoice.attemptId}`}>
+                  <tr className="align-top">
+                    <td className="px-2 py-3">
+                      <p className="font-semibold">{invoice.orderNumber || invoice.orderId || invoice.attemptId}</p>
+                      <p className="mt-1 text-[10px] text-muted-foreground">{invoice.source === 'order' ? 'Order' : 'Attempt'} · {invoice.provider}</p>
+                    </td>
+                    <td className="px-2 py-3">
+                      <p className="font-semibold">{invoice.shippingAddress.firstName} {invoice.shippingAddress.lastName}</p>
+                      <p className="mt-1 break-all text-[10px] text-muted-foreground">{invoice.email || invoice.shippingAddress.email}</p>
+                    </td>
+                    <td className="px-2 py-3">
+                      <span className="inline-flex rounded-none border border-border bg-background px-2 py-1 text-[10px] font-semibold capitalize">
+                        {statusLabel(invoice)}
+                      </span>
+                      {invoice.fulfillmentStatus ? (
+                        <p className="mt-1 text-[10px] text-muted-foreground">{invoice.fulfillmentStatus}</p>
+                      ) : null}
+                    </td>
+                    <td className="px-2 py-3 font-semibold">
+                      {formatPrice(invoice.totals.totalAmount.amount, invoice.totals.totalAmount.currencyCode)}
+                      <p className="mt-1 text-[10px] font-normal text-muted-foreground">{invoice.lines.length} line{invoice.lines.length === 1 ? '' : 's'}</p>
+                    </td>
+                    <td className="px-2 py-3">
+                      <ProviderSummary invoice={invoice} />
+                      {invoice.orderId ? (
+                        <Link
+                          href={`/admin/payment-diagnostics?order=${encodeURIComponent(diagnosticsOrderQuery(invoice))}`}
+                          className="mt-1 inline-flex text-[10px] font-semibold text-[#0B2E2F] underline underline-offset-2"
+                        >
+                          Diagnostics
+                        </Link>
+                      ) : null}
+                    </td>
+                    <td className="px-2 py-3 text-[10px] text-muted-foreground">
+                      {formatDateTime(invoice.updatedAt)}
+                    </td>
+                  </tr>
+                  <tr className="bg-muted/20">
+                    <td colSpan={6} className="px-2 pb-3 pt-0">
+                      <DetailBlock invoice={invoice} />
+                    </td>
+                  </tr>
+                </Fragment>
               ))}
               {result.data.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-2 py-8 text-center text-sm text-muted-foreground">
-                    No Bankful invoices found.
+                    No card invoices found.
                   </td>
                 </tr>
               ) : null}
@@ -213,12 +310,6 @@ export default async function AdminInvoicesPage({
           </table>
         </div>
       </AdminPanel>
-
-      <div className="space-y-3">
-        {result.data.map((invoice) => (
-          <DetailBlock key={`detail:${invoice.source}:${invoice.attemptId}`} invoice={invoice} />
-        ))}
-      </div>
     </div>
   );
 }

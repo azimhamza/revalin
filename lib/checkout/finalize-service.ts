@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { apiError } from '@/lib/api/errors';
+import { ApiError, apiError } from '@/lib/api/errors';
 import { optionalSession } from '@/lib/api/auth';
 import {
   getApprovedAffiliateByCode,
@@ -71,9 +71,10 @@ import {
   getInteracRecipientEmail,
 } from '@/lib/checkout/interac';
 import {
-  getCardDebitCheckoutUnavailableMessage,
+  getCardProcessingUnavailableMessage,
   getCardCheckoutMinimumMessage,
-  isCardDebitCheckoutEnabled,
+  isCardProcessingEnabled,
+  isCardSquareFallbackEnabled,
   isCardCheckoutMinimumMet,
 } from '@/lib/checkout/payment-method-rules';
 import {
@@ -1547,6 +1548,80 @@ function normalizeFinalizeError(error: unknown) {
   return error;
 }
 
+function isSquareFallbackEligible() {
+  return isCardProcessingEnabled() && isCardSquareFallbackEnabled();
+}
+
+function buildSquareFallbackDetails(args: {
+  code: string;
+  reason: string;
+  attemptId?: string;
+  bankfulStatus?: string;
+  originalError?: unknown;
+  eligible?: boolean;
+}) {
+  return {
+    code: args.code,
+    provider: 'bankful',
+    reason: args.reason,
+    ...(args.attemptId ? { attemptId: args.attemptId } : {}),
+    ...(args.bankfulStatus ? { bankfulStatus: args.bankfulStatus } : {}),
+    squareFallbackEligible: args.eligible === false ? false : isSquareFallbackEligible(),
+    fallbackPaymentMethod: 'square',
+    ...(args.originalError ? { originalError: args.originalError } : {}),
+  };
+}
+
+function getApiErrorDetails(error: unknown) {
+  return error instanceof ApiError &&
+    error.details &&
+    typeof error.details === 'object'
+    ? (error.details as Record<string, unknown>)
+    : null;
+}
+
+function isSafeBankfulPreCaptureFailure(error: unknown) {
+  if (!(error instanceof ApiError)) {
+    return false;
+  }
+
+  const details = getApiErrorDetails(error);
+  if (details?.provider !== 'bankful') {
+    return false;
+  }
+
+  if (error.code !== 'provider_unavailable') {
+    return false;
+  }
+
+  if (typeof details.missing === 'string') {
+    return true;
+  }
+
+  return details.status === 401 || details.status === 403;
+}
+
+function createBankfulSafeFallbackError(args: {
+  message: string;
+  code: string;
+  reason: string;
+  attemptId: string;
+  bankfulStatus?: string;
+  originalError?: unknown;
+}) {
+  return apiError.providerUnavailable(
+    args.message,
+    buildSquareFallbackDetails({
+      code: args.code,
+      reason: args.reason,
+      attemptId: args.attemptId,
+      bankfulStatus: args.bankfulStatus,
+      originalError: args.originalError,
+    }),
+    false,
+  );
+}
+
 export function createFinalizeCheckoutSession(
   dependencies: FinalizeCheckoutDependencies,
 ) {
@@ -1566,9 +1641,20 @@ export function createFinalizeCheckoutSession(
     let squarePaymentLinkId: string | undefined;
 
     try {
-      if (args.paymentMethod === 'card' && !isCardDebitCheckoutEnabled()) {
-        throw apiError.badRequest(getCardDebitCheckoutUnavailableMessage(), {
-          code: 'card_debit_checkout_disabled',
+      if (
+        (args.paymentMethod === 'card' || args.paymentMethod === 'square') &&
+        !isCardProcessingEnabled()
+      ) {
+        throw apiError.badRequest(getCardProcessingUnavailableMessage(), {
+          code: 'card_processing_disabled',
+          squareFallbackEligible: false,
+        });
+      }
+
+      if (args.paymentMethod === 'square' && !isCardSquareFallbackEnabled()) {
+        throw apiError.badRequest('Hosted card checkout is not available right now.', {
+          code: 'square_fallback_disabled',
+          squareFallbackEligible: false,
         });
       }
 
@@ -1970,7 +2056,11 @@ export function createFinalizeCheckoutSession(
         if (!claimedAttempt) {
           throw apiError.conflict(
             'This card payment is already being processed. Refresh the checkout before trying again.',
-            { code: 'bankful_attempt_in_progress', attemptId },
+            {
+              code: 'bankful_attempt_in_progress',
+              attemptId,
+              squareFallbackEligible: false,
+            },
           );
         }
 
@@ -1996,6 +2086,35 @@ export function createFinalizeCheckoutSession(
             },
           });
         } catch (captureError) {
+          if (isSafeBankfulPreCaptureFailure(captureError)) {
+            const originalDetails = getApiErrorDetails(captureError);
+            const message =
+              captureError instanceof Error
+                ? captureError.message
+                : 'Bankful card processing is unavailable.';
+
+            await dependencies.updateBankfulPaymentAttempt(attemptId, {
+              status: 'failed',
+              latestError: message,
+            });
+
+            throw createBankfulSafeFallbackError({
+              message: 'Bankful card processing is unavailable. You can continue with secure hosted card checkout.',
+              code: 'bankful_provider_unavailable',
+              reason: typeof originalDetails?.missing === 'string'
+                ? 'bankful_config_unavailable'
+                : 'bankful_authorization_failed',
+              attemptId,
+              originalError: originalDetails
+                ? {
+                    code: captureError instanceof ApiError ? captureError.code : undefined,
+                    message,
+                    details: originalDetails,
+                  }
+                : undefined,
+            });
+          }
+
           await dependencies.updateBankfulPaymentAttempt(attemptId, {
             status: 'capture_unknown',
             latestError:
@@ -2029,10 +2148,18 @@ export function createFinalizeCheckoutSession(
             bankfulStatus === 'pending'
               ? 'Your card payment is pending review. Contact support with your checkout email if it does not update.'
               : bankful.errorMessage || 'Your card was declined. Use a different card or payment method.',
-            {
+            buildSquareFallbackDetails({
               code: `bankful_${bankfulStatus}`,
+              reason:
+                bankfulStatus === 'declined'
+                  ? 'bankful_declined'
+                  : bankfulStatus === 'failed'
+                    ? 'bankful_failed'
+                    : 'bankful_pending',
               attemptId,
-            },
+              bankfulStatus,
+              eligible: bankfulStatus === 'declined' || bankfulStatus === 'failed',
+            }),
           );
         }
 

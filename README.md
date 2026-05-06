@@ -26,7 +26,13 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `STORE_CURRENCY_BY_COUNTRY` (optional country mapping, e.g. `CA:CAD,US:USD,GB:GBP`)
 - `SWELL_CRYPTO_PAYMENT_METHOD` (manual payment method ID configured in Swell Payment Settings for direct crypto payments; defaults to `crypto`)
 - `SWELL_CARD_DEBIT_PAYMENT_METHOD` (manual payment method ID configured in Swell Payment Settings for card/debit payments; defaults to `card_debit`)
-- `CHECKOUT_CARD_DEBIT_ENABLED=false` (temporarily disables card/debit checkout while keeping the option visible as currently disabled; omit or set to `true` to enable)
+- `CHECKOUT_CARD_PROCESSING_ENABLED=false` (server-only global kill switch for all card-style checkout; omit or set to `true` to enable Bankful primary card checkout)
+- `CHECKOUT_CARD_SQUARE_FALLBACK_ENABLED=true` (server-only; allows Square hosted checkout only after a safe Bankful failure. `CHECKOUT_SQUARE_FALLBACK_ENABLED` is accepted as a temporary one-deploy compatibility alias.)
+- `BANKFUL_API_KEY`, `BANKFUL_SECRET_KEY` (server-only Bankful credentials for primary card checkout)
+- `BANKFUL_BASE_URL` (optional server-only Bankful API base URL; defaults to Bankful production)
+- `SQUARE_ACCESS_TOKEN`, `SQUARE_LOCATION_ID` (server-only Square credentials for hosted fallback checkout)
+- `SQUARE_WEBHOOK_SIGNATURE_KEY`, `SQUARE_WEBHOOK_NOTIFICATION_URL` (server-only Square webhook verification settings)
+- `SQUARE_ENVIRONMENT` (optional; defaults to `production` unless the Square helper is configured otherwise)
 - `SWELL_INTERAC_PAYMENT_METHOD` (manual payment method ID configured in Swell Payment Settings for Interac payments; defaults to `interac`)
 - `SWELL_MANUAL_PAYMENT_METHOD` (legacy manual payment method fallback used only by older call sites; defaults to `crypto`)
 - `NOW_PRIVATE_KEY` or `NOWPAYMENTS_API_KEY` (NOWPayments server API key; `NOW_PRIVATE_KEY` is accepted as an alias)
@@ -91,6 +97,8 @@ creates a NOWPayments payment for that Swell order total. For that flow to work:
 
 - `SWELL_SECRET_KEY` must be present
 - `SWELL_CRYPTO_PAYMENT_METHOD`, `SWELL_CARD_DEBIT_PAYMENT_METHOD`, and `SWELL_INTERAC_PAYMENT_METHOD` must match manual payment methods configured in your Swell dashboard
+- Bankful is the primary card processor. Square remains hidden unless `CHECKOUT_CARD_SQUARE_FALLBACK_ENABLED=true` and Bankful returns a safe, non-ambiguous failure.
+- Do not use `NEXT_PUBLIC_*` checkout payment flags or the retired `CHECKOUT_CARD_DEBIT_ENABLED`; checkout payment availability is resolved server-side.
 - Either Swell shipping services must be configured, or Shippo must be configured with API credentials plus the required origin fields
 
 ## Shippo fulfillment

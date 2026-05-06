@@ -51,8 +51,8 @@ const DEFAULT_BANKFUL_BASE_URL = 'https://api.paybybankful.com';
 
 function getBankfulBaseUrl() {
   const configured =
-    process.env.NEXT_PUBLIC_BANKFUL_URL?.trim() ||
     process.env.BANKFUL_BASE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_BANKFUL_URL?.trim() ||
     DEFAULT_BANKFUL_BASE_URL;
 
   return configured.replace(/\/$/, '');

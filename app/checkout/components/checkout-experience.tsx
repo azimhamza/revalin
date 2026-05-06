@@ -30,7 +30,7 @@ import {
 } from '@/lib/checkout/client-resume';
 import {
   CARD_CHECKOUT_MINIMUM_USD,
-  getCardDebitCheckoutUnavailableMessage,
+  getCardProcessingUnavailableMessage,
   getCardCheckoutMinimumMessage,
   isCardCheckoutMinimumMet,
 } from '@/lib/checkout/payment-method-rules';
@@ -61,8 +61,8 @@ import { getInventoryState, HIGH_DEMAND_SHIPPING_LABEL } from '@/lib/inventory';
 import { useLazyProductAvailability } from '@/lib/catalog/availability-client';
 
 type CheckoutExperienceProps = {
-  cardDebitCheckoutEnabled: boolean;
-  squareFallbackEnabled: boolean;
+  cardProcessingEnabled: boolean;
+  cardSquareFallbackEnabled: boolean;
   quickAddProducts: Product[];
 };
 
@@ -100,6 +100,11 @@ type CheckoutQuote = {
   paymentMethod?: 'card' | 'crypto' | 'interac' | 'square';
   services: CheckoutShippingService[];
   selectedServiceId: string;
+};
+
+type SquareFallbackUnlock = {
+  reason: string;
+  message: string;
 };
 
 type CheckoutCartSnapshot = {
@@ -552,21 +557,58 @@ function isCheckoutApiSessionExpired(session: CheckoutApiSession | null | undefi
   return Number.isFinite(expiresAt) && expiresAt <= Date.now();
 }
 
+function getApiErrorDetails(payload: unknown): Record<string, unknown> | null {
+  if (!payload || typeof payload !== 'object' || !('error' in payload)) {
+    return null;
+  }
+
+  const error = (payload as { error?: unknown }).error;
+  if (!error || typeof error !== 'object' || !('details' in error)) {
+    return null;
+  }
+
+  const details = (error as { details?: unknown }).details;
+  return details && typeof details === 'object'
+    ? (details as Record<string, unknown>)
+    : null;
+}
+
+function getSquareFallbackUnlockFromError(
+  payload: unknown,
+  message: string,
+): SquareFallbackUnlock | null {
+  const details = getApiErrorDetails(payload);
+  if (!details || details.squareFallbackEligible !== true) {
+    return null;
+  }
+
+  if (details.fallbackPaymentMethod !== 'square') {
+    return null;
+  }
+
+  return {
+    reason:
+      typeof details.reason === 'string'
+        ? details.reason
+        : typeof details.code === 'string'
+          ? details.code
+          : 'bankful_failed',
+    message,
+  };
+}
+
 function isDraftOutOfDateResponse(payload: unknown) {
   if (!payload || typeof payload !== 'object' || !('error' in payload)) {
     return false;
   }
 
   const error = (payload as { error?: unknown }).error;
-  if (!error || typeof error !== 'object') {
-    return false;
-  }
-
-  const details = (error as { details?: unknown }).details;
+  const details = getApiErrorDetails(payload);
   return Boolean(
+    error &&
+      typeof error === 'object' &&
     (error as { code?: unknown }).code === 'conflict' &&
       details &&
-      typeof details === 'object' &&
       (details as { code?: unknown }).code === 'draft_out_of_date',
   );
 }
@@ -1107,8 +1149,8 @@ function DevPaymentSimulator({
 }
 
 export function CheckoutExperience({
-  cardDebitCheckoutEnabled,
-  squareFallbackEnabled,
+  cardProcessingEnabled,
+  cardSquareFallbackEnabled,
   quickAddProducts,
 }: CheckoutExperienceProps) {
   const { cart } = useCart();
@@ -1118,7 +1160,7 @@ export function CheckoutExperience({
   const initialDiscountCode = (searchParams.get('discount') || '').toUpperCase();
   const [shippingAddress, setShippingAddress] = useState<CheckoutShippingAddress>(DEFAULT_SHIPPING_ADDRESS);
   const [paymentMethod, setPaymentMethod] = useState<'crypto' | 'card' | 'interac' | 'square'>('crypto');
-  const [cardPaymentFailed, setCardPaymentFailed] = useState(false);
+  const [squareFallbackUnlock, setSquareFallbackUnlock] = useState<SquareFallbackUnlock | null>(null);
   const [paymentCurrency, setPaymentCurrency] = useState(QUICK_PAYMENT_CURRENCIES[0]);
   const [sourceWalletAddress, setSourceWalletAddress] = useState('');
   const [interacSenderEmail, setInteracSenderEmail] = useState('');
@@ -1461,11 +1503,11 @@ export function CheckoutExperience({
       )}.`
     : getCardCheckoutMinimumMessage();
   const isCardCheckoutUnavailable =
-    !cardDebitCheckoutEnabled || isCardCheckoutDisabled;
+    !cardProcessingEnabled || isCardCheckoutDisabled;
   const squareFallbackAvailable =
-    squareFallbackEnabled && (isCardCheckoutUnavailable || cardPaymentFailed);
-  const cardCheckoutUnavailableMessage = !cardDebitCheckoutEnabled
-    ? getCardDebitCheckoutUnavailableMessage()
+    cardProcessingEnabled && cardSquareFallbackEnabled && Boolean(squareFallbackUnlock);
+  const cardCheckoutUnavailableMessage = !cardProcessingEnabled
+    ? getCardProcessingUnavailableMessage()
     : cardCheckoutMinimumMessage;
 
   const quickAddCatalog = useMemo(() => {
@@ -1666,11 +1708,9 @@ export function CheckoutExperience({
 
         setShippingAddress(checkoutDraft.shippingAddress);
         setPaymentMethod(
-          checkoutDraft.paymentMethod === 'card' && !cardDebitCheckoutEnabled
-            ? squareFallbackEnabled
-              ? 'square'
-              : 'crypto'
-            : checkoutDraft.paymentMethod === 'square' && !squareFallbackEnabled
+          checkoutDraft.paymentMethod === 'card' && !cardProcessingEnabled
+            ? 'crypto'
+            : checkoutDraft.paymentMethod === 'square'
               ? 'crypto'
               : checkoutDraft.paymentMethod,
         );
@@ -1706,7 +1746,7 @@ export function CheckoutExperience({
     } finally {
       setIsDraftHydrated(true);
     }
-  }, [cardDebitCheckoutEnabled, initialDiscountCode, squareFallbackEnabled]);
+  }, [cardProcessingEnabled, initialDiscountCode]);
 
   useEffect(() => {
     if (!isDraftHydrated || activeOrder || cart === undefined) return;
@@ -2301,13 +2341,21 @@ export function CheckoutExperience({
     if (activeOrder) return;
     if (
       paymentMethod !== 'card' ||
-      (cardDebitCheckoutEnabled && !isCardCheckoutDisabled)
+      (cardProcessingEnabled && !isCardCheckoutDisabled)
     ) {
       return;
     }
 
-    setPaymentMethod(squareFallbackAvailable ? 'square' : 'crypto');
-  }, [activeOrder, cardDebitCheckoutEnabled, isCardCheckoutDisabled, paymentMethod, squareFallbackAvailable]);
+    setPaymentMethod('crypto');
+  }, [activeOrder, cardProcessingEnabled, isCardCheckoutDisabled, paymentMethod]);
+
+  useEffect(() => {
+    if (activeOrder || paymentMethod !== 'square' || squareFallbackAvailable) {
+      return;
+    }
+
+    setPaymentMethod('crypto');
+  }, [activeOrder, paymentMethod, squareFallbackAvailable]);
 
   const pollingId = checkoutSession?.order.payment ? getPollingId(checkoutSession.order.payment) : undefined;
   const autoPollingId =
@@ -2377,6 +2425,7 @@ export function CheckoutExperience({
     setCheckoutApiSession(null);
     setCheckoutSession(null);
     setError(null);
+    setSquareFallbackUnlock(null);
     previousPaymentSnapshot.current = null;
     clearStoredCheckoutResume();
     updateCheckoutUrl();
@@ -2412,12 +2461,15 @@ export function CheckoutExperience({
   }, [shippingAddress]);
 
   const selectPaymentMethod = useCallback((nextPaymentMethod: 'card' | 'crypto' | 'interac' | 'square') => {
-    if (nextPaymentMethod === 'card' && (!cardDebitCheckoutEnabled || isCardCheckoutDisabled)) {
-      const fallbackPaymentMethod = squareFallbackEnabled ? 'square' : 'crypto';
-      if (!activeOrder && fallbackPaymentMethod !== paymentMethod) {
+    if (nextPaymentMethod === 'card' && (!cardProcessingEnabled || isCardCheckoutDisabled)) {
+      if (!activeOrder && paymentMethod !== 'crypto') {
         resetQuoteState();
       }
-      setPaymentMethod(fallbackPaymentMethod);
+      setPaymentMethod('crypto');
+      return;
+    }
+
+    if (nextPaymentMethod === 'square' && !squareFallbackAvailable) {
       return;
     }
 
@@ -2426,7 +2478,7 @@ export function CheckoutExperience({
     }
 
     if (nextPaymentMethod !== 'square') {
-      setCardPaymentFailed(false);
+      setSquareFallbackUnlock(null);
     }
 
     if (!activeOrder && nextPaymentMethod !== paymentMethod) {
@@ -2436,12 +2488,12 @@ export function CheckoutExperience({
     setPaymentMethod(nextPaymentMethod);
   }, [
     activeOrder,
-    cardDebitCheckoutEnabled,
+    cardProcessingEnabled,
     fillInteracSenderDetails,
     isCardCheckoutDisabled,
     paymentMethod,
     resetQuoteState,
-    squareFallbackEnabled,
+    squareFallbackAvailable,
   ]);
 
   const handleShippingChange = (name: keyof CheckoutShippingAddress, value: string) => {
@@ -3033,8 +3085,8 @@ export function CheckoutExperience({
     expiryMonth: string;
     expiryYear: string;
   }) => {
-    if (paymentMethod === 'card' && !cardDebitCheckoutEnabled) {
-      setError(getCardDebitCheckoutUnavailableMessage());
+    if (paymentMethod === 'card' && !cardProcessingEnabled) {
+      setError(getCardProcessingUnavailableMessage());
       return;
     }
 
@@ -3111,7 +3163,21 @@ export function CheckoutExperience({
 
       if (!response.ok) {
         console.error('[CHECKOUT] create-payment failed:', response.status, payload);
-        throw new Error(getApiErrorMessage(payload, 'Unable to create payment.'));
+        const message = getApiErrorMessage(payload, 'Unable to create payment.');
+        const fallbackUnlock =
+          paymentMethod === 'card' && cardSquareFallbackEnabled
+            ? getSquareFallbackUnlockFromError(payload, message)
+            : null;
+
+        if (fallbackUnlock) {
+          setSquareFallbackUnlock(fallbackUnlock);
+          setCheckoutApiSession(null);
+          setPaymentMethod('square');
+          setError(`${message} You can continue with Square hosted checkout.`);
+          return;
+        }
+
+        throw new Error(message);
       }
 
       const data = getApiData<{
@@ -3236,12 +3302,6 @@ export function CheckoutExperience({
         shieldClimbPaymentWindow.current.close();
       }
       shieldClimbPaymentWindow.current = null;
-      if (paymentMethod === 'card') {
-        setCardPaymentFailed(true);
-        if (squareFallbackEnabled) {
-          setPaymentMethod('square');
-        }
-      }
       setError(submitError instanceof Error ? submitError.message : 'Unable to create payment.');
     } finally {
       paymentSubmitInFlight.current = false;
@@ -3249,7 +3309,8 @@ export function CheckoutExperience({
     }
   }, [
     buildCheckoutSessionPayload,
-    cardDebitCheckoutEnabled,
+    cardProcessingEnabled,
+    cardSquareFallbackEnabled,
     cardCheckoutMinimumMessage,
     ensureShippingServiceIdForPayment,
     ensureCheckoutApiSession,
@@ -3269,8 +3330,8 @@ export function CheckoutExperience({
   const handleCreatePayment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (paymentMethod === 'card' && !cardDebitCheckoutEnabled) {
-      setError(getCardDebitCheckoutUnavailableMessage());
+    if (paymentMethod === 'card' && !cardProcessingEnabled) {
+      setError(getCardProcessingUnavailableMessage());
       return;
     }
 
@@ -3299,8 +3360,8 @@ export function CheckoutExperience({
   const continueToCardCheckout = useCallback(async () => {
     if (isCreatingPayment) return;
 
-    if (!cardDebitCheckoutEnabled) {
-      setError(getCardDebitCheckoutUnavailableMessage());
+    if (!cardProcessingEnabled) {
+      setError(getCardProcessingUnavailableMessage());
       return;
     }
 
@@ -3319,7 +3380,7 @@ export function CheckoutExperience({
       expiryMonth: parsedExpiry.expiryMonth,
       expiryYear: parsedExpiry.expiryYear,
     });
-  }, [cardCvv, cardDebitCheckoutEnabled, cardExpiry, cardNumber, isCreatingPayment, submitCheckoutPayment]);
+  }, [cardCvv, cardProcessingEnabled, cardExpiry, cardNumber, isCreatingPayment, submitCheckoutPayment]);
 
   const refreshStatus = async () => {
     if (!pollingId || !checkoutSession) return;
@@ -3586,10 +3647,8 @@ export function CheckoutExperience({
     ? 'crypto'
     : interacPayment
       ? 'crypto'
-      : cardDebitCheckoutEnabled && !isCardCheckoutDisabled
+      : cardProcessingEnabled && !isCardCheckoutDisabled
         ? 'card'
-        : squareFallbackAvailable
-          ? 'square'
         : 'interac';
   const paymentExpiresAt = nowPayment ? formatDateTime(nowPayment.validUntil || nowPayment.expirationEstimateDate) : null;
   const isPartiallyPaid = paymentStatus === 'partially_paid';
@@ -3709,7 +3768,7 @@ export function CheckoutExperience({
     : interacPayment?.cadAmount;
 
   const canPayRemainderWithCard =
-    cardDebitCheckoutEnabled &&
+    cardProcessingEnabled &&
     (!isPartiallyPaid ||
       !activeOrder ||
       activeOrder.currencyCode.trim().toUpperCase() !== 'USD'
@@ -3729,7 +3788,7 @@ export function CheckoutExperience({
     effectiveSelectedShippingServiceId &&
     !isCreatingPayment &&
     ageVerified &&
-    !(paymentMethod === 'card' && (!cardDebitCheckoutEnabled || isCardCheckoutDisabled)) &&
+    !(paymentMethod === 'card' && (!cardProcessingEnabled || isCardCheckoutDisabled)) &&
     !(paymentMethod === 'square' && !squareFallbackAvailable) &&
     !(
       paymentMethod === 'interac' &&
@@ -4100,52 +4159,52 @@ export function CheckoutExperience({
                     </div>
 
                     <div className="mt-3 grid gap-2.5 md:grid-cols-3">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (isCardCheckoutUnavailable && !squareFallbackAvailable) return;
-                          selectPaymentMethod(squareFallbackAvailable ? 'square' : 'card');
-                        }}
-                        disabled={isCardCheckoutUnavailable && !squareFallbackAvailable}
-                        className={cn(
-                          'flex items-center gap-2.5 rounded-xl border px-3 py-3 text-left transition-all',
-                          isCardCheckoutUnavailable && !squareFallbackAvailable
-                            ? 'cursor-not-allowed border-border/70 bg-background/60 opacity-55'
-                            : paymentMethod === 'card' || paymentMethod === 'square'
-                            ? 'border-[#0B2E2F] bg-[#0B2E2F]/5 ring-1 ring-[#0B2E2F]'
-                            : 'border-border bg-background hover:border-[#0B2E2F]/30'
-                        )}
-                      >
-                        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F]/8 text-[#0B2E2F]">
-                          <CreditCard className="size-4" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-sm font-semibold leading-5">Debit / Credit Card</p>
-                            {isCardCheckoutUnavailable ? (
-                              <span className="rounded-full border border-foreground/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-foreground/45">
-                                {squareFallbackAvailable
-                                  ? 'Hosted checkout'
-                                  : cardDebitCheckoutEnabled
-                                    ? `Min $${CARD_CHECKOUT_MINIMUM_USD} USD`
-                                    : 'Currently disabled'}
-                              </span>
-                            ) : null}
-                          </div>
-                          {isCardCheckoutUnavailable && !squareFallbackAvailable ? (
-                            <p className="mt-1 text-xs text-foreground/45">
-                              {cardCheckoutUnavailableMessage}
-                            </p>
-                          ) : squareFallbackAvailable ? (
-                            <p className="mt-1 text-xs text-foreground/55">Secure Square-hosted card checkout</p>
-                          ) : (
-                            <PaymentBrandIcons className="mt-1" />
+                      {cardProcessingEnabled ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isCardCheckoutUnavailable && !squareFallbackAvailable) return;
+                            selectPaymentMethod(squareFallbackAvailable ? 'square' : 'card');
+                          }}
+                          disabled={isCardCheckoutUnavailable && !squareFallbackAvailable}
+                          className={cn(
+                            'flex items-center gap-2.5 rounded-xl border px-3 py-3 text-left transition-all',
+                            isCardCheckoutUnavailable && !squareFallbackAvailable
+                              ? 'cursor-not-allowed border-border/70 bg-background/60 opacity-55'
+                              : paymentMethod === 'card' || paymentMethod === 'square'
+                              ? 'border-[#0B2E2F] bg-[#0B2E2F]/5 ring-1 ring-[#0B2E2F]'
+                              : 'border-border bg-background hover:border-[#0B2E2F]/30'
                           )}
-                        </div>
-                        <div className={cn('flex size-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors', paymentMethod === 'card' || paymentMethod === 'square' ? 'border-[#0B2E2F]' : 'border-foreground/20')}>
-                          {(paymentMethod === 'card' || paymentMethod === 'square') && <div className="size-2.5 rounded-full bg-[#0B2E2F]" />}
-                        </div>
-                      </button>
+                        >
+                          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F]/8 text-[#0B2E2F]">
+                            <CreditCard className="size-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-sm font-semibold leading-5">Debit / Credit Card</p>
+                              {isCardCheckoutUnavailable || squareFallbackAvailable ? (
+                                <span className="rounded-full border border-foreground/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-foreground/45">
+                                  {squareFallbackAvailable
+                                    ? 'Hosted checkout'
+                                    : `Min $${CARD_CHECKOUT_MINIMUM_USD} USD`}
+                                </span>
+                              ) : null}
+                            </div>
+                            {isCardCheckoutUnavailable && !squareFallbackAvailable ? (
+                              <p className="mt-1 text-xs text-foreground/45">
+                                {cardCheckoutUnavailableMessage}
+                              </p>
+                            ) : squareFallbackAvailable ? (
+                              <p className="mt-1 text-xs text-foreground/55">Secure Square-hosted card checkout</p>
+                            ) : (
+                              <PaymentBrandIcons className="mt-1" />
+                            )}
+                          </div>
+                          <div className={cn('flex size-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors', paymentMethod === 'card' || paymentMethod === 'square' ? 'border-[#0B2E2F]' : 'border-foreground/20')}>
+                            {(paymentMethod === 'card' || paymentMethod === 'square') && <div className="size-2.5 rounded-full bg-[#0B2E2F]" />}
+                          </div>
+                        </button>
+                      ) : null}
 
                       <button
                         type="button"
@@ -4330,6 +4389,11 @@ export function CheckoutExperience({
                             <p className="mt-1 text-xs leading-5 text-foreground/55">
                               Your order will be charged in CAD through Square. After placing the order, the payment page opens in a new tab and this page waits for confirmation.
                             </p>
+                            {squareFallbackUnlock ? (
+                              <p className="mt-2 text-xs leading-5 text-foreground/60">
+                                Bankful could not complete this card payment, so hosted checkout is now available for this attempt.
+                              </p>
+                            ) : null}
                           </div>
                         </div>
                       </div>
@@ -4340,7 +4404,7 @@ export function CheckoutExperience({
                             <CreditCard className="size-4" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold">Debit / Credit Card currently disabled</p>
+                            <p className="text-sm font-semibold">Debit / Credit Card unavailable</p>
                             <p className="mt-1 text-xs leading-5 text-foreground/50">
                               {cardCheckoutUnavailableMessage}
                             </p>
@@ -4850,9 +4914,9 @@ export function CheckoutExperience({
                                   ) : (
                                     <div className="flex items-center justify-center gap-2 rounded-xl border border-border/50 bg-background/60 px-5 py-3 text-sm text-foreground/45">
                                       <CreditCard className="size-4" />
-                                      {cardDebitCheckoutEnabled ? 'Card unavailable' : 'Card currently disabled'}
+                                      {cardProcessingEnabled ? 'Card unavailable' : 'Card checkout disabled'}
                                       <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
-                                        {cardDebitCheckoutEnabled ? `$${CARD_CHECKOUT_MINIMUM_USD} min` : 'Disabled'}
+                                        {cardProcessingEnabled ? `$${CARD_CHECKOUT_MINIMUM_USD} min` : 'Disabled'}
                                       </span>
                                     </div>
                                   )}

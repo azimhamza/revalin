@@ -28,6 +28,7 @@ export const DEFAULT_PAYMENT_CURRENCIES = ['btc', 'usdcmatic', 'eth', 'sol', 'lt
 
 export const TERMINAL_PAYMENT_STATUSES = new Set([
   'finished',
+  'paid',
   'failed',
   'expired',
   'refunded',

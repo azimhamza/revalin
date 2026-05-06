@@ -1,6 +1,6 @@
 export const CARD_CHECKOUT_MINIMUM_USD = 15;
 
-const DISABLED_CARD_DEBIT_ENV_VALUES = new Set([
+const DISABLED_CHECKOUT_ENV_VALUES = new Set([
   '0',
   'false',
   'no',
@@ -8,24 +8,34 @@ const DISABLED_CARD_DEBIT_ENV_VALUES = new Set([
   'disabled',
 ]);
 
-export function isCardDebitCheckoutEnabled() {
-  const configured =
-    (
-      process.env.CHECKOUT_CARD_DEBIT_ENABLED ??
-      process.env.NEXT_PUBLIC_CHECKOUT_CARD_DEBIT_ENABLED
-    )
-      ?.trim()
-      .toLowerCase();
+function readBooleanEnv(names: string[], defaultValue: boolean) {
+  for (const name of names) {
+    const configured = process.env[name]?.trim().toLowerCase();
+    if (!configured) continue;
 
-  if (!configured) {
-    return true;
+    return !DISABLED_CHECKOUT_ENV_VALUES.has(configured);
   }
 
-  return !DISABLED_CARD_DEBIT_ENV_VALUES.has(configured);
+  return defaultValue;
 }
 
-export function getCardDebitCheckoutUnavailableMessage() {
-  return '';
+export function isCardProcessingEnabled() {
+  return readBooleanEnv(['CHECKOUT_CARD_PROCESSING_ENABLED'], true);
+}
+
+export function getCardProcessingUnavailableMessage() {
+  return 'Card checkout is temporarily unavailable. Choose crypto or Interac e-Transfer.';
+}
+
+export function isCardSquareFallbackEnabled() {
+  return readBooleanEnv(
+    [
+      'CHECKOUT_CARD_SQUARE_FALLBACK_ENABLED',
+      // Temporary compatibility alias for the original Square fallback rollout.
+      'CHECKOUT_SQUARE_FALLBACK_ENABLED',
+    ],
+    false,
+  );
 }
 
 export function isCardCheckoutMinimumMet(amountUsd: string | number) {
@@ -37,20 +47,4 @@ export function getCardCheckoutMinimumMessage() {
   return `Debit and credit card checkout is available for orders of $${CARD_CHECKOUT_MINIMUM_USD.toFixed(
     2,
   )} USD or more.`;
-}
-
-export function isSquareFallbackCheckoutEnabled() {
-  const configured =
-    (
-      process.env.CHECKOUT_SQUARE_FALLBACK_ENABLED ??
-      process.env.NEXT_PUBLIC_CHECKOUT_SQUARE_FALLBACK_ENABLED
-    )
-      ?.trim()
-      .toLowerCase();
-
-  if (!configured) {
-    return false;
-  }
-
-  return !DISABLED_CARD_DEBIT_ENV_VALUES.has(configured);
 }

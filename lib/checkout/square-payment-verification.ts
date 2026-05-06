@@ -22,6 +22,23 @@ import {
 
 type SquareVerificationSource = 'square_webhook' | 'square_poll';
 
+const SQUARE_SUCCESS_STATUSES = new Set(['paid', 'finished']);
+const SQUARE_INACTIVE_STATUSES = new Set([
+  'cancelled',
+  'replaced',
+  'failed',
+  'expired',
+  'refunded',
+]);
+
+function normalizeStatus(status?: string | null) {
+  return status?.trim().toLowerCase() || '';
+}
+
+function isSuccessfulSquareStatus(status?: string | null) {
+  return SQUARE_SUCCESS_STATUSES.has(normalizeStatus(status));
+}
+
 function getExpectedSquareAmountCents(order: CheckoutOrderRecord) {
   if (!isSquarePayment(order.payment)) {
     return null;
@@ -67,6 +84,36 @@ async function markSquarePaymentReviewRequired(args: {
   });
 }
 
+async function appendSquarePaymentAuditEvent(args: {
+  order: CheckoutOrderRecord;
+  payment: SquarePayment;
+  ipnEvent?: CheckoutIpnEvent;
+}) {
+  if (!args.ipnEvent) {
+    return args.order;
+  }
+
+  const ipnEvent = args.ipnEvent;
+
+  return updateCheckoutOrder(args.order.orderId, current => {
+    if (!isSquarePayment(current.payment)) return current;
+
+    return {
+      ...current,
+      payment: {
+        ...current.payment,
+        paymentId: args.payment.id ?? current.payment.paymentId ?? null,
+        squareStatus: args.payment.status ?? current.payment.squareStatus ?? null,
+        amountMoney: args.payment.amount_money ?? current.payment.amountMoney ?? null,
+        totalMoney: args.payment.total_money ?? current.payment.totalMoney ?? null,
+        receiptUrl: args.payment.receipt_url ?? current.payment.receiptUrl ?? null,
+        updatedAt: args.payment.updated_at || new Date().toISOString(),
+      },
+      ipnEvents: [...(current.ipnEvents || []), ipnEvent],
+    };
+  });
+}
+
 export async function applySquarePaymentVerification(args: {
   order: CheckoutOrderRecord;
   payment: SquarePayment;
@@ -82,6 +129,49 @@ export async function applySquarePaymentVerification(args: {
   }
 
   const targetStatus = mapSquarePaymentStatus(args.payment.status);
+  const currentStatus = normalizeStatus(args.order.payment.status);
+  const currentPaymentAlreadySuccessful =
+    isSuccessfulSquareStatus(currentStatus) ||
+    Boolean(args.order.payment.swellPaymentId);
+
+  if (
+    currentPaymentAlreadySuccessful &&
+    !isSuccessfulSquareStatus(targetStatus)
+  ) {
+    const auditedOrder = await appendSquarePaymentAuditEvent({
+      order: args.order,
+      payment: args.payment,
+      ipnEvent: args.ipnEvent,
+    });
+
+    return {
+      order: auditedOrder || args.order,
+      targetStatus,
+      reviewRequired: false,
+    };
+  }
+
+  if (
+    targetStatus === 'paid' &&
+    (
+      SQUARE_INACTIVE_STATUSES.has(currentStatus) ||
+      Boolean(args.order.payment.deletedAt)
+    )
+  ) {
+    const updatedOrder = await markSquarePaymentReviewRequired({
+      order: args.order,
+      payment: args.payment,
+      reason: 'Square payment completed for a checkout link that was already released, replaced, or cancelled.',
+      ipnEvent: args.ipnEvent,
+    });
+
+    return {
+      order: updatedOrder || args.order,
+      targetStatus,
+      reviewRequired: true,
+    };
+  }
+
   const paymentAmountCents = squarePaymentAmountCents(args.payment);
   const paymentCurrency = squarePaymentCurrency(args.payment);
   const expectedAmountCents = getExpectedSquareAmountCents(args.order);

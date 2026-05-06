@@ -12,6 +12,7 @@ import { CSSProperties, ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader } from '../ui/loader';
 import { getSwellProductId } from '@/lib/swell/utils';
+import { getInventoryState } from '@/lib/inventory';
 
 interface AddToCartProps extends ButtonProps {
   product: Product;
@@ -72,14 +73,17 @@ export function AddToCartButton({
     return undefined;
   }, [selectedVariant, product]);
   const cartVariant = resolvedVariant;
+  const inventory = cartVariant ? getInventoryState(product, cartVariant) : null;
+  const isBackorder = inventory?.isBackorder === true;
 
   const getButtonText = () => {
     if (!cartContext) return 'Loading...';
     if (!cartVariant) return 'Select one';
+    if (isBackorder) return 'Get Notified';
     return 'Add To Cart';
   };
 
-  const isDisabled = !cartContext || !cartVariant || isLoading;
+  const isDisabled = !cartContext || !cartVariant || isBackorder || isLoading;
   const isSelectOneState = !cartVariant;
   const buttonStyle = isSelectOneState && unselectedStyle ? unselectedStyle : style;
   const { onPointerEnter, onFocus, onTouchStart, ...restButtonProps } = buttonProps;
@@ -131,7 +135,7 @@ export function AddToCartButton({
     >
       <Button
         type="submit"
-        aria-label={!cartVariant ? 'Select one' : 'Add to cart'}
+        aria-label={!cartVariant ? 'Select one' : isBackorder ? 'Get notified' : 'Add to cart'}
         disabled={isDisabled}
         onPointerEnter={event => {
           onPointerEnter?.(event);
