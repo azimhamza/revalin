@@ -29,10 +29,7 @@ import {
   type CheckoutResume,
 } from '@/lib/checkout/client-resume';
 import {
-  CARD_CHECKOUT_MINIMUM_USD,
   getCardProcessingUnavailableMessage,
-  getCardCheckoutMinimumMessage,
-  isCardCheckoutMinimumMet,
 } from '@/lib/checkout/payment-method-rules';
 import type {
   CheckoutAppliedDiscount,
@@ -1433,41 +1430,6 @@ export function CheckoutExperience({
     summaryTax,
   ]);
   const summaryDiscountLines = summaryPricing.discounts;
-  const summaryCouponDiscountAmount = useMemo(
-    () =>
-      summaryDiscountLines
-        .filter((discount) => !isCheckoutPaymentMethodDiscount(discount))
-        .reduce((total, discount) => total + Number(discount.amount.amount || 0), 0)
-        .toFixed(2),
-    [summaryDiscountLines],
-  );
-  const cardPreviewPricing = useMemo(
-    () =>
-      calculateCheckoutPricing({
-        currencyCode: summaryCurrencyCode,
-        subtotalAmount: summarySubtotal,
-        couponDiscountAmount: summaryCouponDiscountAmount,
-        couponCode:
-          appliedDiscount?.code || quote?.discountCode || activeOrder?.totals.discountCode,
-        shippingAmount: summaryShipping,
-        shipmentProtectionAmount: summaryShipmentProtection,
-        taxAmount: summaryTax,
-        landedCostAmount: summaryLandedCost,
-        paymentMethod: 'card',
-      }),
-    [
-      activeOrder?.totals.discountCode,
-      appliedDiscount?.code,
-      quote?.discountCode,
-      summaryCouponDiscountAmount,
-      summaryCurrencyCode,
-      summaryLandedCost,
-      summaryShipmentProtection,
-      summaryShipping,
-      summarySubtotal,
-      summaryTax,
-    ],
-  );
   const hasResolvedShippingPrice = Boolean(activeOrder?.shippingService || selectedQuoteService);
   const summaryShippingValue = hasResolvedShippingPrice
     ? renderShippingPrice(summaryShipping, summaryCurrencyCode, summaryShippingOriginal)
@@ -1490,25 +1452,10 @@ export function CheckoutExperience({
     : ' 5% savings applied automatically.';
   const summaryTotal = summaryPricing.totalAmount.amount;
   const isCartHydrating = !activeOrder && cart === undefined;
-  const canEvaluateCardMinimum =
-    summaryCurrencyCode.trim().toUpperCase() === 'USD' &&
-    Boolean(activeOrder || selectedQuoteService);
-  const isCardCheckoutDisabled =
-    canEvaluateCardMinimum &&
-    !isCardCheckoutMinimumMet(cardPreviewPricing.totalAmount.amount);
-  const cardCheckoutMinimumMessage = isCardCheckoutDisabled
-    ? `${getCardCheckoutMinimumMessage()} Current card total: ${formatPrice(
-        cardPreviewPricing.totalAmount.amount,
-        'USD',
-      )}.`
-    : getCardCheckoutMinimumMessage();
-  const isCardCheckoutUnavailable =
-    !cardProcessingEnabled || isCardCheckoutDisabled;
+  const isCardCheckoutUnavailable = !cardProcessingEnabled;
   const squareFallbackAvailable =
     cardProcessingEnabled && cardSquareFallbackEnabled && Boolean(squareFallbackUnlock);
-  const cardCheckoutUnavailableMessage = !cardProcessingEnabled
-    ? getCardProcessingUnavailableMessage()
-    : cardCheckoutMinimumMessage;
+  const cardCheckoutUnavailableMessage = getCardProcessingUnavailableMessage();
 
   const quickAddCatalog = useMemo(() => {
     if (!cart || cart.lines.length === 0) return quickAddProducts;
@@ -2339,15 +2286,12 @@ export function CheckoutExperience({
 
   useEffect(() => {
     if (activeOrder) return;
-    if (
-      paymentMethod !== 'card' ||
-      (cardProcessingEnabled && !isCardCheckoutDisabled)
-    ) {
+    if (paymentMethod !== 'card' || cardProcessingEnabled) {
       return;
     }
 
     setPaymentMethod('crypto');
-  }, [activeOrder, cardProcessingEnabled, isCardCheckoutDisabled, paymentMethod]);
+  }, [activeOrder, cardProcessingEnabled, paymentMethod]);
 
   useEffect(() => {
     if (activeOrder || paymentMethod !== 'square' || squareFallbackAvailable) {
@@ -2461,7 +2405,7 @@ export function CheckoutExperience({
   }, [shippingAddress]);
 
   const selectPaymentMethod = useCallback((nextPaymentMethod: 'card' | 'crypto' | 'interac' | 'square') => {
-    if (nextPaymentMethod === 'card' && (!cardProcessingEnabled || isCardCheckoutDisabled)) {
+    if (nextPaymentMethod === 'card' && !cardProcessingEnabled) {
       if (!activeOrder && paymentMethod !== 'crypto') {
         resetQuoteState();
       }
@@ -2490,7 +2434,6 @@ export function CheckoutExperience({
     activeOrder,
     cardProcessingEnabled,
     fillInteracSenderDetails,
-    isCardCheckoutDisabled,
     paymentMethod,
     resetQuoteState,
     squareFallbackAvailable,
@@ -3090,11 +3033,6 @@ export function CheckoutExperience({
       return;
     }
 
-    if (paymentMethod === 'card' && isCardCheckoutDisabled) {
-      setError(cardCheckoutMinimumMessage);
-      return;
-    }
-
     if (paymentMethod === 'square' && !squareFallbackAvailable) {
       setError('Hosted card checkout is not available right now.');
       return;
@@ -3311,12 +3249,10 @@ export function CheckoutExperience({
     buildCheckoutSessionPayload,
     cardProcessingEnabled,
     cardSquareFallbackEnabled,
-    cardCheckoutMinimumMessage,
     ensureShippingServiceIdForPayment,
     ensureCheckoutApiSession,
     createCheckoutApiSession,
     refreshCheckoutApiSession,
-    isCardCheckoutDisabled,
     squareFallbackAvailable,
     interacSenderEmail,
     interacSenderName,
@@ -3332,11 +3268,6 @@ export function CheckoutExperience({
 
     if (paymentMethod === 'card' && !cardProcessingEnabled) {
       setError(getCardProcessingUnavailableMessage());
-      return;
-    }
-
-    if (paymentMethod === 'card' && isCardCheckoutDisabled) {
-      setError(cardCheckoutMinimumMessage);
       return;
     }
 
@@ -3647,7 +3578,7 @@ export function CheckoutExperience({
     ? 'crypto'
     : interacPayment
       ? 'crypto'
-      : cardProcessingEnabled && !isCardCheckoutDisabled
+      : cardProcessingEnabled
         ? 'card'
         : 'interac';
   const paymentExpiresAt = nowPayment ? formatDateTime(nowPayment.validUntil || nowPayment.expirationEstimateDate) : null;
@@ -3767,20 +3698,12 @@ export function CheckoutExperience({
     ? remainingBalanceAmount.toFixed(2)
     : interacPayment?.cadAmount;
 
-  const canPayRemainderWithCard =
-    cardProcessingEnabled &&
-    (!isPartiallyPaid ||
-      !activeOrder ||
-      activeOrder.currencyCode.trim().toUpperCase() !== 'USD'
-        ? true
-        : remainingBalanceAmount >= CARD_CHECKOUT_MINIMUM_USD);
+  const canPayRemainderWithCard = cardProcessingEnabled;
 
   const canSwitchToAlternatePayment =
     alternatePaymentMethod !== 'card'
       ? true
-      : isPartiallyPaid
-        ? canPayRemainderWithCard
-        : !isCardCheckoutDisabled;
+      : canPayRemainderWithCard;
 
   const canPlaceOrder =
     cart &&
@@ -3788,7 +3711,7 @@ export function CheckoutExperience({
     effectiveSelectedShippingServiceId &&
     !isCreatingPayment &&
     ageVerified &&
-    !(paymentMethod === 'card' && (!cardProcessingEnabled || isCardCheckoutDisabled)) &&
+    !(paymentMethod === 'card' && !cardProcessingEnabled) &&
     !(paymentMethod === 'square' && !squareFallbackAvailable) &&
     !(
       paymentMethod === 'interac' &&
@@ -4186,7 +4109,7 @@ export function CheckoutExperience({
                                 <span className="rounded-full border border-foreground/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-foreground/45">
                                   {squareFallbackAvailable
                                     ? 'Hosted checkout'
-                                    : `Min $${CARD_CHECKOUT_MINIMUM_USD} USD`}
+                                    : 'Disabled'}
                                 </span>
                               ) : null}
                             </div>
@@ -4831,7 +4754,7 @@ export function CheckoutExperience({
                             ) : (
                               canSwitchToAlternatePayment
                                 ? 'Choose different payment'
-                                : (isPartiallyPaid ? 'Card unavailable below $15' : 'Card unavailable below $15')
+                                : 'Card checkout disabled'
                             )}
                           </Button>
                         ) : (
@@ -4914,9 +4837,9 @@ export function CheckoutExperience({
                                   ) : (
                                     <div className="flex items-center justify-center gap-2 rounded-xl border border-border/50 bg-background/60 px-5 py-3 text-sm text-foreground/45">
                                       <CreditCard className="size-4" />
-                                      {cardProcessingEnabled ? 'Card unavailable' : 'Card checkout disabled'}
+                                      Card checkout disabled
                                       <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
-                                        {cardProcessingEnabled ? `$${CARD_CHECKOUT_MINIMUM_USD} min` : 'Disabled'}
+                                        Disabled
                                       </span>
                                     </div>
                                   )}

@@ -72,10 +72,8 @@ import {
 } from '@/lib/checkout/interac';
 import {
   getCardProcessingUnavailableMessage,
-  getCardCheckoutMinimumMessage,
   isCardProcessingEnabled,
   isCardSquareFallbackEnabled,
-  isCardCheckoutMinimumMet,
 } from '@/lib/checkout/payment-method-rules';
 import {
   createWalletForOrder,
