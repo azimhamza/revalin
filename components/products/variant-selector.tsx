@@ -82,11 +82,18 @@ function VariantValueButton({
       </Button>
       {showTooltip && canShowHighDemandTooltip && (
         <span
-          className={`absolute bottom-full z-[100] mb-2 whitespace-nowrap rounded bg-[#0B2E2F] px-2.5 py-1.5 text-[11px] font-medium text-[#F4F1EA] shadow-lg pointer-events-none ${tooltipAlign === 'left' ? 'left-0' : 'right-0'}`}
+          className={cn(
+            'absolute bottom-full z-[100] mb-2 whitespace-nowrap rounded-md border border-foreground/10 bg-popover px-3 py-1.5 text-xs font-medium tracking-tight text-popover-foreground shadow-md pointer-events-none',
+            tooltipAlign === 'left' ? 'left-0' : 'right-0'
+          )}
         >
           Ships in about 1 week due to high demand
           <span
-            className={`absolute top-full border-4 border-transparent border-t-[#0B2E2F] ${tooltipAlign === 'left' ? 'left-4' : 'right-4'}`}
+            aria-hidden
+            className={cn(
+              'absolute top-full -mt-px h-2 w-2 rotate-45 border-r border-b border-foreground/10 bg-popover',
+              tooltipAlign === 'left' ? 'left-4' : 'right-4'
+            )}
           />
         </span>
       )}

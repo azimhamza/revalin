@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import type {
   InventoryDashboardData,
   InventoryItemSummary,
+  InventoryMovementSummary,
 } from "@/lib/inventory-management/service";
 
 import {
@@ -127,13 +128,60 @@ function readinessTone(status: Exclude<ReadinessStatus, "all">) {
   return "border-emerald-200 bg-emerald-50 text-emerald-900";
 }
 
-async function readApiError(response: Response, fallback: string) {
-  const payload = await response.json().catch(() => null);
-  return payload?.error?.message || fallback;
+function readApiErrorPayload(payload: unknown, fallback: string) {
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "error" in payload &&
+    payload.error &&
+    typeof payload.error === "object" &&
+    "message" in payload.error &&
+    typeof payload.error.message === "string"
+  ) {
+    return payload.error.message;
+  }
+
+  return fallback;
 }
 
+function stockStatusForQuantity(
+  quantity: number,
+  reorderPoint: number,
+): InventoryItemSummary["stockStatus"] {
+  if (quantity < 0) return "negative";
+  if (quantity === 0) return "out_of_stock";
+  if (reorderPoint > 0 && quantity <= reorderPoint) return "low_stock";
+  return "in_stock";
+}
+
+function formatApiDate(value: string | Date | null | undefined) {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string") return value;
+  return new Date().toISOString();
+}
+
+type ManualAdjustmentMovement = {
+  id: string;
+  itemId: string;
+  movementType: string;
+  quantityDelta: number;
+  quantityAfter: number;
+  unitCost: string | null;
+  purchaseOrderId: string | null;
+  purchaseReceiptId: string | null;
+  checkoutOrderId: string | null;
+  checkoutOrderNumber: string | null;
+  notes: string | null;
+  metadata: unknown;
+  createdAt: string | Date;
+};
+
+type ManualAdjustmentResponse = {
+  movement: ManualAdjustmentMovement;
+};
+
 export function InventoryManagement({
-  data,
+  data: initialData,
   initialFilters,
 }: {
   data: InventoryDashboardData;
@@ -146,8 +194,13 @@ export function InventoryManagement({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [data, setData] = useState(initialData);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [quickFeedback, setQuickFeedback] = useState<{
+    tone: "success" | "error";
+    text: string;
+  } | null>(null);
   const [syncSummary, setSyncSummary] = useState<{
     productsSeen: number;
     variantsSeen: number;
@@ -174,6 +227,10 @@ export function InventoryManagement({
     swellVariantId: "",
     notes: "",
   });
+
+  useEffect(() => {
+    setData(initialData);
+  }, [initialData]);
   const [adjustments, setAdjustments] = useState<Record<string, string>>({});
   const [quickAdjustment, setQuickAdjustment] = useState({
     itemId: "",
@@ -278,7 +335,7 @@ export function InventoryManagement({
     });
   }
 
-  async function postJson(url: string, body: unknown, busy: string) {
+  async function postJson<TData>(url: string, body: unknown, busy: string) {
     setBusyKey(busy);
     setError(null);
     try {
@@ -287,19 +344,77 @@ export function InventoryManagement({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      const payload = await response.json().catch(() => null) as
+        | { data?: TData; error?: { message?: string } }
+        | null;
 
       if (!response.ok) {
-        throw new Error(await readApiError(response, `Request failed (${response.status}).`));
+        throw new Error(
+          readApiErrorPayload(payload, `Request failed (${response.status}).`),
+        );
       }
 
       router.refresh();
-      return true;
+      return { ok: true as const, data: payload?.data ?? null };
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Request failed.");
-      return false;
+      const message = err instanceof Error ? err.message : "Request failed.";
+      setError(message);
+      return { ok: false as const, error: message };
     } finally {
       setBusyKey(null);
     }
+  }
+
+  function applyMovementLocally(movement: ManualAdjustmentMovement) {
+    setData((current) => {
+      const movementItem = current.items.find((item) => item.id === movement.itemId);
+      const updatedItems = current.items.map((item) => {
+        if (item.id !== movement.itemId) return item;
+
+        return {
+          ...item,
+          currentQuantity: movement.quantityAfter,
+          stockStatus: stockStatusForQuantity(
+            movement.quantityAfter,
+            item.reorderPoint,
+          ),
+        };
+      });
+      const movementSummary: InventoryMovementSummary = {
+        id: movement.id,
+        itemId: movement.itemId,
+        itemName: movementItem?.name || "Inventory item",
+        itemCode: movementItem?.code || "UNKNOWN",
+        movementType: movement.movementType,
+        quantityDelta: movement.quantityDelta,
+        quantityAfter: movement.quantityAfter,
+        unitCost: movement.unitCost,
+        purchaseOrderId: movement.purchaseOrderId,
+        purchaseOrderNumber: null,
+        purchaseReceiptId: movement.purchaseReceiptId,
+        checkoutOrderId: movement.checkoutOrderId,
+        checkoutOrderNumber: movement.checkoutOrderNumber,
+        notes: movement.notes,
+        metadata: movement.metadata,
+        createdAt: formatApiDate(movement.createdAt),
+      };
+
+      return {
+        ...current,
+        items: updatedItems,
+        movements: [
+          movementSummary,
+          ...current.movements.filter((entry) => entry.id !== movement.id),
+        ].slice(0, 75),
+        stats: {
+          ...current.stats,
+          totalItems: updatedItems.length,
+          lowStock: updatedItems.filter((item) => item.stockStatus === "low_stock").length,
+          outOfStock: updatedItems.filter((item) => item.stockStatus === "out_of_stock").length,
+          negativeStock: updatedItems.filter((item) => item.stockStatus === "negative").length,
+        },
+      };
+    });
   }
 
   async function syncSwellCatalog() {
@@ -337,16 +452,16 @@ export function InventoryManagement({
   }
 
   async function createCategory() {
-    const ok = await postJson(
+    const result = await postJson(
       "/api/admin/inventory/categories",
       categoryForm,
       "category",
     );
-    if (ok) setCategoryForm({ name: "", code: "" });
+    if (result.ok) setCategoryForm({ name: "", code: "" });
   }
 
   async function createItem() {
-    const ok = await postJson(
+    const result = await postJson(
       "/api/admin/inventory/items",
       {
         ...itemForm,
@@ -357,7 +472,7 @@ export function InventoryManagement({
       },
       "item",
     );
-    if (ok) {
+    if (result.ok) {
       setItemForm((current) => ({
         ...current,
         name: "",
@@ -376,7 +491,7 @@ export function InventoryManagement({
   }
 
   async function createRule() {
-    const ok = await postJson(
+    const result = await postJson(
       "/api/admin/inventory/consumption-rules",
       {
         ...ruleForm,
@@ -389,7 +504,7 @@ export function InventoryManagement({
       },
       "rule",
     );
-    if (ok) {
+    if (result.ok) {
       setRuleForm({
         name: "",
         consumedItemId: "",
@@ -417,7 +532,7 @@ export function InventoryManagement({
       return;
     }
 
-    const ok = await postJson(
+    const result = await postJson<ManualAdjustmentResponse>(
       `/api/admin/inventory/items/${itemId}/adjustments`,
       {
         quantityDelta,
@@ -425,26 +540,34 @@ export function InventoryManagement({
       },
       `adjust:${itemId}`,
     );
-    if (ok) {
+    if (result.ok) {
+      if (result.data?.movement) {
+        applyMovementLocally(result.data.movement);
+      }
       setAdjustments((current) => ({ ...current, [itemId]: "" }));
     }
   }
 
   async function submitQuickAdjustment() {
+    setQuickFeedback(null);
     const itemId = quickAdjustment.itemId || selectableItems[0]?.id || "";
     const quantity = Math.floor(Number(quickAdjustment.quantity || 0));
     if (!itemId) {
-      setError("Create or select an item first.");
+      const message = "Create or select an item first.";
+      setError(message);
+      setQuickFeedback({ tone: "error", text: message });
       return;
     }
     if (!Number.isFinite(quantity) || quantity <= 0) {
-      setError("Quick stock quantity must be a positive whole number.");
+      const message = "Quick stock quantity must be a positive whole number.";
+      setError(message);
+      setQuickFeedback({ tone: "error", text: message });
       return;
     }
 
     const delta = quickAdjustment.mode === "add" ? quantity : -quantity;
     const selectedItem = data.items.find((item) => item.id === itemId);
-    const ok = await postJson(
+    const result = await postJson<ManualAdjustmentResponse>(
       `/api/admin/inventory/items/${itemId}/adjustments`,
       {
         quantityDelta: delta,
@@ -456,12 +579,29 @@ export function InventoryManagement({
       },
       `adjust:${itemId}`,
     );
-    if (ok) {
+    if (result.ok) {
+      const movement = result.data?.movement;
+      if (movement) {
+        applyMovementLocally(movement);
+        setQuickFeedback({
+          tone: "success",
+          text: `Saved ${delta > 0 ? "+" : ""}${delta} ${
+            selectedItem?.unit || "unit"
+          }. New on hand: ${movement.quantityAfter}.`,
+        });
+      } else {
+        setQuickFeedback({
+          tone: "success",
+          text: "Stock change saved.",
+        });
+      }
       setQuickAdjustment((current) => ({
         ...current,
         quantity: "1",
         notes: "",
       }));
+    } else {
+      setQuickFeedback({ tone: "error", text: result.error });
     }
   }
 
@@ -714,6 +854,7 @@ export function InventoryManagement({
 
               <div className="grid grid-cols-[110px_1fr] gap-2">
                 <Input
+                  type="number"
                   value={quickAdjustment.quantity}
                   onChange={(event) =>
                     setQuickAdjustment((current) => ({
@@ -722,6 +863,8 @@ export function InventoryManagement({
                     }))
                   }
                   inputMode="numeric"
+                  min={1}
+                  step={1}
                   placeholder="Qty"
                   className={cn(adminFieldClass, "h-10 border-sidebar-border bg-sidebar text-base")}
                 />
@@ -783,6 +926,20 @@ export function InventoryManagement({
                 )}
                 Save stock change
               </button>
+
+              {quickFeedback ? (
+                <div
+                  aria-live="polite"
+                  className={cn(
+                    "border px-2.5 py-2 text-xs",
+                    quickFeedback.tone === "success"
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-950"
+                      : "border-red-300 bg-red-50 text-red-950",
+                  )}
+                >
+                  {quickFeedback.text}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
