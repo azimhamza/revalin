@@ -25,7 +25,9 @@ export function FeaturedProductLabel({
   const compareAtPrice = getDisplayCompareAtPrice(product, selectedVariant, displayPrice);
   const discountPercentage = getDiscountPercentage(compareAtPrice, displayPrice);
   const inventory = getInventoryState(product, selectedVariant);
-  const inventoryMessage = inventory.isHighDemand ? null : inventory.message;
+  const inventoryMessage = inventory.isLowStock && !inventory.isBackorder
+    ? `Only ${inventory.availableQuantity} ready now`
+    : null;
   const hasSelectableOptions = product.options.length > 0 && !(product.options.length === 1 && product.options[0]?.values.length === 1);
 
   if (principal) {
