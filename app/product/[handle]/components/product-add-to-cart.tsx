@@ -13,6 +13,7 @@ import { getSwellProductId } from '@/lib/swell/utils';
 import { useProductQuantity } from './product-quantity-context';
 import { useProductAvailabilityProduct } from './product-availability-context';
 import { getInventoryState } from '@/lib/inventory';
+import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
 
 export function ProductAddToCart({
   product,
@@ -58,8 +59,16 @@ export function ProductAddToCart({
     if (!isTargetingProduct && !defaultVariantId) return undefined;
     return variants.find(v => v.id === selectedVariantId);
   }, [variants, availabilityProduct, isTargetingProduct, defaultVariantId, selectedVariantId]);
-  const cartVariant = resolvedVariant;
-  const inventory = cartVariant ? getInventoryState(availabilityProduct, cartVariant) : null;
+  const dosageSubstitution = useMemo(
+    () => resolveDosageSubstitution(availabilityProduct, resolvedVariant),
+    [availabilityProduct, resolvedVariant]
+  );
+  const cartVariant = dosageSubstitution.cartVariant;
+  const quantityMultiplier = dosageSubstitution.quantityMultiplier;
+  const inventory = useMemo(
+    () => (cartVariant ? getInventoryState(availabilityProduct, cartVariant) : null),
+    [availabilityProduct, cartVariant]
+  );
   const isBackorder = inventory?.isBackorder === true;
   const isDisabled = !cartVariant || isBackorder || isLoading;
   const isSelectOneState = !cartVariant;
@@ -70,7 +79,7 @@ export function ProductAddToCart({
     if (!cartVariant || isBackorder) return;
 
     startTransition(async () => {
-      await addItem(cartVariant, availabilityProduct, quantity);
+      await addItem(cartVariant, availabilityProduct, quantity * quantityMultiplier);
       setQuantity(1);
     });
   };
@@ -88,7 +97,7 @@ export function ProductAddToCart({
         <div className="flex items-stretch gap-2">
           {/* Quantity selector — only visible after variant is selected */}
           <AnimatePresence>
-            {cartVariant && (
+            {cartVariant && !isBackorder && (
               <motion.div
                 initial={{ width: 0, opacity: 0, scale: 0.8 }}
                 animate={{ width: 'auto', opacity: 1, scale: 1 }}

@@ -7,18 +7,21 @@ import { useSelectedVariant } from '@/components/products/variant-selector';
 import { getInventoryState } from '@/lib/inventory';
 import { cn } from '@/lib/utils';
 import { useProductAvailabilityProduct } from './product-availability-context';
+import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
 
 export function ProductInventoryPanel({ product }: { product: Product }) {
   const { product: availabilityProduct, loadAvailability } = useProductAvailabilityProduct(product);
   const selectedVariant = useSelectedVariant(availabilityProduct);
-  const displayVariant = selectedVariant || (availabilityProduct.variants.length === 1 ? availabilityProduct.variants[0] : null);
+  const selectedOrDefaultVariant = selectedVariant || (availabilityProduct.variants.length === 1 ? availabilityProduct.variants[0] : null);
+  const dosageSubstitution = resolveDosageSubstitution(availabilityProduct, selectedOrDefaultVariant);
+  const displayVariant = dosageSubstitution.cartVariant;
   const inventory = useMemo(() => getInventoryState(availabilityProduct, displayVariant), [availabilityProduct, displayVariant]);
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
   const isHighDemand = inventory.isHighDemand;
   const isBackorder = inventory.isBackorder;
-  const requiresVariantSelection = isBackorder && availabilityProduct.variants.length > 1 && !displayVariant;
+  const requiresVariantSelection = isBackorder && availabilityProduct.variants.length > 1 && !selectedOrDefaultVariant;
   const label = inventory.isLowStock && !isHighDemand && !isBackorder
     ? `Only ${inventory.availableQuantity} ready now. ${inventory.shippingLeadTimeLabel}`
     : inventory.shippingLeadTimeLabel;

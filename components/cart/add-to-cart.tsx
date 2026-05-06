@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Loader } from '../ui/loader';
 import { getSwellProductId } from '@/lib/swell/utils';
 import { getInventoryState } from '@/lib/inventory';
+import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
 
 interface AddToCartProps extends ButtonProps {
   product: Product;
@@ -72,7 +73,12 @@ export function AddToCartButton({
     if (product.variants.length === 1) return product.variants[0];
     return undefined;
   }, [selectedVariant, product]);
-  const cartVariant = resolvedVariant;
+  const dosageSubstitution = useMemo(
+    () => resolveDosageSubstitution(product, resolvedVariant),
+    [product, resolvedVariant]
+  );
+  const cartVariant = dosageSubstitution.cartVariant;
+  const quantityMultiplier = dosageSubstitution.quantityMultiplier;
   const inventory = cartVariant ? getInventoryState(product, cartVariant) : null;
   const isBackorder = inventory?.isBackorder === true;
 
@@ -115,7 +121,7 @@ export function AddToCartButton({
 
         if (cartContext && cartVariant) {
           startTransition(async () => {
-            cartContext.addItem(cartVariant, product, 1);
+            cartContext.addItem(cartVariant, product, quantityMultiplier);
             try {
               const refMatch = document.cookie.match(/(?:^|;\s*)revalin_ref=([^;]+)/);
               window.op?.track('product_added_to_cart', {
@@ -123,7 +129,7 @@ export function AddToCartButton({
                 productTitle: product.title,
                 variantTitle: cartVariant.title,
                 requestedVariantTitle: resolvedVariant?.title || null,
-                quantity: 1,
+                quantity: quantityMultiplier,
                 price: cartVariant.price?.amount || product.priceRange.minVariantPrice.amount,
                 affiliate_code: refMatch?.[1] ? decodeURIComponent(refMatch[1]) : null,
               });

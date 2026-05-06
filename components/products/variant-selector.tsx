@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { cn, getColorHex } from '@/lib/utils';
 import { getSwellProductId } from '@/lib/swell/utils';
 import { getInventoryState } from '@/lib/inventory';
+import { resolveDosageSubstitution } from '@/lib/dosage-substitution';
 
 type HighDemandTooltipAlign = 'left' | 'right';
 
@@ -227,9 +228,28 @@ export function VariantOptionSelector({
   const handleSelect = (valueName: string) => {
     startTransition(() => {
       const nextParams = new URLSearchParams(searchParams.toString());
-      nextParams.set(optionNameLowerCase, valueName);
-      nextParams.delete('qty');
-      nextParams.delete('substitute_size');
+      const selectedOptionParams = {
+        ...selectedOptions,
+        [optionNameLowerCase]: valueName,
+      };
+      const matchingVariant = product.variants.find(variant =>
+        variant.selectedOptions.every(
+          option => selectedOptionParams[option.name.toLowerCase()] === option.value
+        )
+      );
+      const substitution = resolveDosageSubstitution(product, matchingVariant);
+
+      if (isProductPage && substitution.isSubstitution && substitution.cartVariant) {
+        substitution.cartVariant.selectedOptions.forEach(option => {
+          nextParams.set(option.name.toLowerCase(), option.value);
+        });
+        nextParams.set('qty', String(substitution.quantityMultiplier));
+        nextParams.set('substitute_size', valueName);
+      } else {
+        nextParams.set(optionNameLowerCase, valueName);
+        nextParams.delete('qty');
+        nextParams.delete('substitute_size');
+      }
 
       if (!isProductPage) {
         nextParams.set('pid', getSwellProductId(product.id));

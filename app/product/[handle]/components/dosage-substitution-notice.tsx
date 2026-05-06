@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useSelectedVariant } from '@/components/products/variant-selector';
 import type { Product } from '@/lib/swell/types';
 import { useProductQuantity } from './product-quantity-context';
+import { useProductAvailabilityProduct } from './product-availability-context';
 
 function getQuantityLabel(product: Product, variantId?: string) {
   const variant = product.variants.find(item => item.id === variantId);
@@ -14,16 +15,17 @@ function getQuantityLabel(product: Product, variantId?: string) {
 }
 
 export function DosageSubstitutionNotice({ product }: { product: Product }) {
+  const { product: availabilityProduct } = useProductAvailabilityProduct(product);
   const searchParams = useSearchParams();
   const requestedDosage = searchParams.get('substitute_size');
-  const selectedVariant = useSelectedVariant(product);
+  const selectedVariant = useSelectedVariant(availabilityProduct);
   const { quantity } = useProductQuantity();
 
   if (!requestedDosage || !selectedVariant) {
     return null;
   }
 
-  const replacementLabel = getQuantityLabel(product, selectedVariant.id);
+  const replacementLabel = getQuantityLabel(availabilityProduct, selectedVariant.id);
 
   return (
     <details className="group rounded-md bg-popover px-3 py-3 ring-1 ring-[#0B2E2F]/10">
