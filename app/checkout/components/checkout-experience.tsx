@@ -2306,47 +2306,85 @@ export function CheckoutExperience({
     checkoutSession?.order.payment
       ? getPollingId(checkoutSession.order.payment)
       : undefined;
+  const shouldUseFastHostedPolling =
+    checkoutSession?.order.payment ? isSquareOrder(checkoutSession.order.payment) : false;
 
   useEffect(() => {
-    if (!autoPollingId || isTerminalPaymentStatus(checkoutSession?.order.payment.status)) {
+    if (!autoPollingId || !checkoutSession || isTerminalPaymentStatus(checkoutSession.order.payment.status)) {
       return;
     }
 
-    const currentOrderId = checkoutSession!.order.orderId;
-    const currentAccessKey = checkoutSession!.accessKey;
+    const currentOrderId = checkoutSession.order.orderId;
+    const currentAccessKey = checkoutSession.accessKey;
     let cancelled = false;
+    let pollInFlight = false;
 
     const pollPaymentStatus = async () => {
-      const response = await fetch(
-        `/api/checkout/v2/payments/${encodeURIComponent(autoPollingId)}/status?orderId=${encodeURIComponent(
-          currentOrderId
-        )}&key=${encodeURIComponent(currentAccessKey)}`,
-        { cache: 'no-store' }
-      );
+      if (cancelled || pollInFlight) return;
+      pollInFlight = true;
 
-      if (!response.ok) return;
-      const payload = await readJsonSafely(response);
-      const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
-      if (!data?.order || cancelled) return;
-      setCheckoutSession(current => (
-        current?.accessKey === currentAccessKey && current.order.orderId === currentOrderId
-          ? { ...current, order: data.order }
-          : current
-      ));
+      try {
+        const response = await fetch(
+          `/api/checkout/v2/payments/${encodeURIComponent(autoPollingId)}/status?orderId=${encodeURIComponent(
+            currentOrderId
+          )}&key=${encodeURIComponent(currentAccessKey)}`,
+          { cache: 'no-store' }
+        );
+
+        if (!response.ok) return;
+        const payload = await readJsonSafely(response);
+        const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
+        if (!data?.order || cancelled) return;
+        setCheckoutSession(current => (
+          current?.accessKey === currentAccessKey && current.order.orderId === currentOrderId
+            ? { ...current, order: data.order }
+            : current
+        ));
+      } finally {
+        pollInFlight = false;
+      }
+    };
+    const pollWhenVisible = () => {
+      if (document.visibilityState === 'hidden') return;
+      void pollPaymentStatus();
     };
 
     void pollPaymentStatus();
-    const interval = window.setInterval(pollPaymentStatus, 12000);
+    const interval = window.setInterval(pollPaymentStatus, shouldUseFastHostedPolling ? 4000 : 12000);
+    const windowMonitor = window.setInterval(() => {
+      const paymentWindow = shieldClimbPaymentWindow.current;
+      if (!paymentWindow) return;
+
+      let isClosed = false;
+      try {
+        isClosed = paymentWindow.closed;
+      } catch {
+        isClosed = true;
+      }
+
+      if (!isClosed) return;
+
+      shieldClimbPaymentWindow.current = null;
+      void pollPaymentStatus();
+    }, 1000);
+    window.addEventListener('focus', pollWhenVisible);
+    window.addEventListener('pageshow', pollWhenVisible);
+    document.addEventListener('visibilitychange', pollWhenVisible);
 
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      window.clearInterval(windowMonitor);
+      window.removeEventListener('focus', pollWhenVisible);
+      window.removeEventListener('pageshow', pollWhenVisible);
+      document.removeEventListener('visibilitychange', pollWhenVisible);
     };
   }, [
     checkoutSession?.accessKey,
     checkoutSession?.order.orderId,
     checkoutSession?.order.payment.status,
     autoPollingId,
+    shouldUseFastHostedPolling,
   ]);
 
   useEffect(() => {
@@ -3205,9 +3243,9 @@ export function CheckoutExperience({
 
       if (hostedRedirectUrl) {
         const paymentWindow = shieldClimbPaymentWindow.current;
-        shieldClimbPaymentWindow.current = null;
 
         if (paymentWindow && !paymentWindow.closed) {
+          shieldClimbPaymentWindow.current = paymentWindow;
           paymentWindow.location.href = hostedRedirectUrl;
           paymentWindow.focus();
         } else {
@@ -3216,6 +3254,7 @@ export function CheckoutExperience({
             '_blank',
             'noopener,noreferrer',
           );
+          shieldClimbPaymentWindow.current = openedWindow;
 
           if (!openedWindow) {
             toast('Secure payment ready', {
