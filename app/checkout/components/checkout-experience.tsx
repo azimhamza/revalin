@@ -3149,7 +3149,7 @@ export function CheckoutExperience({
           setSquareFallbackUnlock(fallbackUnlock);
           setCheckoutApiSession(null);
           setPaymentMethod('square');
-          setError(`${message} You can continue with Square hosted checkout.`);
+          setError(null);
           return;
         }
 
@@ -3772,6 +3772,26 @@ export function CheckoutExperience({
           </div>
         ) : null}
 
+        {squareFallbackUnlock ? (
+          <div className="mb-6 overflow-hidden rounded-2xl border border-[#C58A1B]/35 bg-[#FBEFCF]/55">
+            <div className="flex items-start gap-3 px-4 py-3.5 md:px-5">
+              <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F] text-[#F4F1EA]">
+                <RefreshCw className="size-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-[#0B2E2F]">
+                  Your card didn&apos;t go through — let&apos;s try again
+                </p>
+                <p className="mt-1 text-xs leading-5 text-[#0B2E2F]/70">
+                  No charge was made. We&apos;ve switched you to our backup secure card processor (Square). Use the same card —
+                  press <span className="font-semibold">Place Order &amp; Pay</span> below and the secure payment page will open
+                  in a new tab.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_370px] xl:grid-cols-[minmax(0,1fr)_390px]">
           {/* ── Sidebar ── */}
           <aside className="order-first space-y-4 lg:order-last lg:sticky lg:top-top-spacing">
@@ -4341,21 +4361,27 @@ export function CheckoutExperience({
                         ) : null}
                       </div>
                     ) : paymentMethod === 'square' ? (
-                      <div className="mt-3 rounded-2xl border border-[#0B2E2F]/15 bg-[#0B2E2F]/5 px-4 py-4">
+                      <div
+                        className={cn(
+                          'mt-3 rounded-2xl border px-4 py-4',
+                          squareFallbackUnlock
+                            ? 'border-[#C58A1B]/40 bg-[#FBEFCF]/45'
+                            : 'border-[#0B2E2F]/15 bg-[#0B2E2F]/5'
+                        )}
+                      >
                         <div className="flex items-start gap-3">
                           <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F] text-[#F4F1EA]">
-                            <CreditCard className="size-4" />
+                            {squareFallbackUnlock ? <RefreshCw className="size-4" /> : <CreditCard className="size-4" />}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold">Secure hosted card checkout</p>
-                            <p className="mt-1 text-xs leading-5 text-foreground/55">
-                              Your order will be charged in CAD through Square. After placing the order, the payment page opens in a new tab and this page waits for confirmation.
+                            <p className="text-sm font-semibold">
+                              {squareFallbackUnlock ? 'Retry with secure hosted checkout' : 'Secure hosted card checkout'}
                             </p>
-                            {squareFallbackUnlock ? (
-                              <p className="mt-2 text-xs leading-5 text-foreground/60">
-                                Bankful could not complete this card payment, so hosted checkout is now available for this attempt.
-                              </p>
-                            ) : null}
+                            <p className="mt-1 text-xs leading-5 text-foreground/60">
+                              {squareFallbackUnlock
+                                ? 'Use the same card. When you press Place Order & Pay, Square opens a secure payment page in a new tab — this page waits for confirmation. Your card was not charged on the previous attempt.'
+                                : 'Your order will be charged in CAD through Square. After placing the order, the payment page opens in a new tab and this page waits for confirmation.'}
+                            </p>
                           </div>
                         </div>
                       </div>
