@@ -84,6 +84,7 @@ export const checkoutSessionMutationSchema = checkoutSessionCreateSchema.extend(
       cvv: z.string().trim().min(3).max(4),
       expiryMonth: z.string().trim().min(1).max(2),
       expiryYear: z.string().trim().min(2).max(4),
+      cardholderName: z.string().trim().min(1).max(128).optional(),
     })
     .optional(),
 });

@@ -935,6 +935,23 @@ function buildPromoterData(args: {
   } satisfies CheckoutOrderPromoter;
 }
 
+function splitCardholderName(cardholderName?: string | null) {
+  const trimmed = cardholderName?.trim().replace(/\s+/g, ' ');
+  if (!trimmed) {
+    return { firstName: undefined, lastName: undefined };
+  }
+
+  const parts = trimmed.split(' ');
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: undefined };
+  }
+
+  return {
+    firstName: parts.slice(0, -1).join(' '),
+    lastName: parts[parts.length - 1],
+  };
+}
+
 function buildNowPaymentsOrderRecord(args: {
   orderId: string;
   accessKey: string;
@@ -2078,14 +2095,15 @@ export function createFinalizeCheckoutSession(
 
         let bankful: BankfulTransactionResponse;
         try {
+          const cardholderName = splitCardholderName(args.card?.cardholderName);
           bankful = await dependencies.createBankfulSale({
             amount: remainderPaymentAmount.toFixed(2),
             currency: orderCurrencyCode,
             xtlOrderId: attemptId,
             card: args.card,
             customer: {
-              firstName: args.shippingAddress.firstName,
-              lastName: args.shippingAddress.lastName,
+              firstName: cardholderName.firstName,
+              lastName: cardholderName.lastName,
               email: args.shippingAddress.email,
               phone: args.shippingAddress.phone,
             },

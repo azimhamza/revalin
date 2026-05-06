@@ -25,6 +25,7 @@ export type BankfulCardInput = {
   cvv: string;
   expiryMonth: string;
   expiryYear: string;
+  cardholderName?: string;
 };
 
 export type BankfulSaleInput = {

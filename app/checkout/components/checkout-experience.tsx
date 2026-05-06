@@ -1169,6 +1169,7 @@ export function CheckoutExperience({
   const [adminShippingDisabled, setAdminShippingDisabled] = useState(false);
   const [isSubmittingInterac, setIsSubmittingInterac] = useState(false);
   const [isUploadingInteracScreenshot, setIsUploadingInteracScreenshot] = useState(false);
+  const [cardholderName, setCardholderName] = useState('');
   const [cardNumber, setCardNumber] = useState('');
   const [cardExpiry, setCardExpiry] = useState('');
   const [cardCvv, setCardCvv] = useState('');
@@ -3065,6 +3066,7 @@ export function CheckoutExperience({
     cvv: string;
     expiryMonth: string;
     expiryYear: string;
+    cardholderName?: string;
   }) => {
     if (paymentMethod === 'card' && !cardProcessingEnabled) {
       setError(getCardProcessingUnavailableMessage());
@@ -3219,6 +3221,7 @@ export function CheckoutExperience({
         setSourceWalletAddress('');
       }
       if (isBankfulOrder(data.order.payment)) {
+        setCardholderName('');
         setCardNumber('');
         setCardExpiry('');
         setCardCvv('');
@@ -3336,8 +3339,14 @@ export function CheckoutExperience({
     }
 
     const parsedExpiry = parseCardExpiry(cardExpiry);
+    const normalizedCardholderName = cardholderName.trim().replace(/\s+/g, ' ');
     const normalizedNumber = cardNumber.replace(/\D/g, '');
     const normalizedCvv = cardCvv.replace(/\D/g, '');
+
+    if (!normalizedCardholderName) {
+      setError('Enter the name on the card.');
+      return;
+    }
 
     if (normalizedNumber.length < 12 || !parsedExpiry || normalizedCvv.length < 3) {
       setError('Enter valid card number, expiry, and CVV.');
@@ -3349,8 +3358,9 @@ export function CheckoutExperience({
       cvv: normalizedCvv,
       expiryMonth: parsedExpiry.expiryMonth,
       expiryYear: parsedExpiry.expiryYear,
+      cardholderName: normalizedCardholderName,
     });
-  }, [cardCvv, cardProcessingEnabled, cardExpiry, cardNumber, isCreatingPayment, submitCheckoutPayment]);
+  }, [cardCvv, cardProcessingEnabled, cardExpiry, cardholderName, cardNumber, isCreatingPayment, submitCheckoutPayment]);
 
   const refreshStatus = async () => {
     if (!pollingId || !checkoutSession) return;
@@ -4413,6 +4423,28 @@ export function CheckoutExperience({
                           </div>
                         </div>
                         <div className="mt-4 space-y-3">
+                          <label className="flex flex-col gap-1.5" htmlFor="checkout-cardholder-name">
+                            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">Name on card</span>
+                            <Input
+                              id="checkout-cardholder-name"
+                              name="cc-name"
+                              type="text"
+                              autoComplete="cc-name"
+                              autoCapitalize="words"
+                              autoCorrect="off"
+                              required={paymentMethod === 'card'}
+                              maxLength={128}
+                              value={cardholderName}
+                              onChange={event => {
+                                setCardholderName(event.target.value);
+                                if (error === 'Enter the name on the card.') {
+                                  setError(null);
+                                }
+                              }}
+                              placeholder={`${shippingAddress.firstName} ${shippingAddress.lastName}`.trim() || 'Name on card'}
+                              className="h-11 rounded-xl border-border bg-white"
+                            />
+                          </label>
                           <label className="flex flex-col gap-1.5" htmlFor="checkout-card-number">
                             <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">Card number</span>
                             <Input
