@@ -20,12 +20,11 @@ export const ProductCard = ({ product: initialProduct }: { product: Product }) =
   const displayPrice = getDisplayPrice(product, selectedVariant);
   const compareAtPrice = getDisplayCompareAtPrice(product, selectedVariant, displayPrice);
   const discountPercentage = getDiscountPercentage(compareAtPrice, displayPrice);
-  const inventory = getInventoryState(product, selectedVariant);
-  const inventoryMessage = inventory.isBackorder
-    ? inventory.shortLabel
-    : inventory.isLowStock
-      ? `Only ${inventory.availableQuantity} ready now`
-      : null;
+  const selectedOrDefaultVariant = selectedVariant ?? (product.variants.length === 1 ? product.variants[0] : null);
+  const inventory = getInventoryState(product, selectedOrDefaultVariant);
+  const inventoryMessage = inventory.isLowStock && !inventory.isBackorder
+    ? `Only ${inventory.availableQuantity} ready now`
+    : null;
 
   // Forward the currently-selected variant options so /product/[handle] opens
   // to the same dosage/option the shopper picked on the card.
