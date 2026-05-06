@@ -2354,22 +2354,26 @@ export function createFinalizeCheckoutSession(
       }
 
       if (args.paymentMethod === 'square') {
+        const swellOrder = await dependencies.convertSwellCartToOrder(ratedCart.id);
+        swellOrderId = swellOrder.id;
+        temporaryCartId = undefined;
+
         const couponDiscountTotal = Number(
-          ratedCart.discount_total ?? ratedCart.item_discount ?? 0,
+          swellOrder.discount_total ?? swellOrder.item_discount ?? 0,
         );
         if (args.discountCode && couponDiscountTotal <= 0) {
           throw apiError.badRequest(
             'That discount code is invalid or has expired.',
           );
         }
-        const orderTaxTotal = Number(ratedCart.tax_total || 0);
+        const orderTaxTotal = Number(swellOrder.tax_total || 0);
         const orderShipmentTotal = args.adminShippingDisabled
           ? 0
           : resolveOrderShipmentTotal({
               selectedService,
-              swellShipmentTotal: ratedCart.shipment_total,
+              swellShipmentTotal: swellOrder.shipment_total,
             });
-        const orderCurrencyCode = ratedCart.currency || checkoutCurrencyCode;
+        const orderCurrencyCode = swellOrder.currency || checkoutCurrencyCode;
         const landedCost = args.adminShippingDisabled
           ? null
           : await quoteZonosLandedCost({
@@ -2392,10 +2396,10 @@ export function createFinalizeCheckoutSession(
               landedCost,
             }
           : selectedService;
-        const orderSubtotalAmount = Number.isFinite(Number(ratedCart.sub_total))
-          ? Number(ratedCart.sub_total)
+        const orderSubtotalAmount = Number.isFinite(Number(swellOrder.sub_total))
+          ? Number(swellOrder.sub_total)
           : subtotalAmount;
-        const appliedDiscountCode = args.discountCode || ratedCart.coupon_code;
+        const appliedDiscountCode = args.discountCode || swellOrder.coupon_code;
         const couponDiscountRate = await getSwellCouponDiscountRate(appliedDiscountCode);
         const pricing = calculateCheckoutPricing({
           currencyCode: orderCurrencyCode,
@@ -2442,11 +2446,13 @@ export function createFinalizeCheckoutSession(
           carryoverContext.creditedAmount + 0.01 >= orderTotal
         ) {
           await dependencies
-            .deleteSwellCheckoutCart(ratedCart.id)
+            .cancelSwellOrder(
+              swellOrder.id,
+              `Checkout already satisfied by existing order ${carryoverContext.latestSuccessfulOrder.orderId}.`,
+            )
             .catch((error) => {
-              console.error('Unable to delete duplicate Swell cart after carryover reconciliation:', error);
+              console.error('Unable to cancel duplicate Swell order after carryover reconciliation:', error);
             });
-          temporaryCartId = undefined;
 
           return {
             accessKey: carryoverContext.latestSuccessfulOrder.accessKey,
@@ -2499,10 +2505,6 @@ export function createFinalizeCheckoutSession(
           redirectUrl: squareRedirectUrl.toString(),
         });
         squarePaymentLinkId = paymentLink.id;
-
-        const swellOrder = await dependencies.convertSwellCartToOrder(ratedCart.id);
-        swellOrderId = swellOrder.id;
-        temporaryCartId = undefined;
 
         await dependencies.updateSwellOrder(swellOrder.id, {
           billing: {

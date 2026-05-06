@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { CheckoutOrderRecord } from '@/lib/checkout/types';
 import { isBankfulPayment, isInteracPayment, isShieldClimbPayment, isSquarePayment } from '@/lib/checkout/types';
-import { createSwellOrderPayment, getSwellManualPaymentMethod, updateSwellOrder } from '@/lib/checkout/swell-order-management';
+import { createSwellOrderPayment, getSwellManualPaymentMethod, getSwellOrder, updateSwellOrder } from '@/lib/checkout/swell-order-management';
 import type { NowPaymentsPaymentResponse } from '@/lib/checkout/nowpayments';
 import { isNowPaymentsPayment } from '@/lib/checkout/types';
 import { updateCheckoutOrder } from '@/lib/checkout/order-store';
@@ -320,6 +320,42 @@ export async function syncSquareOrderToSwell(order: CheckoutOrderRecord) {
   }
 
   try {
+    const swellOrder = await getSwellOrder(claimedOrder.swell.orderId);
+    const localTotal = Number(claimedOrder.totals.totalAmount.amount);
+    const swellGrandTotal = Number(swellOrder.grand_total);
+    const localCurrency = claimedOrder.currencyCode.trim().toUpperCase();
+    const swellCurrency = (swellOrder.currency || localCurrency).trim().toUpperCase();
+    const swellWouldRemainPartiallyPaid =
+      Number.isFinite(localTotal) &&
+      Number.isFinite(swellGrandTotal) &&
+      localTotal + 0.01 < swellGrandTotal;
+
+    if (swellCurrency !== localCurrency || swellWouldRemainPartiallyPaid) {
+      const reason =
+        swellCurrency !== localCurrency
+          ? `Square/Swell currency mismatch: local ${localCurrency}, Swell ${swellCurrency}.`
+          : `Square payment is below the final Swell order total: local ${localTotal.toFixed(2)} ${localCurrency}, Swell ${swellGrandTotal.toFixed(2)} ${swellCurrency}.`;
+
+      await updateCheckoutOrder(claimedOrder.orderId, current => {
+        if (!isSquarePayment(current.payment)) return current;
+        if (current.payment.swellPaymentSyncToken !== syncToken) return current;
+
+        return {
+          ...current,
+          payment: {
+            ...current.payment,
+            status: 'review_required',
+            swellPaymentSyncToken: null,
+            swellPaymentSyncStartedAt: null,
+            updatedAt: new Date().toISOString(),
+          },
+          latestError: reason,
+        };
+      });
+
+      throw new Error(reason);
+    }
+
     await updateSwellOrder(claimedOrder.swell.orderId, {
       $notify: false,
       account_id: claimedOrder.swell.accountId,

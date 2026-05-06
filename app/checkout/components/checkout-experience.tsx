@@ -212,6 +212,7 @@ type CheckoutDraft = {
   adminShippingDisabled: boolean;
   discountCode: string;
   appliedDiscount: AppliedDiscount | null;
+  squareFallbackUnlock: SquareFallbackUnlock | null;
   apiSession: CheckoutApiSession | null;
   cartSignature: string | null;
 };
@@ -523,6 +524,16 @@ function parseCheckoutDraft(rawDraft: string | null): CheckoutDraft | null {
                 parsed.appliedDiscount.rate > 0
                   ? parsed.appliedDiscount.rate
                   : undefined,
+            }
+          : null,
+      squareFallbackUnlock:
+        parsed.squareFallbackUnlock &&
+        typeof parsed.squareFallbackUnlock === 'object' &&
+        typeof parsed.squareFallbackUnlock.reason === 'string' &&
+        typeof parsed.squareFallbackUnlock.message === 'string'
+          ? {
+              reason: parsed.squareFallbackUnlock.reason,
+              message: parsed.squareFallbackUnlock.message,
             }
           : null,
       apiSession:
@@ -1735,13 +1746,20 @@ export function CheckoutExperience({
           : canReuseDraftPricing
             ? checkoutDraft.apiSession
             : null;
+        const hydratedSquareFallbackUnlock =
+          canReuseDraftPricing && cardProcessingEnabled && cardSquareFallbackEnabled
+            ? checkoutDraft.squareFallbackUnlock
+            : null;
 
         setShippingAddress(checkoutDraft.shippingAddress);
+        setSquareFallbackUnlock(hydratedSquareFallbackUnlock);
         setPaymentMethod(
           checkoutDraft.paymentMethod === 'card' && !cardProcessingEnabled
             ? 'crypto'
             : checkoutDraft.paymentMethod === 'square'
-              ? 'crypto'
+              ? hydratedSquareFallbackUnlock
+                ? 'square'
+                : 'crypto'
               : checkoutDraft.paymentMethod,
         );
         setPaymentCurrency(checkoutDraft.paymentCurrency);
@@ -1776,7 +1794,7 @@ export function CheckoutExperience({
     } finally {
       setIsDraftHydrated(true);
     }
-  }, [cardProcessingEnabled, initialDiscountCode]);
+  }, [cardProcessingEnabled, cardSquareFallbackEnabled, initialDiscountCode]);
 
   useEffect(() => {
     if (!isDraftHydrated || activeOrder || cart === undefined) return;
@@ -1874,6 +1892,7 @@ export function CheckoutExperience({
         adminShippingDisabled: effectiveAdminShippingDisabled,
         discountCode,
         appliedDiscount,
+        squareFallbackUnlock,
         apiSession: checkoutApiSession,
         cartSignature: cartSignature === 'loading' ? null : cartSignature,
       };
@@ -1890,6 +1909,7 @@ export function CheckoutExperience({
     isDraftHydrated,
     paymentCurrency,
     paymentMethod,
+    squareFallbackUnlock,
     effectiveAdminShippingDisabled,
     shipmentProtection,
     interacSenderEmail,

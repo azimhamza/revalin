@@ -118,15 +118,17 @@ export function calculateCheckoutPricing(args: {
   const taxValue = roundCurrency(Math.max(0, toNumber(args.taxAmount)));
   const landedCostValue = roundCurrency(Math.max(0, toNumber(args.landedCostAmount)));
   const couponDiscountRate = Math.max(0, toNumber(args.couponDiscountRate));
-  const couponDiscountBaseValue = roundCurrency(subtotalValue + shippingValue + shipmentProtectionValue);
   const fixedCouponDiscountValue = roundCurrency(Math.max(0, toNumber(args.couponDiscountAmount)));
+  const couponDiscountBaseValue = subtotalValue;
   const percentageCouponDiscountValue =
-    couponDiscountRate > 0
+    fixedCouponDiscountValue <= 0 && couponDiscountRate > 0
       ? roundCurrency(couponDiscountBaseValue * couponDiscountRate)
       : 0;
   const couponDiscountValue = Math.min(
     couponDiscountBaseValue,
-    roundCurrency(Math.max(fixedCouponDiscountValue, percentageCouponDiscountValue)),
+    fixedCouponDiscountValue > 0
+      ? fixedCouponDiscountValue
+      : percentageCouponDiscountValue,
   );
   const totalBeforePaymentMethodDiscount = roundCurrency(
     Math.max(0, subtotalValue - couponDiscountValue + shippingValue + shipmentProtectionValue + taxValue + landedCostValue)
