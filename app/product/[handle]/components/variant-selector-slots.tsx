@@ -1,8 +1,12 @@
+'use client';
+
 import { VariantOptionSelector, VariantOptionSelectorComponent } from '@/components/products/variant-selector';
 import { Product } from '@/lib/swell/types';
+import { useProductAvailabilityProduct } from './product-availability-context';
 
 export function VariantSelectorSlots({ product, fallback = false }: { product: Product; fallback?: boolean }) {
-  const { options } = product;
+  const { product: availabilityProduct, loadAvailability } = useProductAvailabilityProduct(product);
+  const { options } = availabilityProduct;
 
   const hasNoOptionsOrJustOneOption = !options.length || (options.length === 1 && options[0]?.values.length === 1);
 
@@ -17,7 +21,7 @@ export function VariantSelectorSlots({ product, fallback = false }: { product: P
           <VariantOptionSelectorComponent
             key={option.id}
             option={option}
-            product={product}
+            product={availabilityProduct}
             variant="card"
             selectedValue=""
             isTargetingProduct
@@ -30,9 +34,14 @@ export function VariantSelectorSlots({ product, fallback = false }: { product: P
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div
+      className="flex flex-col gap-4"
+      onPointerEnter={() => void loadAvailability()}
+      onFocusCapture={() => void loadAvailability()}
+      onTouchStart={() => void loadAvailability()}
+    >
       {options.map(option => (
-        <VariantOptionSelector key={option.id} option={option} product={product} variant="card" />
+        <VariantOptionSelector key={option.id} option={option} product={availabilityProduct} variant="card" />
       ))}
     </div>
   );

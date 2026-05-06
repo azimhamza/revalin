@@ -27,6 +27,7 @@ export default async function FulfillmentPage({
     'packed',
     'handed_to_carrier',
     'error',
+    'not_required',
     'all',
     'pending',
   ];

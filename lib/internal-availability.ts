@@ -5,6 +5,10 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { checkoutOrders, inventoryItems, inventoryMovements } from '@/lib/db/schema';
 import { HIGH_DEMAND_SHIPPING_LABEL, READY_TO_SHIP_LABEL } from '@/lib/inventory';
+import type {
+  CatalogAvailabilityProduct,
+  CatalogAvailabilityProductInput,
+} from '@/lib/catalog/availability-types';
 import type { Product, ProductVariant } from '@/lib/swell/types';
 
 type InventoryItemRow = typeof inventoryItems.$inferSelect;
@@ -59,6 +63,15 @@ type SwellProductLike = {
   isHighDemand?: boolean;
   shippingLeadTimeLabel?: string;
   internalInventoryMatched?: boolean;
+};
+
+type CatalogAvailabilityProductSubject = {
+  handle: string;
+  productId: string | null;
+  variants: Array<{
+    id: string;
+    sku: string | null;
+  }>;
 };
 
 function normalizeComparable(value?: string | null) {
@@ -151,6 +164,29 @@ function getSwellProductSubject(product: SwellProductLike): MatchSubject {
     productId: extractBackendProductId(product.id),
     variantId: null,
     sku: null,
+    productHandle: normalizeComparable(product.handle),
+  };
+}
+
+function getCatalogProductSubject(product: CatalogAvailabilityProductSubject): MatchSubject {
+  return {
+    productId: product.productId,
+    variantId: null,
+    sku: null,
+    productHandle: normalizeComparable(product.handle),
+  };
+}
+
+function getCatalogVariantSubject(
+  product: CatalogAvailabilityProductSubject,
+  variant: CatalogAvailabilityProductSubject['variants'][number],
+): MatchSubject {
+  const parsed = parseSwellMerchandiseId(variant.id);
+
+  return {
+    productId: parsed.productId || product.productId,
+    variantId: parsed.variantId || normalizeVariantMatchId(variant.id),
+    sku: normalizeComparable(variant.sku),
     productHandle: normalizeComparable(product.handle),
   };
 }
@@ -354,6 +390,102 @@ function toAvailabilityFields(estimate: AvailabilityEstimate) {
     shippingLeadTimeLabel: estimate.shippingLeadTimeLabel,
     internalInventoryMatched: estimate.internalInventoryMatched,
   };
+}
+
+function toPublicAvailabilityFields(estimate: AvailabilityEstimate) {
+  return {
+    availableToShipNow: estimate.availableToShipNow,
+    isHighDemand: estimate.isHighDemand,
+    shippingLeadTimeLabel: estimate.shippingLeadTimeLabel,
+    internalInventoryMatched: estimate.internalInventoryMatched,
+  };
+}
+
+function normalizeCatalogAvailabilityProducts(
+  products: CatalogAvailabilityProductInput[],
+): CatalogAvailabilityProductSubject[] {
+  const byHandle = new Map<string, CatalogAvailabilityProductSubject>();
+
+  for (const product of products) {
+    const handle = normalizeComparable(product.handle);
+    if (!handle) continue;
+
+    const existing = byHandle.get(handle);
+    const normalizedProductId =
+      product.productId ? normalizeProductMatchId(product.productId) : null;
+    const nextProduct: CatalogAvailabilityProductSubject =
+      existing || {
+        handle,
+        productId: normalizedProductId,
+        variants: [],
+      };
+
+    if (!nextProduct.productId && normalizedProductId) {
+      nextProduct.productId = normalizedProductId;
+    }
+
+    const seenVariantKeys = new Set(nextProduct.variants.map(variant => variant.id));
+    for (const variant of product.variants || []) {
+      const id = variant.id?.trim();
+      if (!id || seenVariantKeys.has(id)) continue;
+
+      nextProduct.variants.push({
+        id,
+        sku: normalizeComparable(variant.sku),
+      });
+      seenVariantKeys.add(id);
+    }
+
+    byHandle.set(handle, nextProduct);
+  }
+
+  return [...byHandle.values()];
+}
+
+export async function getCatalogAvailability(
+  products: CatalogAvailabilityProductInput[],
+): Promise<CatalogAvailabilityProduct[]> {
+  const normalizedProducts = normalizeCatalogAvailabilityProducts(products);
+  if (normalizedProducts.length === 0) {
+    return [];
+  }
+
+  const items = await getSellableInventoryItems();
+  const [balances, allocations] = await Promise.all([
+    getItemBalances(items.map(item => item.id)),
+    getAllocatedPaidQuantities(items),
+  ]);
+
+  return normalizedProducts.map(product => {
+    const variantAvailability = product.variants.map(variant => {
+      const item = findMatchingInventoryItem(
+        getCatalogVariantSubject(product, variant),
+        items,
+      );
+      const estimate = buildEstimate(item, balances, allocations);
+
+      return {
+        variant,
+        estimate,
+      };
+    });
+    const variants = variantAvailability.map(({ variant, estimate }) => ({
+      id: variant.id,
+      sku: variant.sku,
+      ...toPublicAvailabilityFields(estimate),
+    }));
+    const productItem = findMatchingInventoryItem(getCatalogProductSubject(product), items);
+    const productEstimate = productItem
+      ? buildEstimate(productItem, balances, allocations)
+      : buildAggregateEstimate(variantAvailability.map(({ estimate }) => estimate));
+
+    return {
+      handle: product.handle,
+      productId: product.productId,
+      ...toPublicAvailabilityFields(productEstimate),
+      variants,
+    };
+  });
 }
 
 export async function hydrateProductsWithInternalAvailability(

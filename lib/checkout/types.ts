@@ -73,14 +73,14 @@ export type CheckoutOrderTotals = {
   totalAmount: Money;
   shippingAmount?: Money;
   shippingThresholdAmount: Money;
-  shippingStatus: 'free' | 'quoted' | 'pending_quote';
+  shippingStatus: 'free' | 'quoted' | 'pending_quote' | 'disabled';
 };
 
 export type CheckoutShippingService = {
   id: string;
   name: string;
   quoteCategory?: 'cheapest' | 'best_value' | 'fastest';
-  source?: 'shipengine' | 'shippo' | 'swell';
+  source?: 'shipengine' | 'shippo' | 'swell' | 'manual';
   carrier?: string;
   carrierCode?: string;
   serviceCode?: string;
@@ -441,7 +441,13 @@ export type CheckoutOrderPromoter = {
   source: 'promoter_invite';
 };
 
-export type FulfillmentStatus = 'pending' | 'label_ready' | 'packed' | 'handed_to_carrier' | 'error';
+export type FulfillmentStatus =
+  | 'pending'
+  | 'label_ready'
+  | 'packed'
+  | 'handed_to_carrier'
+  | 'error'
+  | 'not_required';
 
 export type CheckoutOrderRecord = {
   orderId: string;

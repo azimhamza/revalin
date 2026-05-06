@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { cookies } from 'next/headers';
-import { optionalSession } from '@/lib/api/auth';
+import { apiError } from '@/lib/api/errors';
+import { getSessionRole, optionalSession } from '@/lib/api/auth';
 import { createApiRoute } from '@/lib/api/route';
 import { AFFILIATE_COOKIE_NAME } from '@/lib/checkout/affiliate-constants';
+import { ADMIN_DISABLED_SHIPPING_SERVICE_ID } from '@/lib/checkout/admin-shipping';
 import { getStoredUserReferralCode } from '@/lib/checkout/affiliate-user-referral';
 import {
   assertSessionReadyForFinalize,
@@ -47,11 +49,15 @@ export const POST = createApiRoute({
       sessionId: params.sessionId,
       sessionKey: body.sessionKey,
     });
+    const authSession = await optionalSession();
+    const adminShippingDisabled = body.adminShippingDisabled === true;
+    if (adminShippingDisabled && getSessionRole(authSession) !== 'admin') {
+      throw apiError.forbidden();
+    }
 
     if (current.finalizedOrderId && current.finalizedAccessKey) {
       const existingOrder = await getCheckoutOrder(current.finalizedOrderId);
       if (existingOrder) {
-        const authSession = await optionalSession();
         await linkCurrentResearchConsentToOrder({
           checkoutOrderId: existingOrder.orderId,
           checkoutSessionId: current.sessionId,
@@ -79,7 +85,12 @@ export const POST = createApiRoute({
       expectedVersion: body.version,
       changes: {
         ...buildSessionChanges(body),
-        selectedShippingServiceId: body.selectedShippingServiceId,
+        selectedShippingServiceId: adminShippingDisabled
+          ? ADMIN_DISABLED_SHIPPING_SERVICE_ID
+          : body.selectedShippingServiceId,
+        shipmentProtection: adminShippingDisabled
+          ? false
+          : body.shipmentProtection,
         status: 'finalizing',
       },
     });
@@ -106,7 +117,6 @@ export const POST = createApiRoute({
           ? storedShippingAddress.email
           : null;
       if (storedOrderId) {
-        const authSession = await optionalSession();
         await linkCurrentResearchConsentToOrder({
           checkoutOrderId: storedOrderId,
           checkoutSessionId: session.sessionId,
@@ -133,7 +143,6 @@ export const POST = createApiRoute({
     // post-auth reconcile. This preserves attribution for shoppers who
     // cleared cookies, switched devices, or returned after the 30-day
     // cookie window — as long as they're signed in when they check out.
-    const authSession = await optionalSession();
     let affiliateCode = cookieAffiliateCode;
     if (!affiliateCode) {
       if (authSession?.user?.id) {
@@ -162,8 +171,11 @@ export const POST = createApiRoute({
         interacSenderName: session.interacSenderName,
         interacSecurityQuestion: session.interacSecurityQuestion,
         interacSecurityAnswer: session.interacSecurityAnswer,
-        selectedShippingServiceId: session.selectedShippingServiceId,
-        shipmentProtection: session.shipmentProtection,
+        selectedShippingServiceId: adminShippingDisabled
+          ? ADMIN_DISABLED_SHIPPING_SERVICE_ID
+          : session.selectedShippingServiceId,
+        shipmentProtection: adminShippingDisabled ? false : session.shipmentProtection,
+        adminShippingDisabled,
         discountCode: session.discountCode,
         requestUrl: new URL(request.url),
         affiliateCode,

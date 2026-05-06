@@ -6,11 +6,13 @@ import { Product } from '@/lib/swell/types';
 import { useSelectedVariant } from '@/components/products/variant-selector';
 import { getInventoryState } from '@/lib/inventory';
 import { cn } from '@/lib/utils';
+import { useProductAvailabilityProduct } from './product-availability-context';
 
 export function ProductInventoryPanel({ product }: { product: Product }) {
-  const selectedVariant = useSelectedVariant(product);
-  const displayVariant = selectedVariant || (product.variants.length === 1 ? product.variants[0] : null);
-  const inventory = useMemo(() => getInventoryState(product, displayVariant), [product, displayVariant]);
+  const { product: availabilityProduct, loadAvailability } = useProductAvailabilityProduct(product);
+  const selectedVariant = useSelectedVariant(availabilityProduct);
+  const displayVariant = selectedVariant || (availabilityProduct.variants.length === 1 ? availabilityProduct.variants[0] : null);
+  const inventory = useMemo(() => getInventoryState(availabilityProduct, displayVariant), [availabilityProduct, displayVariant]);
   const isHighDemand = inventory.isHighDemand;
   const label = inventory.isLowStock && !isHighDemand
     ? `Only ${inventory.availableQuantity} ready now. ${inventory.shippingLeadTimeLabel}`
@@ -24,6 +26,9 @@ export function ProductInventoryPanel({ product }: { product: Product }) {
           ? 'border-[#8B7340]/20 bg-[#8B7340]/10'
           : 'border-[#2D6A4F]/15 bg-[#2D6A4F]/10',
       )}
+      onPointerEnter={() => void loadAvailability()}
+      onFocusCapture={() => void loadAvailability()}
+      onTouchStart={() => void loadAvailability()}
     >
       <div className="flex items-center gap-2">
         <span

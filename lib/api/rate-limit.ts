@@ -1,6 +1,6 @@
 import { apiError } from '@/lib/api/errors';
 
-type RateLimitProfile = 'auth' | 'marketing' | 'checkout' | 'public_write';
+type RateLimitProfile = 'auth' | 'marketing' | 'checkout' | 'catalog' | 'public_write';
 
 type RateLimitWindow = {
   limit: number;
@@ -11,6 +11,7 @@ const RATE_LIMITS: Record<RateLimitProfile, RateLimitWindow> = {
   auth: { limit: 6, windowMs: 60_000 },
   marketing: { limit: 4, windowMs: 60_000 },
   checkout: { limit: 18, windowMs: 60_000 },
+  catalog: { limit: 60, windowMs: 60_000 },
   public_write: { limit: 10, windowMs: 60_000 },
 };
 

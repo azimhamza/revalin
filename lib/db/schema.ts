@@ -78,6 +78,7 @@ export const fulfillmentStatusEnum = pgEnum("fulfillment_status", [
   "packed",
   "handed_to_carrier",
   "error",
+  "not_required",
 ]);
 
 export const checkoutSessionStatusEnum = pgEnum("checkout_session_status", [

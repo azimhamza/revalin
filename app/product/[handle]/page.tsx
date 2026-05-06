@@ -29,9 +29,9 @@ import { BulkPricing } from './components/bulk-pricing';
 import { ProductPrice } from './components/product-price';
 import { RelatedProducts } from './components/related-products';
 import { ProductQuantityProvider } from './components/product-quantity-context';
+import { ProductAvailabilityProvider } from './components/product-availability-context';
 import { ProductInventoryPanel } from './components/product-inventory-panel';
 import { ProductViewTracker } from './components/product-view-tracker';
-import { hydrateProductWithInternalAvailability } from '@/lib/internal-availability';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,9 +76,7 @@ export async function generateMetadata(props: { params: Promise<{ handle: string
 export default async function ProductPage(props: { params: Promise<{ handle: string }> }) {
   const currencyCode = await resolveRequestCurrencyCode();
   const params = await props.params;
-  const product = await hydrateProductWithInternalAvailability(
-    await getLiveProduct(params.handle, currencyCode)
-  );
+  const product = await getLiveProduct(params.handle, currencyCode);
 
   if (!product) return notFound();
 
@@ -157,70 +155,72 @@ export default async function ProductPage(props: { params: Promise<{ handle: str
               </BreadcrumbList>
             </Breadcrumb>
 
-            <ProductQuantityProvider>
-              <div className="flex flex-col col-span-full gap-4 md:mb-10 max-md:order-2">
-                <div className="flex flex-col gap-4 px-5 py-5 rounded-2xl bg-popover md:gap-4 md:px-3 md:py-2 md:rounded-md">
-                  <h1 className="text-2xl leading-[1.1] font-bold md:text-lg lg:text-xl 2xl:text-2xl text-balance">
-                    {product.title}
-                  </h1>
+            <ProductAvailabilityProvider product={product}>
+              <ProductQuantityProvider>
+                <div className="flex flex-col col-span-full gap-4 md:mb-10 max-md:order-2">
+                  <div className="flex flex-col gap-4 px-5 py-5 rounded-2xl bg-popover md:gap-4 md:px-3 md:py-2 md:rounded-md">
+                    <h1 className="text-2xl leading-[1.1] font-bold md:text-lg lg:text-xl 2xl:text-2xl text-balance">
+                      {product.title}
+                    </h1>
+                    <Suspense
+                      fallback={
+                        <p className="flex min-w-0 gap-3 items-center text-2xl leading-none font-bold md:text-lg lg:text-xl 2xl:text-2xl">
+                          {formatPrice(
+                            product.priceRange.minVariantPrice.amount,
+                            product.priceRange.minVariantPrice.currencyCode
+                          )}
+                          {product.compareAtPrice && (
+                            <span className="text-xl line-through opacity-30 md:text-base">
+                              {formatPrice(product.compareAtPrice.amount, product.compareAtPrice.currencyCode)}
+                            </span>
+                          )}
+                        </p>
+                      }
+                    >
+                      <ProductPrice product={product} />
+                    </Suspense>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 md:items-start">
+                    <Suspense fallback={<VariantSelectorSlots product={product} fallback />}>
+                      <VariantSelectorSlots product={product} />
+                    </Suspense>
+
+                    <Suspense fallback={null}>
+                      <ProductInventoryPanel product={product} />
+                    </Suspense>
+
+                    <Suspense
+                      fallback={<AddToCartButton className="hidden md:block md:w-full md:self-start" product={product} size="lg" />}
+                    >
+                      <ProductAddToCart product={product} className="hidden md:block md:w-full md:self-start" />
+                    </Suspense>
+                  </div>
                   <Suspense
                     fallback={
-                      <p className="flex min-w-0 gap-3 items-center text-2xl leading-none font-bold md:text-lg lg:text-xl 2xl:text-2xl">
-                        {formatPrice(
-                          product.priceRange.minVariantPrice.amount,
-                          product.priceRange.minVariantPrice.currencyCode
-                        )}
-                        {product.compareAtPrice && (
-                          <span className="text-xl line-through opacity-30 md:text-base">
-                            {formatPrice(product.compareAtPrice.amount, product.compareAtPrice.currencyCode)}
-                          </span>
-                        )}
-                      </p>
+                      <AddToCartButton
+                        className="md:hidden w-full"
+                        product={product}
+                        size="lg"
+                        style={{ backgroundColor: '#0B2E2F', color: '#F4F1EA' }}
+                      />
                     }
                   >
-                    <ProductPrice product={product} />
-                  </Suspense>
-                </div>
-                <div className="grid grid-cols-1 gap-4 md:items-start">
-                  <Suspense fallback={<VariantSelectorSlots product={product} fallback />}>
-                    <VariantSelectorSlots product={product} />
-                  </Suspense>
-
-                  <Suspense fallback={null}>
-                    <ProductInventoryPanel product={product} />
-                  </Suspense>
-
-                  <Suspense
-                    fallback={<AddToCartButton className="hidden md:block md:w-full md:self-start" product={product} size="lg" />}
-                  >
-                    <ProductAddToCart product={product} className="hidden md:block md:w-full md:self-start" />
-                  </Suspense>
-                </div>
-                <Suspense
-                  fallback={
-                    <AddToCartButton
-                      className="md:hidden w-full"
+                    <ProductAddToCart
                       product={product}
-                      size="lg"
+                      className="md:hidden w-full"
                       style={{ backgroundColor: '#0B2E2F', color: '#F4F1EA' }}
                     />
-                  }
-                >
-                  <ProductAddToCart
-                    product={product}
-                    className="md:hidden w-full"
-                    style={{ backgroundColor: '#0B2E2F', color: '#F4F1EA' }}
-                  />
-                </Suspense>
+                  </Suspense>
 
-                {productBatches.length > 0 && (
-                  <TestResultsTrigger batches={productBatches} />
-                )}
-                <Suspense fallback={null}>
-                  <BulkPricing product={product} />
-                </Suspense>
-              </div>
-            </ProductQuantityProvider>
+                  {productBatches.length > 0 && (
+                    <TestResultsTrigger batches={productBatches} />
+                  )}
+                  <Suspense fallback={null}>
+                    <BulkPricing product={product} />
+                  </Suspense>
+                </div>
+              </ProductQuantityProvider>
+            </ProductAvailabilityProvider>
           </div>
 
           <Prose

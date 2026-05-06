@@ -1,6 +1,8 @@
 import { z } from 'zod';
-import { ApiError } from '@/lib/api/errors';
+import { ApiError, apiError } from '@/lib/api/errors';
+import { getSessionRole, optionalSession } from '@/lib/api/auth';
 import { createApiRoute } from '@/lib/api/route';
+import { ADMIN_DISABLED_SHIPPING_SERVICE_ID } from '@/lib/checkout/admin-shipping';
 import {
   assertSessionReadyForQuote,
   buildSessionChanges,
@@ -87,6 +89,15 @@ export const POST = createApiRoute({
   bodySchema: checkoutSessionMutationSchema,
   cacheControl: 'no-store',
   handler: async ({ params, body }) => {
+    let adminShippingDisabled = false;
+    if (body.adminShippingDisabled) {
+      const authSession = await optionalSession();
+      if (getSessionRole(authSession) !== 'admin') {
+        throw apiError.forbidden();
+      }
+      adminShippingDisabled = true;
+    }
+
     let hydrated: CheckoutSessionRecord;
 
     try {
@@ -96,7 +107,9 @@ export const POST = createApiRoute({
         expectedVersion: body.version,
         changes: {
           ...buildSessionChanges(body),
-          selectedShippingServiceId: body.selectedShippingServiceId,
+          selectedShippingServiceId: adminShippingDisabled
+            ? ADMIN_DISABLED_SHIPPING_SERVICE_ID
+            : body.selectedShippingServiceId,
         },
       });
     } catch (error) {
@@ -127,8 +140,11 @@ export const POST = createApiRoute({
         discountCode: session.discountCode,
         paymentMethod: session.paymentMethod,
         selectedShippingServiceId:
-          body.selectedShippingServiceId || session.selectedShippingServiceId,
-        shipmentProtection: session.shipmentProtection,
+          adminShippingDisabled
+            ? ADMIN_DISABLED_SHIPPING_SERVICE_ID
+            : body.selectedShippingServiceId || session.selectedShippingServiceId,
+        shipmentProtection: adminShippingDisabled ? false : session.shipmentProtection,
+        adminShippingDisabled,
       });
     } catch (error) {
       if (session.discountCode && isInvalidDiscountError(error)) {
@@ -147,7 +163,7 @@ export const POST = createApiRoute({
         pricingSnapshot: quote as Record<string, unknown>,
         providerQuoteCache: quote as Record<string, unknown>,
         selectedShippingServiceId:
-          body.selectedShippingServiceId ||
+          (adminShippingDisabled ? ADMIN_DISABLED_SHIPPING_SERVICE_ID : body.selectedShippingServiceId) ||
           (quote as { selectedServiceId?: string }).selectedServiceId ||
           null,
       });

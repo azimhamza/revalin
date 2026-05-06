@@ -20,6 +20,7 @@ import {
   SHIPPING_COUNTRIES,
   isTerminalPaymentStatus,
 } from '@/lib/checkout/constants';
+import { ADMIN_DISABLED_SHIPPING_SERVICE_ID } from '@/lib/checkout/admin-shipping';
 import {
   clearStoredCheckoutResume as clearStoredCheckoutResumeValue,
   isCheckoutResumeExpired,
@@ -57,6 +58,7 @@ import { useAuthSession } from '@/components/auth/session-provider';
 import { CheckoutAuthBanner } from './checkout-auth-banner';
 import { getApiData, getApiErrorMessage, readJsonSafely } from '@/lib/api/client';
 import { getInventoryState, HIGH_DEMAND_SHIPPING_LABEL } from '@/lib/inventory';
+import { useLazyProductAvailability } from '@/lib/catalog/availability-client';
 
 type CheckoutExperienceProps = {
   cardDebitCheckoutEnabled: boolean;
@@ -200,6 +202,7 @@ type CheckoutDraft = {
   interacSecurityQuestion: string;
   interacSecurityAnswer: string;
   shipmentProtection: boolean;
+  adminShippingDisabled: boolean;
   discountCode: string;
   appliedDiscount: AppliedDiscount | null;
   apiSession: CheckoutApiSession | null;
@@ -465,6 +468,7 @@ function parseCheckoutDraft(rawDraft: string | null): CheckoutDraft | null {
       interacSecurityAnswer:
         typeof parsed.interacSecurityAnswer === 'string' ? parsed.interacSecurityAnswer : '',
       shipmentProtection: parsed.shipmentProtection === true,
+      adminShippingDisabled: parsed.adminShippingDisabled === true,
       discountCode: typeof parsed.discountCode === 'string' ? parsed.discountCode : '',
       appliedDiscount:
         parsed.appliedDiscount &&
@@ -930,7 +934,8 @@ function getInitialQuickAddSelection(product: Product) {
   );
 }
 
-function CheckoutQuickAddCard({ product }: { product: Product }) {
+function CheckoutQuickAddCard({ product: initialProduct }: { product: Product }) {
+  const { product, loadAvailability } = useLazyProductAvailability(initialProduct);
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>(() => getInitialQuickAddSelection(product));
 
   const selectedVariant = useMemo(() => {
@@ -951,9 +956,14 @@ function CheckoutQuickAddCard({ product }: { product: Product }) {
   const inventory = getInventoryState(product, selectedVariant);
 
   return (
-    <article className="rounded-[22px] border border-border/70 bg-background p-2.5">
+    <article
+      className="rounded-[22px] border border-border/70 bg-background p-2.5"
+      onPointerEnter={() => void loadAvailability()}
+      onFocusCapture={() => void loadAvailability()}
+      onTouchStart={() => void loadAvailability()}
+    >
       <div className="flex gap-3">
-        <Link href={`/product/${product.handle}`} className="block shrink-0">
+        <Link href={`/product/${product.handle}`} prefetch={false} className="block shrink-0">
           <div className="size-16 overflow-hidden rounded-xl bg-card">
             <img
               src={selectedImage?.url || product.featuredImage.url}
@@ -966,7 +976,7 @@ function CheckoutQuickAddCard({ product }: { product: Product }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <Link href={`/product/${product.handle}`} className="line-clamp-2 text-sm font-semibold leading-5">
+              <Link href={`/product/${product.handle}`} prefetch={false} className="line-clamp-2 text-sm font-semibold leading-5">
                 {product.title}
               </Link>
               <p className="mt-1 text-xs text-foreground/55">
@@ -1104,7 +1114,7 @@ export function CheckoutExperience({
   const { cart } = useCart();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { data: authSession } = useAuthSession();
+  const { data: authSession, isPending: isAuthPending } = useAuthSession();
   const initialDiscountCode = (searchParams.get('discount') || '').toUpperCase();
   const [shippingAddress, setShippingAddress] = useState<CheckoutShippingAddress>(DEFAULT_SHIPPING_ADDRESS);
   const [paymentMethod, setPaymentMethod] = useState<'crypto' | 'card' | 'interac' | 'square'>('crypto');
@@ -1117,6 +1127,7 @@ export function CheckoutExperience({
   const [interacSecurityQuestion, setInteracSecurityQuestion] = useState('');
   const [interacSecurityAnswer, setInteracSecurityAnswer] = useState('');
   const [shipmentProtection, setShipmentProtection] = useState(false);
+  const [adminShippingDisabled, setAdminShippingDisabled] = useState(false);
   const [isSubmittingInterac, setIsSubmittingInterac] = useState(false);
   const [isUploadingInteracScreenshot, setIsUploadingInteracScreenshot] = useState(false);
   const [cardNumber, setCardNumber] = useState('');
@@ -1149,6 +1160,7 @@ export function CheckoutExperience({
   } | null>(null);
   const previousCartSignature = useRef<string | null>(null);
   const lastQuoteRequestSignature = useRef<string | null>(null);
+  const activeQuoteRequestSignature = useRef<string | null>(null);
   const quoteAbortController = useRef<AbortController | null>(null);
   const previousPaymentSnapshot = useRef<{ orderId: string; status: string } | null>(null);
   const shieldClimbPaymentWindow = useRef<Window | null>(null);
@@ -1165,6 +1177,15 @@ export function CheckoutExperience({
   const retryKey = searchParams.get('key');
 
   const activeOrder = checkoutSession?.order ?? null;
+  const isAdminCheckoutUser = (authSession?.user as any)?.role === 'admin';
+  const effectiveAdminShippingDisabled =
+    isAdminCheckoutUser && adminShippingDisabled && !activeOrder;
+  const effectiveShipmentProtection = effectiveAdminShippingDisabled
+    ? false
+    : shipmentProtection;
+  const effectiveSelectedShippingServiceId = effectiveAdminShippingDisabled
+    ? ADMIN_DISABLED_SHIPPING_SERVICE_ID
+    : selectedShippingServiceId;
   checkoutSessionRef.current = checkoutSession;
   const isCurrentCheckoutSession = (nextOrderId: string, nextAccessKey: string) => {
     const current = checkoutSessionRef.current;
@@ -1193,7 +1214,7 @@ export function CheckoutExperience({
     }
   };
   const selectedQuoteService =
-    quote?.services.find(service => service.id === selectedShippingServiceId) ||
+    quote?.services.find(service => service.id === effectiveSelectedShippingServiceId) ||
     quote?.services.find(service => service.id === quote.selectedServiceId) ||
     null;
 
@@ -1270,7 +1291,7 @@ export function CheckoutExperience({
     null;
   const selectedChargedShipmentProtection =
     activeOrder?.totals.shipmentProtection ||
-    (shipmentProtection
+    (effectiveShipmentProtection
       ? selectedQuoteService?.shipmentProtection ||
         selectedQuoteService?.availableShipmentProtection ||
         null
@@ -1294,7 +1315,7 @@ export function CheckoutExperience({
           selectedAvailableShipmentProtection.totalAmount.currencyCode || summaryCurrencyCode,
         )
       : '';
-  const shipmentProtectionRateLabel = shipmentProtection
+  const shipmentProtectionRateLabel = effectiveShipmentProtection
     ? summaryShipmentProtectionValue || (summaryItemCount > 0 && isShippingAddressReady(shippingAddress) ? 'Calculating...' : 'Enter address')
     : availableShipmentProtectionValue || (summaryItemCount > 0 && isShippingAddressReady(shippingAddress) ? 'Calculating...' : 'Enter address');
   const summaryPricing = useMemo(() => {
@@ -1523,9 +1544,20 @@ export function CheckoutExperience({
         quantity: line.quantity,
       })),
       discountCode: appliedDiscount?.code || '',
-      shipmentProtection,
+      paymentMethod,
+      paymentCurrency,
+      shipmentProtection: effectiveShipmentProtection,
+      adminShippingDisabled: effectiveAdminShippingDisabled,
     });
-  }, [cartSnapshot, appliedDiscount, shippingAddress, shipmentProtection]);
+  }, [
+    cartSnapshot,
+    appliedDiscount,
+    effectiveAdminShippingDisabled,
+    effectiveShipmentProtection,
+    paymentCurrency,
+    paymentMethod,
+    shippingAddress,
+  ]);
 
   // Handle retry URL: pre-fill checkout from a previous failed order
   useEffect(() => {
@@ -1650,6 +1682,7 @@ export function CheckoutExperience({
         setInteracSecurityQuestion(checkoutDraft.interacSecurityQuestion);
         setInteracSecurityAnswer(checkoutDraft.interacSecurityAnswer);
         setShipmentProtection(checkoutDraft.shipmentProtection);
+        setAdminShippingDisabled(checkoutDraft.adminShippingDisabled);
         setCheckoutApiSession(hydratedApiSession);
         const hydratedDiscountCode = initialDiscountCode || checkoutDraft.discountCode;
         const hydratedAppliedDiscount =
@@ -1768,6 +1801,7 @@ export function CheckoutExperience({
         interacSecurityQuestion,
         interacSecurityAnswer,
         shipmentProtection,
+        adminShippingDisabled: effectiveAdminShippingDisabled,
         discountCode,
         appliedDiscount,
         apiSession: checkoutApiSession,
@@ -1786,6 +1820,7 @@ export function CheckoutExperience({
     isDraftHydrated,
     paymentCurrency,
     paymentMethod,
+    effectiveAdminShippingDisabled,
     shipmentProtection,
     interacSenderEmail,
     interacSenderName,
@@ -1819,6 +1854,7 @@ export function CheckoutExperience({
       setQuote(null);
       setSelectedShippingServiceId('');
       lastQuoteRequestSignature.current = null;
+      activeQuoteRequestSignature.current = null;
       setCheckoutApiSession(null);
       setAppliedDiscount(null);
       setDiscountError(null);
@@ -1831,7 +1867,23 @@ export function CheckoutExperience({
     setQuote(null);
     setSelectedShippingServiceId('');
     lastQuoteRequestSignature.current = null;
+    activeQuoteRequestSignature.current = null;
   }, []);
+
+  useEffect(() => {
+    if (isAuthPending || isAdminCheckoutUser || !adminShippingDisabled) return;
+
+    setAdminShippingDisabled(false);
+    setSelectedShippingServiceId((current) =>
+      current === ADMIN_DISABLED_SHIPPING_SERVICE_ID ? '' : current,
+    );
+    resetQuoteState();
+  }, [
+    adminShippingDisabled,
+    isAdminCheckoutUser,
+    isAuthPending,
+    resetQuoteState,
+  ]);
 
   const updateCheckoutUrl = useCallback((nextOrderId?: string, nextAccessKey?: string) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -2270,8 +2322,9 @@ export function CheckoutExperience({
 
     const currentOrderId = checkoutSession!.order.orderId;
     const currentAccessKey = checkoutSession!.accessKey;
+    let cancelled = false;
 
-    const interval = window.setInterval(async () => {
+    const pollPaymentStatus = async () => {
       const response = await fetch(
         `/api/checkout/v2/payments/${encodeURIComponent(autoPollingId)}/status?orderId=${encodeURIComponent(
           currentOrderId
@@ -2282,15 +2335,19 @@ export function CheckoutExperience({
       if (!response.ok) return;
       const payload = await readJsonSafely(response);
       const data = getApiData<{ order: CheckoutOrderPublic }>(payload);
-      if (!data?.order) return;
+      if (!data?.order || cancelled) return;
       setCheckoutSession(current => (
         current?.accessKey === currentAccessKey && current.order.orderId === currentOrderId
           ? { ...current, order: data.order }
           : current
       ));
-    }, 12000);
+    };
+
+    void pollPaymentStatus();
+    const interval = window.setInterval(pollPaymentStatus, 12000);
 
     return () => {
+      cancelled = true;
       window.clearInterval(interval);
     };
   }, [
@@ -2309,6 +2366,7 @@ export function CheckoutExperience({
   useEffect(() => {
     return () => {
       quoteAbortController.current?.abort();
+      activeQuoteRequestSignature.current = null;
     };
   }, []);
 
@@ -2355,7 +2413,11 @@ export function CheckoutExperience({
 
   const selectPaymentMethod = useCallback((nextPaymentMethod: 'card' | 'crypto' | 'interac' | 'square') => {
     if (nextPaymentMethod === 'card' && (!cardDebitCheckoutEnabled || isCardCheckoutDisabled)) {
-      setPaymentMethod(squareFallbackEnabled ? 'square' : 'crypto');
+      const fallbackPaymentMethod = squareFallbackEnabled ? 'square' : 'crypto';
+      if (!activeOrder && fallbackPaymentMethod !== paymentMethod) {
+        resetQuoteState();
+      }
+      setPaymentMethod(fallbackPaymentMethod);
       return;
     }
 
@@ -2367,8 +2429,20 @@ export function CheckoutExperience({
       setCardPaymentFailed(false);
     }
 
+    if (!activeOrder && nextPaymentMethod !== paymentMethod) {
+      resetQuoteState();
+    }
+
     setPaymentMethod(nextPaymentMethod);
-  }, [cardDebitCheckoutEnabled, fillInteracSenderDetails, isCardCheckoutDisabled, squareFallbackEnabled]);
+  }, [
+    activeOrder,
+    cardDebitCheckoutEnabled,
+    fillInteracSenderDetails,
+    isCardCheckoutDisabled,
+    paymentMethod,
+    resetQuoteState,
+    squareFallbackEnabled,
+  ]);
 
   const handleShippingChange = (name: keyof CheckoutShippingAddress, value: string) => {
     setShippingAddress(current => ({ ...current, [name]: value }));
@@ -2378,9 +2452,24 @@ export function CheckoutExperience({
   };
 
   const handleShipmentProtectionChange = (checked: boolean) => {
+    if (effectiveAdminShippingDisabled) return;
+
     setShipmentProtection(checked);
     if (!activeOrder) {
       lastQuoteRequestSignature.current = null;
+    }
+  };
+
+  const handleAdminShippingDisabledChange = (checked: boolean) => {
+    setAdminShippingDisabled(checked);
+    if (!activeOrder) {
+      resetQuoteState();
+    }
+    if (checked) {
+      setShipmentProtection(false);
+      setSelectedShippingServiceId(ADMIN_DISABLED_SHIPPING_SERVICE_ID);
+    } else {
+      setSelectedShippingServiceId('');
     }
   };
 
@@ -2421,7 +2510,8 @@ export function CheckoutExperience({
       paymentMethod,
       paymentCurrency,
       sourceWalletAddress: sourceWalletAddress.trim() || undefined,
-      shipmentProtection,
+      shipmentProtection: effectiveShipmentProtection,
+      adminShippingDisabled: effectiveAdminShippingDisabled || undefined,
       interacSenderEmail:
         paymentMethod === 'interac'
           ? effectiveInteracSenderEmail || undefined
@@ -2443,7 +2533,9 @@ export function CheckoutExperience({
           ? overrides.discountCode || undefined
           : appliedDiscount?.code || undefined,
       selectedShippingServiceId:
-        overrides?.selectedShippingServiceId || selectedShippingServiceId || undefined,
+        effectiveAdminShippingDisabled
+          ? ADMIN_DISABLED_SHIPPING_SERVICE_ID
+          : overrides?.selectedShippingServiceId || selectedShippingServiceId || undefined,
     }),
     [
       appliedDiscount?.code,
@@ -2452,11 +2544,12 @@ export function CheckoutExperience({
       effectiveInteracSenderName,
       effectiveInteracSecurityQuestion,
       effectiveInteracSecurityAnswer,
+      effectiveAdminShippingDisabled,
+      effectiveShipmentProtection,
       interacSenderEmail,
       interacSenderName,
       paymentCurrency,
       paymentMethod,
-      shipmentProtection,
       selectedShippingServiceId,
       shippingAddress,
       sourceWalletAddress,
@@ -2724,20 +2817,22 @@ export function CheckoutExperience({
     async (nextShippingAddress: CheckoutShippingAddress, signature?: string | null) => {
       if (!cartSnapshot) {
         quoteAbortController.current?.abort();
+        activeQuoteRequestSignature.current = null;
         setError('Your stack is empty.');
         setQuote(null);
         setSelectedShippingServiceId('');
         setIsLoadingQuote(false);
-        return;
+        return null;
       }
 
       if (!isShippingAddressReady(nextShippingAddress)) {
         quoteAbortController.current?.abort();
+        activeQuoteRequestSignature.current = null;
         setError('Complete the shipping address to see delivery methods.');
         setQuote(null);
         setSelectedShippingServiceId('');
         setIsLoadingQuote(false);
-        return;
+        return null;
       }
 
       if (signature) {
@@ -2747,6 +2842,7 @@ export function CheckoutExperience({
       quoteAbortController.current?.abort();
       const controller = new AbortController();
       quoteAbortController.current = controller;
+      activeQuoteRequestSignature.current = signature || null;
       setIsLoadingQuote(true);
       setError(null);
 
@@ -2769,7 +2865,7 @@ export function CheckoutExperience({
         });
 
         if (controller.signal.aborted) {
-          return;
+          return null;
         }
 
         setQuote(data.quote);
@@ -2804,9 +2900,11 @@ export function CheckoutExperience({
             setAppliedDiscount(nextAppliedDiscount);
           }
         }
+
+        return data.quote;
       } catch (quoteError: unknown) {
         if (quoteError instanceof Error && quoteError.name === 'AbortError') {
-          return;
+          return null;
         }
 
         const message = getCheckoutErrorMessage(quoteError, 'Unable to fetch shipping options.');
@@ -2821,9 +2919,11 @@ export function CheckoutExperience({
         }
         setQuote(null);
         setSelectedShippingServiceId('');
+        return null;
       } finally {
         if (quoteAbortController.current === controller) {
           quoteAbortController.current = null;
+          activeQuoteRequestSignature.current = null;
           setIsLoadingQuote(false);
         }
       }
@@ -2834,6 +2934,23 @@ export function CheckoutExperience({
   const handleFetchQuote = async () => {
     await requestQuote(shippingAddress, quoteRequestSignature);
   };
+
+  useEffect(() => {
+    const activeSignature = activeQuoteRequestSignature.current;
+    if (!quoteAbortController.current || !activeSignature) {
+      return;
+    }
+
+    if (quoteRequestSignature === activeSignature) {
+      return;
+    }
+
+    quoteAbortController.current.abort();
+    quoteAbortController.current = null;
+    activeQuoteRequestSignature.current = null;
+    lastQuoteRequestSignature.current = null;
+    setIsLoadingQuote(false);
+  }, [quoteRequestSignature]);
 
   useEffect(() => {
     if (activeOrder || !quoteRequestSignature || isLoadingQuote) {
@@ -2850,7 +2967,7 @@ export function CheckoutExperience({
 
     const timeout = window.setTimeout(() => {
       void requestQuote(shippingAddress, quoteRequestSignature);
-    }, 450);
+    }, 1100);
 
     return () => window.clearTimeout(timeout);
   }, [
@@ -2864,17 +2981,58 @@ export function CheckoutExperience({
     shouldAutoApplyDiscount,
   ]);
 
+  const ensureShippingServiceIdForPayment = useCallback(async () => {
+    if (!quoteRequestSignature || !isShippingAddressReady(shippingAddress)) {
+      setError('Complete the shipping address to see delivery methods.');
+      return null;
+    }
+
+    const selectedQuoteIsCurrent =
+      Boolean(selectedShippingServiceId) &&
+      lastQuoteRequestSignature.current === quoteRequestSignature &&
+      Boolean(quote?.services.some(service => service.id === selectedShippingServiceId));
+
+    if (selectedQuoteIsCurrent) {
+      return selectedShippingServiceId;
+    }
+
+    const currentQuoteDefaultServiceId =
+      lastQuoteRequestSignature.current === quoteRequestSignature
+        ? quote?.selectedServiceId || quote?.services[0]?.id || ''
+        : '';
+    if (currentQuoteDefaultServiceId) {
+      setSelectedShippingServiceId(currentQuoteDefaultServiceId);
+      return currentQuoteDefaultServiceId;
+    }
+
+    const nextQuote = await requestQuote(shippingAddress, quoteRequestSignature);
+    if (!nextQuote) {
+      return null;
+    }
+
+    const nextShippingServiceId = nextQuote?.selectedServiceId || nextQuote?.services[0]?.id || '';
+
+    if (!nextShippingServiceId) {
+      setError('Select a shipping method before creating the payment.');
+      return null;
+    }
+
+    setSelectedShippingServiceId(nextShippingServiceId);
+    return nextShippingServiceId;
+  }, [
+    quote,
+    quoteRequestSignature,
+    requestQuote,
+    selectedShippingServiceId,
+    shippingAddress,
+  ]);
+
   const submitCheckoutPayment = useCallback(async (cardInput?: {
     number: string;
     cvv: string;
     expiryMonth: string;
     expiryYear: string;
   }) => {
-    if (!selectedShippingServiceId) {
-      setError('Select a shipping method before creating the payment.');
-      return;
-    }
-
     if (paymentMethod === 'card' && !cardDebitCheckoutEnabled) {
       setError(getCardDebitCheckoutUnavailableMessage());
       return;
@@ -2903,10 +3061,19 @@ export function CheckoutExperience({
     setError(null);
 
     try {
-      const session = await ensureCheckoutApiSession();
+      const ensuredShippingServiceId = await ensureShippingServiceIdForPayment();
+      if (!ensuredShippingServiceId) {
+        if (shieldClimbPaymentWindow.current && !shieldClimbPaymentWindow.current.closed) {
+          shieldClimbPaymentWindow.current.close();
+        }
+        shieldClimbPaymentWindow.current = null;
+        return;
+      }
+
       const finalizePayload = buildCheckoutSessionPayload({
-        selectedShippingServiceId,
+        selectedShippingServiceId: ensuredShippingServiceId,
       });
+      const session = await ensureCheckoutApiSession(finalizePayload);
       const postFinalize = async (targetSession: CheckoutApiSession) => {
         const response = await fetch(
           `/api/checkout/v2/sessions/${encodeURIComponent(targetSession.sessionId)}/finalize`,
@@ -2964,6 +3131,7 @@ export function CheckoutExperience({
       restoreRequestVersion.current += 1;
       quoteAbortController.current?.abort();
       quoteAbortController.current = null;
+      activeQuoteRequestSignature.current = null;
       recentlyFinalizedCheckout.current = {
         orderId: data.order.orderId,
         accessKey: data.accessKey,
@@ -2988,7 +3156,7 @@ export function CheckoutExperience({
         order: data.order,
       });
       setShippingAddress(data.order.shippingAddress);
-      setSelectedShippingServiceId(data.order.shippingService?.id || selectedShippingServiceId);
+      setSelectedShippingServiceId(data.order.shippingService?.id || ensuredShippingServiceId);
 
       if (isNowPaymentsOrder(data.order.payment)) {
         setPaymentCurrency(data.order.payment.paymentCurrency);
@@ -3083,6 +3251,7 @@ export function CheckoutExperience({
     buildCheckoutSessionPayload,
     cardDebitCheckoutEnabled,
     cardCheckoutMinimumMessage,
+    ensureShippingServiceIdForPayment,
     ensureCheckoutApiSession,
     createCheckoutApiSession,
     refreshCheckoutApiSession,
@@ -3093,7 +3262,6 @@ export function CheckoutExperience({
     effectiveInteracSenderEmail,
     effectiveInteracSenderName,
     paymentMethod,
-    selectedShippingServiceId,
     syncCheckoutUrlImmediately,
     updateCheckoutUrl,
   ]);
@@ -3117,11 +3285,6 @@ export function CheckoutExperience({
     }
 
     if (paymentMethod === 'square') {
-      if (!selectedShippingServiceId) {
-        setError('Select a shipping method before creating the payment.');
-        return;
-      }
-
       if (!squareFallbackAvailable) {
         setError('Hosted card checkout is not available right now.');
         return;
@@ -3375,6 +3538,7 @@ export function CheckoutExperience({
         }
 
         quoteAbortController.current?.abort();
+        activeQuoteRequestSignature.current = null;
         setCheckoutSession(null);
         setQuote(null);
         setSelectedShippingServiceId(preservedShippingServiceId);
@@ -3454,6 +3618,7 @@ export function CheckoutExperience({
       }
 
       quoteAbortController.current?.abort();
+      activeQuoteRequestSignature.current = null;
       setCheckoutSession(null);
       setQuote(null);
       setSelectedShippingServiceId(preservedShippingServiceId);
@@ -3561,7 +3726,7 @@ export function CheckoutExperience({
   const canPlaceOrder =
     cart &&
     cart.lines.length > 0 &&
-    selectedShippingServiceId &&
+    effectiveSelectedShippingServiceId &&
     !isCreatingPayment &&
     ageVerified &&
     !(paymentMethod === 'card' && (!cardDebitCheckoutEnabled || isCardCheckoutDisabled)) &&
@@ -3793,43 +3958,67 @@ export function CheckoutExperience({
                       </Button>
                     </div>
 
-                    <label className="mt-3 flex cursor-pointer items-start justify-between gap-4 rounded-xl border border-border bg-background px-3.5 py-3 transition-colors hover:bg-muted/40">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <input
-                          type="checkbox"
-                          checked={shipmentProtection}
-                          onChange={(event) => handleShipmentProtectionChange(event.target.checked)}
-                          className="mt-0.5 size-[18px] shrink-0 rounded accent-[#0B2E2F]"
-                        />
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <ShieldCheck className="size-4 text-[#0B2E2F]" strokeWidth={1.7} />
-                            <p className="text-sm font-semibold">Shipment Protection</p>
-                          </div>
-                          <p className="mt-1 text-xs leading-5 text-foreground/55">
-                            Optional replacement support for lost or damaged packages.
-                          </p>
-                          {shipmentProtection && selectedQuoteService ? (
-                            <p className="mt-1 text-[11px] font-medium text-foreground/45">
-                              Added to your order total as Shipment Protection.
+                    {isAdminCheckoutUser ? (
+                      <label className="mt-3 flex cursor-pointer items-start justify-between gap-4 rounded-xl border border-amber-300/70 bg-amber-50/60 px-3.5 py-3 transition-colors hover:bg-amber-50">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={adminShippingDisabled}
+                            onChange={(event) => handleAdminShippingDisabledChange(event.target.checked)}
+                            className="mt-0.5 size-[18px] shrink-0 rounded accent-[#0B2E2F]"
+                          />
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-amber-950">Disable shipping</p>
+                            <p className="mt-1 text-xs leading-5 text-amber-900/70">
+                              Admin test order. No shipping charge, duties, protection, or label purchase.
                             </p>
-                          ) : null}
+                          </div>
                         </div>
-                      </div>
-                      <span className="shrink-0 text-right text-sm font-semibold">
-                        {shipmentProtectionRateLabel}
-                      </span>
-                    </label>
+                        <span className="shrink-0 text-right text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-900/70">
+                          Admin
+                        </span>
+                      </label>
+                    ) : null}
+
+                    {!effectiveAdminShippingDisabled ? (
+                      <label className="mt-3 flex cursor-pointer items-start justify-between gap-4 rounded-xl border border-border bg-background px-3.5 py-3 transition-colors hover:bg-muted/40">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={effectiveShipmentProtection}
+                            onChange={(event) => handleShipmentProtectionChange(event.target.checked)}
+                            className="mt-0.5 size-[18px] shrink-0 rounded accent-[#0B2E2F]"
+                          />
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <ShieldCheck className="size-4 text-[#0B2E2F]" strokeWidth={1.7} />
+                              <p className="text-sm font-semibold">Shipment Protection</p>
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-foreground/55">
+                              Optional replacement support for lost or damaged packages.
+                            </p>
+                            {effectiveShipmentProtection && selectedQuoteService ? (
+                              <p className="mt-1 text-[11px] font-medium text-foreground/45">
+                                Added to your order total as Shipment Protection.
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+                        <span className="shrink-0 text-right text-sm font-semibold">
+                          {shipmentProtectionRateLabel}
+                        </span>
+                      </label>
+                    ) : null}
 
                     <div className="mt-3 space-y-2">
                       {quote ? (
                         quote.services.map(service => {
-                          const isActive = (selectedShippingServiceId || quote.selectedServiceId) === service.id;
+                          const isActive = (effectiveSelectedShippingServiceId || quote.selectedServiceId) === service.id;
                           const carrierLogo = getShippingCarrierLogo(service.carrier);
                           const estimatedDelivery = formatEstimatedDeliveryDays(service.estimatedDays);
                           const optionCategory = formatShippingOptionCategory(service.quoteCategory);
                           const optionLandedCost = Number(service.landedCostAmount?.amount || 0);
-                          const optionProtection = shipmentProtection
+                          const optionProtection = effectiveShipmentProtection
                             ? service.shipmentProtection || service.availableShipmentProtection
                             : service.availableShipmentProtection;
                           return (

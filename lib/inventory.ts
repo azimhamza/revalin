@@ -34,7 +34,7 @@ export function resolveAvailableQuantity(product: Product, variant?: ProductVari
     return Math.max(0, product.availableToShipNow);
   }
 
-  return 0;
+  return null;
 }
 
 /**
@@ -55,7 +55,14 @@ export function hasAnyVariantInStock(product: Product): boolean {
 export function getInventoryState(product: Product, variant?: ProductVariant | null): InventoryState {
   const backorderThreshold = getBackorderThreshold();
   const availableQuantity = resolveAvailableQuantity(product, variant);
-  const isHighDemand = availableQuantity === null || availableQuantity <= backorderThreshold;
+  const hasExactAvailability =
+    typeof variant?.availableToShipNow === 'number' ||
+    typeof product.availableToShipNow === 'number' ||
+    typeof variant?.internalInventoryMatched === 'boolean' ||
+    typeof product.internalInventoryMatched === 'boolean';
+  const isHighDemand =
+    hasExactAvailability &&
+    (availableQuantity === null || availableQuantity <= backorderThreshold);
 
   if (isHighDemand) {
     return {
@@ -105,7 +112,9 @@ export function getProductFulfillmentEstimate(
   const inventory = getInventoryState(product, variant);
   const availableToShipNow = inventory.availableQuantity ?? 0;
   const normalizedRequestedQuantity = Math.max(1, Math.floor(Number(requestedQuantity) || 1));
-  const isHighDemand = inventory.isHighDemand || availableToShipNow < normalizedRequestedQuantity;
+  const isHighDemand =
+    inventory.isHighDemand ||
+    (inventory.availableQuantity !== null && availableToShipNow < normalizedRequestedQuantity);
 
   return {
     label: isHighDemand ? HIGH_DEMAND_SHIPPING_LABEL : inventory.message,

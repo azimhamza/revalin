@@ -33,7 +33,7 @@ export type CheckoutRatedService = {
   carrierPreferenceRank?: number;
   pickup?: boolean;
   estimatedDays?: number | null;
-  source: 'shipengine' | 'shippo' | 'swell';
+  source: 'shipengine' | 'shippo' | 'swell' | 'manual';
   price: {
     amount: string;
     currencyCode: string;

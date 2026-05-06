@@ -225,6 +225,7 @@ function rowToListItem(row: FulfillmentOrderRow): FulfillmentOrderListItem {
   const totals = row.totals as CheckoutOrderRecord['totals'];
   const swell = row.swell as CheckoutOrderRecord['swell'];
   const lines = row.lines as CheckoutOrderRecord['lines'];
+  const fulfillmentStatus = resolveFulfillmentStatus(row);
   const payment = row.payment as {
     provider?: string;
     payoutMethod?: string;
@@ -236,7 +237,7 @@ function rowToListItem(row: FulfillmentOrderRow): FulfillmentOrderListItem {
     orderNumber: swell?.orderNumber || row.orderId,
     email: row.email,
     customerName: `${shippingAddress?.firstName || ''} ${shippingAddress?.lastName || ''}`.trim(),
-    fulfillmentStatus: resolveFulfillmentStatus(row),
+    fulfillmentStatus,
     paymentStatus: row.paymentStatus,
     payoutMethod: resolvePaymentMethodLabel(payment),
     shippingAddress,
@@ -255,7 +256,8 @@ function rowToListItem(row: FulfillmentOrderRow): FulfillmentOrderListItem {
     packedAt: fulfillmentDetails?.packedAt || null,
     inventoryConsumption: [],
     labelError: fulfillmentDetails?.labelError || null,
-    supportsLabelPurchase: isLiveLabelPurchaseConfigured(),
+    supportsLabelPurchase:
+      fulfillmentStatus !== 'not_required' && isLiveLabelPurchaseConfigured(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -879,6 +881,7 @@ export async function listFulfillmentOrders(args: {
           'packed',
           'handed_to_carrier',
           'error',
+          'not_required',
         ]),
         successfulUnqueuedOrderCondition
       )
@@ -1104,6 +1107,11 @@ export async function resendShippedEmail(orderId: string) {
 }
 
 export async function retryOrderLabelPurchase(orderId: string) {
+  const existingOrder = await getCheckoutOrder(orderId);
+  if (existingOrder?.fulfillmentStatus === 'not_required') {
+    throw new Error(`Order ${orderId} has shipping disabled.`);
+  }
+
   const order = await retryFailedLabelPurchase(orderId);
   if (!order) {
     throw new Error(`Order ${orderId} not found.`);
@@ -1161,6 +1169,10 @@ export async function getOrderLabelPreview(args: {
   const order = await getCheckoutOrder(args.orderId);
   if (!order) {
     throw new Error(`Order ${args.orderId} not found.`);
+  }
+
+  if (order.fulfillmentStatus === 'not_required') {
+    throw new Error(`Order ${args.orderId} has shipping disabled.`);
   }
 
   const shippoConfig = getShippoConfigStatus();
@@ -1308,6 +1320,10 @@ export async function updateShippingAddressAndPurchaseLabel(args: {
   const order = await getCheckoutOrder(args.orderId);
   if (!order) {
     throw new Error(`Order ${args.orderId} not found.`);
+  }
+
+  if (order.fulfillmentStatus === 'not_required') {
+    throw new Error(`Order ${args.orderId} has shipping disabled.`);
   }
 
   if (!isSuccessfulFulfillmentPaymentStatus(order.payment.status)) {

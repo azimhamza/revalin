@@ -9,8 +9,13 @@ import { ProductImage } from './product-image';
 import { useSelectedVariant } from '@/components/products/variant-selector';
 import { getInventoryState } from '@/lib/inventory';
 import { IntentLink } from '@/components/navigation/intent-link';
+import { useLazyProductAvailability } from '@/lib/catalog/availability-client';
 
-export const ProductCard = ({ product }: { product: Product }) => {
+export const ProductCard = ({ product: initialProduct }: { product: Product }) => {
+  const {
+    product,
+    loadAvailability,
+  } = useLazyProductAvailability(initialProduct);
   const selectedVariant = useSelectedVariant(product);
   const displayPrice = getDisplayPrice(product, selectedVariant);
   const compareAtPrice = getDisplayCompareAtPrice(product, selectedVariant, displayPrice);
@@ -33,9 +38,21 @@ export const ProductCard = ({ product }: { product: Product }) => {
   })();
 
   return (
-    <div className="relative isolate w-full aspect-[3/4] md:aspect-square bg-muted group">
+    <div
+      className="relative isolate w-full aspect-[3/4] md:aspect-square bg-muted group"
+      onPointerEnter={() => {
+        void loadAvailability();
+      }}
+      onFocusCapture={() => {
+        void loadAvailability();
+      }}
+      onTouchStart={() => {
+        void loadAvailability();
+      }}
+    >
       <IntentLink
         href={productHref}
+        prefetchMode="off"
         className="block size-full overflow-hidden focus-visible:outline-none"
         aria-label={`View details for ${product.title}, price ${displayPrice.amount} ${displayPrice.currencyCode}`}
       >

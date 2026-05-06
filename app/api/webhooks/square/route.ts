@@ -1,16 +1,11 @@
 import { NextResponse } from 'next/server';
 
 import {
-  findCheckoutOrderBySquarePayment,
-  updateCheckoutOrder,
-} from '@/lib/checkout/order-store';
-import { applyVerifiedPaymentStatus } from '@/lib/checkout/payment-lifecycle';
+  applySquarePaymentVerification,
+  findSquareCheckoutOrderForPayment,
+} from '@/lib/checkout/square-payment-verification';
 import {
-  expectedSquareAmountCents,
   getSquareWebhookNotificationUrl,
-  mapSquarePaymentStatus,
-  squarePaymentAmountCents,
-  squarePaymentCurrency,
   verifySquareWebhookSignature,
   type SquarePayment,
 } from '@/lib/checkout/square';
@@ -76,10 +71,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, ignored: true });
   }
 
-  const matchedOrder = await findCheckoutOrderBySquarePayment({
-    paymentId: payment.id,
-    squareOrderId: payment.order_id,
-  });
+  const matchedOrder = await findSquareCheckoutOrderForPayment(payment);
 
   if (!matchedOrder || !isSquarePayment(matchedOrder.payment)) {
     return NextResponse.json({ ok: true, matched: false });
@@ -90,82 +82,18 @@ export async function POST(request: Request) {
     valid: true,
     payload,
   });
-  const targetStatus = mapSquarePaymentStatus(payment.status);
-  const paymentAmountCents = squarePaymentAmountCents(payment);
-  const paymentCurrency = squarePaymentCurrency(payment);
-  const expectedAmountCents = expectedSquareAmountCents(
-    matchedOrder.payment.expectedAmount ||
-      matchedOrder.payment.attemptAmount ||
-      matchedOrder.totals.totalAmount.amount,
-  );
-  const expectedCurrency = matchedOrder.payment.expectedCurrency.trim().toUpperCase();
-  const squareOrderMatches =
-    !payment.order_id || payment.order_id === matchedOrder.payment.squareOrderId;
-  const amountMatches =
-    targetStatus !== 'paid' ||
-    (paymentAmountCents === expectedAmountCents && paymentCurrency === expectedCurrency);
-
-  if (!squareOrderMatches || !amountMatches) {
-    const mismatchReason = !squareOrderMatches
-      ? 'Square webhook order id did not match the checkout order.'
-      : `Square payment amount mismatch: expected ${expectedAmountCents} ${expectedCurrency}, received ${paymentAmountCents ?? 'unknown'} ${paymentCurrency || 'unknown'}.`;
-
-    await updateCheckoutOrder(matchedOrder.orderId, current => {
-      if (!isSquarePayment(current.payment)) return current;
-      return {
-        ...current,
-        payment: {
-          ...current.payment,
-          status: 'review_required',
-          paymentId: payment.id ?? current.payment.paymentId ?? null,
-          squareStatus: payment.status ?? current.payment.squareStatus ?? null,
-          amountMoney: payment.amount_money ?? current.payment.amountMoney ?? null,
-          totalMoney: payment.total_money ?? current.payment.totalMoney ?? null,
-          receiptUrl: payment.receipt_url ?? current.payment.receiptUrl ?? null,
-          updatedAt: payment.updated_at || new Date().toISOString(),
-        },
-        latestError: mismatchReason,
-        ipnEvents: [...(current.ipnEvents || []), auditEvent],
-      };
-    });
-
-    return NextResponse.json({ ok: true, reviewRequired: true });
-  }
-
-  const result = await applyVerifiedPaymentStatus({
-    orderId: matchedOrder.orderId,
-    provider: 'square',
-    targetStatus,
+  const result = await applySquarePaymentVerification({
+    order: matchedOrder,
+    payment,
     source: 'square_webhook',
     ipnEvent: auditEvent,
-    paymentUpdater: (current) => {
-      if (!isSquarePayment(current.payment)) {
-        return current.payment;
-      }
-
-      return {
-        ...current.payment,
-        status: targetStatus,
-        paymentId: payment.id ?? current.payment.paymentId ?? null,
-        squareStatus: payment.status ?? current.payment.squareStatus ?? null,
-        locationId: payment.location_id ?? current.payment.locationId ?? null,
-        receiptUrl: payment.receipt_url ?? current.payment.receiptUrl ?? null,
-        buyerEmail: payment.buyer_email_address ?? current.payment.buyerEmail ?? null,
-        amountMoney: payment.amount_money ?? current.payment.amountMoney ?? null,
-        totalMoney: payment.total_money ?? current.payment.totalMoney ?? null,
-        paidAt:
-          targetStatus === 'paid'
-            ? payment.updated_at || new Date().toISOString()
-            : current.payment.paidAt ?? null,
-        updatedAt: payment.updated_at || new Date().toISOString(),
-      };
-    },
   });
 
   return NextResponse.json({
     ok: true,
     orderId: result.order?.orderId ?? matchedOrder.orderId,
-    status: result.order?.payment.status ?? targetStatus,
+    status: result.order?.payment.status ?? result.targetStatus,
+    reviewRequired: result.reviewRequired,
   });
 }
 

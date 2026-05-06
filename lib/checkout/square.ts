@@ -28,6 +28,24 @@ export type SquarePayment = {
   updated_at?: string;
 };
 
+export type SquareOrder = {
+  id?: string;
+  location_id?: string;
+  state?: string;
+  total_money?: SquareMoney;
+  net_amount_due_money?: SquareMoney;
+  tenders?: Array<{
+    id?: string;
+    payment_id?: string;
+    type?: string;
+    amount_money?: SquareMoney;
+    created_at?: string;
+  }>;
+  created_at?: string;
+  updated_at?: string;
+  closed_at?: string;
+};
+
 export type SquarePaymentLinkResponse = {
   id: string;
   orderId: string;
@@ -253,6 +271,42 @@ export async function getSquarePayment(paymentId: string) {
 
   const payment = asRecord(asRecord(payload).payment);
   return payment as SquarePayment;
+}
+
+export async function getSquareOrder(orderId: string) {
+  const response = await providerFetch(
+    new URL(`/v2/orders/${encodeURIComponent(orderId)}`, getSquareBaseUrl()).toString(),
+    {
+      provider: 'square',
+      operation: 'get_order',
+      route: '/v2/orders/:orderId',
+      method: 'GET',
+      headers: squareHeaders(),
+    },
+  );
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw apiError.providerUnavailable(
+      squareErrorMessage(
+        (asRecord(payload).errors as SquareApiError[] | undefined),
+        'Square order lookup failed',
+      ),
+      { provider: 'square', status: response.status, response: payload },
+      response.status >= 500,
+    );
+  }
+
+  const order = asRecord(asRecord(payload).order);
+  return order as SquareOrder;
+}
+
+export function squareOrderPaymentId(order: SquareOrder) {
+  const paymentId = order.tenders
+    ?.map(tender => tender.payment_id?.trim())
+    .find(Boolean);
+
+  return paymentId || null;
 }
 
 export function mapSquarePaymentStatus(status?: string | null) {

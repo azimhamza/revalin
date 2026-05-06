@@ -7,6 +7,10 @@ import {
 } from '@/lib/checkout/affiliate-service';
 import { getSuccessfulPromoterForAffiliate } from '@/lib/checkout/promoter-service';
 import {
+  buildAdminDisabledCheckoutShippingService,
+  buildAdminDisabledRatedService,
+} from '@/lib/checkout/admin-shipping';
+import {
   getFreeShippingThresholdForCurrency,
   isTerminalPaymentStatus,
 } from '@/lib/checkout/constants';
@@ -166,6 +170,7 @@ type FinalizeCheckoutInput = {
   interacSecurityAnswer?: string | null;
   selectedShippingServiceId: string;
   shipmentProtection?: boolean;
+  adminShippingDisabled?: boolean;
   discountCode?: string | null;
   requestUrl: URL;
   affiliateCode?: string | null;
@@ -794,6 +799,51 @@ function buildShipmentProtectionTotalFields(shippingService: CheckoutShippingSer
     },
     shipmentProtection: protection,
   };
+}
+
+function applyAdminDisabledShippingToOrder(
+  order: CheckoutOrderRecord,
+): CheckoutOrderRecord {
+  const {
+    landedCost: _landedCost,
+    landedCostAmount: _landedCostAmount,
+    shipmentProtection: _shipmentProtection,
+    shipmentProtectionAmount: _shipmentProtectionAmount,
+    ...totals
+  } = order.totals;
+
+  return {
+    ...order,
+    shippingService: buildAdminDisabledCheckoutShippingService(order.currencyCode),
+    totals: {
+      ...totals,
+      shippingAmount: {
+        amount: '0.00',
+        currencyCode: order.currencyCode,
+      },
+      shippingStatus: 'disabled',
+    },
+    fulfillmentStatus: 'not_required',
+    fulfillment: {
+      ...(order.fulfillment || {}),
+      provider: 'manual',
+      service: 'Shipping disabled',
+      labelError: undefined,
+    },
+    shipengine: order.shipengine
+      ? {
+          ...order.shipengine,
+          labelError: undefined,
+        }
+      : undefined,
+  };
+}
+
+function maybeApplyAdminDisabledShipping(
+  order: CheckoutOrderRecord,
+  adminShippingDisabled?: boolean,
+) {
+  return adminShippingDisabled ? applyAdminDisabledShippingToOrder(order) : order;
 }
 
 function resolveOrderShipmentTotal(args: {
@@ -1648,23 +1698,29 @@ export function createFinalizeCheckoutSession(
       let availableServices: CheckoutRatedService[] = [];
       let liveShippingErrorMessage: string | null = null;
 
-      try {
-        availableServices = await dependencies.getShipEngineCheckoutServices({
-          shippingAddress: args.shippingAddress,
-          currencyCode: checkoutCurrencyCode,
-          subtotalAmount: checkoutSubtotalAmount,
-          itemCount,
-          shipmentProtection: args.shipmentProtection,
-        });
-      } catch (liveShippingError) {
-        liveShippingErrorMessage =
-          liveShippingError instanceof Error
-            ? liveShippingError.message
-            : 'Unable to validate the shipping address.';
-        console.error(
-          'Unable to fetch live shipping rates for payment creation, falling back to Swell:',
-          liveShippingError,
-        );
+      if (args.adminShippingDisabled) {
+        availableServices = [
+          buildAdminDisabledRatedService(checkoutCurrencyCode),
+        ];
+      } else {
+        try {
+          availableServices = await dependencies.getShipEngineCheckoutServices({
+            shippingAddress: args.shippingAddress,
+            currencyCode: checkoutCurrencyCode,
+            subtotalAmount: checkoutSubtotalAmount,
+            itemCount,
+            shipmentProtection: args.shipmentProtection,
+          });
+        } catch (liveShippingError) {
+          liveShippingErrorMessage =
+            liveShippingError instanceof Error
+              ? liveShippingError.message
+              : 'Unable to validate the shipping address.';
+          console.error(
+            'Unable to fetch live shipping rates for payment creation, falling back to Swell:',
+            liveShippingError,
+          );
+        }
       }
 
       if (availableServices.length === 0 && !isShippoConfigured()) {
@@ -1685,14 +1741,16 @@ export function createFinalizeCheckoutSession(
         });
       }
 
-      availableServices = applyFreeShipping(
-        applyCustomerShippingMarkup(availableServices),
-        checkoutSubtotalAmount,
-        checkoutCurrencyCode,
-      );
-      availableServices = toCustomerFacingCheckoutServices(
-        availableServices,
-      );
+      if (!args.adminShippingDisabled) {
+        availableServices = applyFreeShipping(
+          applyCustomerShippingMarkup(availableServices),
+          checkoutSubtotalAmount,
+          checkoutCurrencyCode,
+        );
+        availableServices = toCustomerFacingCheckoutServices(
+          availableServices,
+        );
+      }
 
       const selectedService = findCheckoutShippingService(
         availableServices,
@@ -1744,23 +1802,27 @@ export function createFinalizeCheckoutSession(
         }
 
         const orderTaxTotal = Number(ratedCart.tax_total || 0);
-        const orderShipmentTotal = resolveOrderShipmentTotal({
-          selectedService,
-          swellShipmentTotal: ratedCart.shipment_total,
-        });
+        const orderShipmentTotal = args.adminShippingDisabled
+          ? 0
+          : resolveOrderShipmentTotal({
+              selectedService,
+              swellShipmentTotal: ratedCart.shipment_total,
+            });
         const orderCurrencyCode = ratedCart.currency || currencyCode;
-        const landedCost = await quoteZonosLandedCost({
-          shippingAddress: args.shippingAddress,
-          cartSnapshot: args.cartSnapshot,
-          service: {
-            ...selectedService,
-            price: {
-              amount: orderShipmentTotal.toFixed(2),
+        const landedCost = args.adminShippingDisabled
+          ? null
+          : await quoteZonosLandedCost({
+              shippingAddress: args.shippingAddress,
+              cartSnapshot: args.cartSnapshot,
+              service: {
+                ...selectedService,
+                price: {
+                  amount: orderShipmentTotal.toFixed(2),
+                  currencyCode: orderCurrencyCode,
+                },
+              },
               currencyCode: orderCurrencyCode,
-            },
-          },
-          currencyCode: orderCurrencyCode,
-        });
+            });
         const orderLandedCostTotal = Number(landedCost?.amount.amount || 0);
         const selectedServiceForOrder = landedCost
           ? {
@@ -1987,36 +2049,39 @@ export function createFinalizeCheckoutSession(
           temporaryCartId = undefined;
 
           const cardDigits = args.card.number.replace(/\D/g, '');
-          const bankfulOrderRecord = buildBankfulOrderRecord({
-            orderId,
-            accessKey,
-            cartId: fallbackCartId,
-            userId,
-            swellAccountId: account.id,
-            swellCartId: ratedCart.id,
-            swellOrderId: swellOrder.id,
-            swellOrderNumber: swellOrder.number,
-            currencyCode: orderCurrencyCode,
-            lines,
-            shippingAddress: args.shippingAddress,
-            shippingService,
-            orderSubtotal: orderSubtotalAmount,
-            orderDiscountTotal,
-            discountCode: appliedDiscountCode,
-            discounts: pricing.discounts,
-            orderTaxTotal,
-            orderGrandTotal: orderTotal,
-            orderShipmentTotal,
-            orderLandedCostTotal,
-            landedCost,
-            attemptId,
-            bankful,
-            cardLast4: cardDigits.slice(-4) || null,
-            amountPaidToDate,
-            attemptAmount: remainderPaymentAmount.toFixed(2),
-            carryoverRootOrderId,
-            nowIso,
-          });
+          const bankfulOrderRecord = maybeApplyAdminDisabledShipping(
+            buildBankfulOrderRecord({
+              orderId,
+              accessKey,
+              cartId: fallbackCartId,
+              userId,
+              swellAccountId: account.id,
+              swellCartId: ratedCart.id,
+              swellOrderId: swellOrder.id,
+              swellOrderNumber: swellOrder.number,
+              currencyCode: orderCurrencyCode,
+              lines,
+              shippingAddress: args.shippingAddress,
+              shippingService,
+              orderSubtotal: orderSubtotalAmount,
+              orderDiscountTotal,
+              discountCode: appliedDiscountCode,
+              discounts: pricing.discounts,
+              orderTaxTotal,
+              orderGrandTotal: orderTotal,
+              orderShipmentTotal,
+              orderLandedCostTotal,
+              landedCost,
+              attemptId,
+              bankful,
+              cardLast4: cardDigits.slice(-4) || null,
+              amountPaidToDate,
+              attemptAmount: remainderPaymentAmount.toFixed(2),
+              carryoverRootOrderId,
+              nowIso,
+            }),
+            args.adminShippingDisabled,
+          );
 
           const checkoutOrder = await dependencies.saveCheckoutOrder({
             ...bankfulOrderRecord,
@@ -2129,6 +2194,316 @@ export function createFinalizeCheckoutSession(
         }
       }
 
+      if (args.paymentMethod === 'square') {
+        const couponDiscountTotal = Number(
+          ratedCart.discount_total ?? ratedCart.item_discount ?? 0,
+        );
+        if (args.discountCode && couponDiscountTotal <= 0) {
+          throw apiError.badRequest(
+            'That discount code is invalid or has expired.',
+          );
+        }
+        const orderTaxTotal = Number(ratedCart.tax_total || 0);
+        const orderShipmentTotal = args.adminShippingDisabled
+          ? 0
+          : resolveOrderShipmentTotal({
+              selectedService,
+              swellShipmentTotal: ratedCart.shipment_total,
+            });
+        const orderCurrencyCode = ratedCart.currency || checkoutCurrencyCode;
+        const landedCost = args.adminShippingDisabled
+          ? null
+          : await quoteZonosLandedCost({
+              shippingAddress: args.shippingAddress,
+              cartSnapshot: args.cartSnapshot,
+              service: {
+                ...selectedService,
+                price: {
+                  amount: orderShipmentTotal.toFixed(2),
+                  currencyCode: orderCurrencyCode,
+                },
+              },
+              currencyCode: orderCurrencyCode,
+            });
+        const orderLandedCostTotal = Number(landedCost?.amount.amount || 0);
+        const selectedServiceForOrder = landedCost
+          ? {
+              ...selectedService,
+              landedCostAmount: landedCost.amount,
+              landedCost,
+            }
+          : selectedService;
+        const orderSubtotalAmount = Number.isFinite(Number(ratedCart.sub_total))
+          ? Number(ratedCart.sub_total)
+          : subtotalAmount;
+        const appliedDiscountCode = args.discountCode || ratedCart.coupon_code;
+        const couponDiscountRate = await getSwellCouponDiscountRate(appliedDiscountCode);
+        const pricing = calculateCheckoutPricing({
+          currencyCode: orderCurrencyCode,
+          subtotalAmount: orderSubtotalAmount,
+          couponDiscountAmount: couponDiscountTotal,
+          couponDiscountRate,
+          couponCode: appliedDiscountCode,
+          shippingAmount: orderShipmentTotal,
+          shipmentProtectionAmount: selectedServiceForOrder.shipmentProtection?.totalAmount.amount,
+          taxAmount: orderTaxTotal,
+          landedCostAmount: orderLandedCostTotal,
+          paymentMethod: args.paymentMethod,
+        });
+        const orderDiscountTotal = pricing.discountTotalValue;
+        const orderTotal = pricing.totalValue;
+        const pricingMetadata = buildCheckoutPricingMetadata({
+          currencyCode: orderCurrencyCode,
+          subtotalAmount: orderSubtotalAmount,
+          shippingAmount: orderShipmentTotal,
+          shipmentProtectionAmount: selectedServiceForOrder.shipmentProtection?.totalAmount.amount,
+          taxAmount: orderTaxTotal,
+          landedCostAmount: orderLandedCostTotal,
+          totalAmount: orderTotal,
+          discounts: pricing.discounts,
+          discountAmount: orderDiscountTotal,
+          discountCode: appliedDiscountCode,
+          paymentMethod: args.paymentMethod,
+        });
+
+        if (!orderTotal || orderTotal <= 0 || !Number.isFinite(orderTotal)) {
+          throw apiError.badRequest('Order total must be greater than zero.', {
+            code: 'invalid_order_total',
+          });
+        }
+
+        const carryoverContext = buildCarryoverContext({
+          orders: cartOrders,
+          comparable: carryoverComparable,
+          orderTotal,
+        });
+
+        if (
+          carryoverContext.latestSuccessfulOrder &&
+          carryoverContext.creditedAmount + 0.01 >= orderTotal
+        ) {
+          await dependencies
+            .deleteSwellCheckoutCart(ratedCart.id)
+            .catch((error) => {
+              console.error('Unable to delete duplicate Swell cart after carryover reconciliation:', error);
+            });
+          temporaryCartId = undefined;
+
+          return {
+            accessKey: carryoverContext.latestSuccessfulOrder.accessKey,
+            order: toPublicCheckoutOrderWithCarryover(
+              carryoverContext.latestSuccessfulOrder,
+              cartOrders,
+            ),
+            redirectUrl: getHostedPaymentRedirectUrl(
+              carryoverContext.latestSuccessfulOrder.payment,
+            ),
+          };
+        }
+
+        const amountAlreadyPaid = carryoverContext.creditedAmount;
+        const remainderPaymentAmount = amountAlreadyPaid > 0
+          ? Math.max(orderTotal - amountAlreadyPaid, 0.01)
+          : orderTotal;
+        const amountPaidToDate = amountAlreadyPaid > 0
+          ? amountAlreadyPaid.toFixed(2)
+          : undefined;
+        const orderId = dependencies.createOrderId();
+        const accessKey = dependencies.createAccessKey();
+        const carryoverRootOrderId =
+          carryoverContext.carryoverRootOrderId || orderId;
+        const session = await dependencies.optionalSession();
+        const userId = session?.user?.id ?? null;
+        const cadCurrency = (orderCurrencyCode || checkoutCurrencyCode).trim().toUpperCase();
+        if (cadCurrency !== 'CAD') {
+          throw apiError.providerUnavailable(
+            'Swell did not return a CAD Square checkout amount.',
+            {
+              provider: 'swell',
+              expectedCurrency: 'CAD',
+              receivedCurrency: cadCurrency,
+            },
+            false,
+          );
+        }
+
+        const squareRedirectUrl = new URL('/checkout', requestUrl.origin);
+        squareRedirectUrl.searchParams.set('order', orderId);
+        squareRedirectUrl.searchParams.set('key', accessKey);
+
+        const paymentLink = await dependencies.createSquarePaymentLink({
+          idempotencyKey: `square:${orderId}`,
+          amount: remainderPaymentAmount.toFixed(2),
+          currencyCode: cadCurrency,
+          orderReference: orderId,
+          customerEmail: args.shippingAddress.email,
+          redirectUrl: squareRedirectUrl.toString(),
+        });
+        squarePaymentLinkId = paymentLink.id;
+
+        const swellOrder = await dependencies.convertSwellCartToOrder(ratedCart.id);
+        swellOrderId = swellOrder.id;
+        temporaryCartId = undefined;
+
+        await dependencies.updateSwellOrder(swellOrder.id, {
+          billing: {
+            ...(swellOrder.billing || {}),
+            method: manualMethod,
+            intent: {
+              provider: 'square',
+              payment_link_id: paymentLink.id,
+              square_order_id: paymentLink.orderId,
+              status: 'pending',
+            },
+          },
+          metadata: {
+            ...(swellOrder.metadata || {}),
+            checkout_reference: orderId,
+            coupon_code: appliedDiscountCode || null,
+            pricing: pricingMetadata,
+            landed_cost: landedCost ?? null,
+            ...(args.adminShippingDisabled ? { admin_shipping_disabled: true } : {}),
+            square: {
+              payment_link_id: paymentLink.id,
+              square_order_id: paymentLink.orderId,
+              checkout_url: paymentLink.url,
+              expected_amount: remainderPaymentAmount.toFixed(2),
+              expected_currency: cadCurrency,
+              status: 'pending',
+            },
+            affiliate: resolvedAffiliate
+              ? {
+                  ...affiliateData,
+                  commissionOwed: (
+                    orderTotal *
+                    Number(
+                      commissionSnapshot?.effectiveRate ||
+                        resolvedAffiliate.commissionRate,
+                    )
+                  ).toFixed(2),
+                  currencyCode: cadCurrency,
+                  paymentProvider: 'square',
+                  status: 'pending',
+                }
+              : null,
+            promoter: promoterData
+              ? {
+                  ...promoterData,
+                  commissionOwed: (
+                    orderTotal * Number(promoterData.commissionRate)
+                  ).toFixed(2),
+                  currencyCode: cadCurrency,
+                  paymentProvider: 'square',
+                  status: 'pending',
+                }
+              : null,
+          },
+        });
+
+        const squareOrderRecord = maybeApplyAdminDisabledShipping(
+          buildSquareOrderRecord({
+            orderId,
+            accessKey,
+            cartId: fallbackCartId,
+            userId,
+            swellAccountId: account.id,
+            swellCartId: ratedCart.id,
+            swellOrderId: swellOrder.id,
+            swellOrderNumber: swellOrder.number,
+            currencyCode: orderCurrencyCode,
+            lines,
+            shippingAddress: args.shippingAddress,
+            shippingService: mapShippingService(
+              selectedServiceForOrder,
+              orderCurrencyCode,
+            ),
+            orderSubtotal: orderSubtotalAmount,
+            orderDiscountTotal,
+            discountCode: appliedDiscountCode,
+            discounts: pricing.discounts,
+            orderTaxTotal,
+            orderGrandTotal: orderTotal,
+            orderShipmentTotal,
+            orderLandedCostTotal,
+            landedCost,
+            paymentLink,
+            locationId: null,
+            amountPaidToDate,
+            attemptAmount: remainderPaymentAmount.toFixed(2),
+            carryoverRootOrderId,
+            nowIso: dependencies.nowIso(),
+          }),
+          args.adminShippingDisabled,
+        );
+
+        const checkoutOrder = await dependencies.saveCheckoutOrder({
+          ...squareOrderRecord,
+          affiliate: affiliateData,
+          promoter: promoterData,
+        });
+        checkoutOrderId = checkoutOrder.orderId;
+        squarePaymentLinkId = undefined;
+        swellOrderId = undefined;
+
+        await supersedeCarryoverChainOrders({
+          checkoutOrder,
+          chainOrders: carryoverContext.chainOrders,
+          dependencies,
+        }).catch((supersedeError) => {
+          console.error('Unable to supersede Square carryover chain orders:', supersedeError);
+        });
+
+        await replaceSupersededOpenOrders({
+          checkoutOrder,
+          customerEmail: args.shippingAddress.email,
+          excludedOrderIds: new Set(
+            carryoverContext.chainOrders.map((order) => order.orderId),
+          ),
+          dependencies,
+        }).catch((replaceError) => {
+          console.error('Unable to replace open Square checkout orders:', replaceError);
+        });
+
+        const publicRelatedOrders =
+          await dependencies
+            .findCheckoutOrdersByCartId(fallbackCartId)
+            .catch((relatedOrdersError) => {
+              console.error('Unable to load related Square checkout orders:', relatedOrdersError);
+              return [checkoutOrder];
+            });
+
+        const initiationTelemetry = {
+          orderId,
+          userId,
+          currencyCode: cadCurrency,
+          orderTotal: orderTotal.toFixed(2),
+          itemCount,
+          paymentProvider: 'square' as const,
+          paymentMethod: 'card' as const,
+          affiliateCode: resolvedAffiliate?.code ?? null,
+          affiliateSource,
+        };
+
+        dependencies
+          .sendCheckoutPaymentInitiatedEvent({
+            ...initiationTelemetry,
+            customerEmail: args.shippingAddress.email,
+          })
+          .catch(() => {});
+        dependencies
+          .trackCheckoutPaymentInitiated(initiationTelemetry)
+          .catch(() => {});
+
+        return {
+          accessKey,
+          order: toPublicCheckoutOrderWithCarryover(
+            checkoutOrder,
+            publicRelatedOrders,
+          ) satisfies CheckoutOrderPublic,
+          redirectUrl: paymentLink.url,
+        };
+      }
+
       const swellOrder = await dependencies.convertSwellCartToOrder(
         ratedCart.id,
       );
@@ -2144,23 +2519,27 @@ export function createFinalizeCheckoutSession(
         );
       }
       const orderTaxTotal = Number(swellOrder.tax_total || 0);
-      const orderShipmentTotal = resolveOrderShipmentTotal({
-        selectedService,
-        swellShipmentTotal: swellOrder.shipment_total,
-      });
+      const orderShipmentTotal = args.adminShippingDisabled
+        ? 0
+        : resolveOrderShipmentTotal({
+            selectedService,
+            swellShipmentTotal: swellOrder.shipment_total,
+          });
       const orderCurrencyCode = swellOrder.currency || currencyCode;
-      const landedCost = await quoteZonosLandedCost({
-        shippingAddress: args.shippingAddress,
-        cartSnapshot: args.cartSnapshot,
-        service: {
-          ...selectedService,
-          price: {
-            amount: orderShipmentTotal.toFixed(2),
+      const landedCost = args.adminShippingDisabled
+        ? null
+        : await quoteZonosLandedCost({
+            shippingAddress: args.shippingAddress,
+            cartSnapshot: args.cartSnapshot,
+            service: {
+              ...selectedService,
+              price: {
+                amount: orderShipmentTotal.toFixed(2),
+                currencyCode: orderCurrencyCode,
+              },
+            },
             currencyCode: orderCurrencyCode,
-          },
-        },
-        currencyCode: orderCurrencyCode,
-      });
+          });
       const orderLandedCostTotal = Number(landedCost?.amount.amount || 0);
       const selectedServiceForOrder = landedCost
         ? {
@@ -2255,180 +2634,6 @@ export function createFinalizeCheckoutSession(
       const session = await dependencies.optionalSession();
       const userId = session?.user?.id ?? null;
 
-      if (args.paymentMethod === 'square') {
-        const cadCurrency = (swellOrder.currency || checkoutCurrencyCode).trim().toUpperCase();
-        if (cadCurrency !== 'CAD') {
-          throw apiError.providerUnavailable(
-            'Swell did not return a CAD Square checkout amount.',
-            {
-              provider: 'swell',
-              expectedCurrency: 'CAD',
-              receivedCurrency: cadCurrency,
-            },
-            false,
-          );
-        }
-
-        const squareRedirectUrl = new URL('/checkout', requestUrl.origin);
-        squareRedirectUrl.searchParams.set('order', orderId);
-        squareRedirectUrl.searchParams.set('key', accessKey);
-
-        const paymentLink = await dependencies.createSquarePaymentLink({
-          idempotencyKey: `square:${orderId}`,
-          amount: remainderPaymentAmount.toFixed(2),
-          currencyCode: cadCurrency,
-          orderReference: swellOrder.number || swellOrder.id,
-          customerEmail: args.shippingAddress.email,
-          redirectUrl: squareRedirectUrl.toString(),
-        });
-        squarePaymentLinkId = paymentLink.id;
-
-        await dependencies.updateSwellOrder(swellOrder.id, {
-          billing: {
-            ...(swellOrder.billing || {}),
-            method: manualMethod,
-            intent: {
-              provider: 'square',
-              payment_link_id: paymentLink.id,
-              square_order_id: paymentLink.orderId,
-              status: 'pending',
-            },
-          },
-          metadata: {
-            ...(swellOrder.metadata || {}),
-            checkout_reference: orderId,
-            coupon_code: appliedDiscountCode || null,
-            pricing: pricingMetadata,
-            landed_cost: landedCost ?? null,
-            square: {
-              payment_link_id: paymentLink.id,
-              square_order_id: paymentLink.orderId,
-              checkout_url: paymentLink.url,
-              expected_amount: remainderPaymentAmount.toFixed(2),
-              expected_currency: cadCurrency,
-              status: 'pending',
-            },
-            affiliate: resolvedAffiliate
-              ? {
-                  ...affiliateData,
-                  commissionOwed: (
-                    orderTotal *
-                    Number(
-                      commissionSnapshot?.effectiveRate ||
-                        resolvedAffiliate.commissionRate,
-                    )
-                  ).toFixed(2),
-                  currencyCode: cadCurrency,
-                  paymentProvider: 'square',
-                  status: 'pending',
-                }
-              : null,
-            promoter: promoterData
-              ? {
-                  ...promoterData,
-                  commissionOwed: (
-                    orderTotal * Number(promoterData.commissionRate)
-                  ).toFixed(2),
-                  currencyCode: cadCurrency,
-                  paymentProvider: 'square',
-                  status: 'pending',
-                }
-              : null,
-          },
-        });
-
-        const squareOrderRecord = buildSquareOrderRecord({
-          orderId,
-          accessKey,
-          cartId: fallbackCartId,
-          userId,
-          swellAccountId: account.id,
-          swellCartId: ratedCart.id,
-          swellOrderId: swellOrder.id,
-          swellOrderNumber: swellOrder.number,
-          currencyCode: orderCurrencyCode,
-          lines,
-          shippingAddress: args.shippingAddress,
-          shippingService: mapShippingService(
-            selectedServiceForOrder,
-            orderCurrencyCode,
-          ),
-          orderSubtotal: orderSubtotalAmount,
-          orderDiscountTotal,
-          discountCode: appliedDiscountCode,
-          discounts: pricing.discounts,
-          orderTaxTotal,
-          orderGrandTotal: orderTotal,
-          orderShipmentTotal,
-          orderLandedCostTotal,
-          landedCost,
-          paymentLink,
-          locationId: null,
-          amountPaidToDate,
-          attemptAmount: remainderPaymentAmount.toFixed(2),
-          carryoverRootOrderId,
-          nowIso: dependencies.nowIso(),
-        });
-
-        const checkoutOrder = await dependencies.saveCheckoutOrder({
-          ...squareOrderRecord,
-          affiliate: affiliateData,
-          promoter: promoterData,
-        });
-        checkoutOrderId = checkoutOrder.orderId;
-        squarePaymentLinkId = undefined;
-
-        await supersedeCarryoverChainOrders({
-          checkoutOrder,
-          chainOrders: carryoverContext.chainOrders,
-          dependencies,
-        });
-
-        await replaceSupersededOpenOrders({
-          checkoutOrder,
-          customerEmail: args.shippingAddress.email,
-          excludedOrderIds: new Set(
-            carryoverContext.chainOrders.map((order) => order.orderId),
-          ),
-          dependencies,
-        });
-
-        const publicRelatedOrders = await dependencies.findCheckoutOrdersByCartId(
-          fallbackCartId,
-        );
-
-        const initiationTelemetry = {
-          orderId,
-          userId,
-          currencyCode: cadCurrency,
-          orderTotal: orderTotal.toFixed(2),
-          itemCount,
-          paymentProvider: 'square' as const,
-          paymentMethod: 'card' as const,
-          affiliateCode: resolvedAffiliate?.code ?? null,
-          affiliateSource,
-        };
-
-        dependencies
-          .sendCheckoutPaymentInitiatedEvent({
-            ...initiationTelemetry,
-            customerEmail: args.shippingAddress.email,
-          })
-          .catch(() => {});
-        dependencies
-          .trackCheckoutPaymentInitiated(initiationTelemetry)
-          .catch(() => {});
-
-        return {
-          accessKey,
-          order: toPublicCheckoutOrderWithCarryover(
-            checkoutOrder,
-            publicRelatedOrders,
-          ) satisfies CheckoutOrderPublic,
-          redirectUrl: paymentLink.url,
-        };
-      }
-
       if (args.paymentMethod === 'interac') {
         const expectedSenderEmail = args.interacSenderEmail?.trim();
         const expectedSenderName = args.interacSenderName?.trim();
@@ -2472,6 +2677,7 @@ export function createFinalizeCheckoutSession(
             coupon_code: appliedDiscountCode || null,
             pricing: pricingMetadata,
             landed_cost: landedCost ?? null,
+            ...(args.adminShippingDisabled ? { admin_shipping_disabled: true } : {}),
             interac: {
               message_code: messageCode,
               recipient_email: recipientEmail,
@@ -2500,44 +2706,47 @@ export function createFinalizeCheckoutSession(
           },
         });
 
-        const interacOrderRecord = buildInteracOrderRecord({
-          orderId,
-          accessKey,
-          cartId: fallbackCartId,
-          userId,
-          swellAccountId: account.id,
-          swellCartId: ratedCart.id,
-          swellOrderId: swellOrder.id,
-          swellOrderNumber: swellOrder.number,
-          currencyCode: orderCurrencyCode,
-          lines,
-          shippingAddress: args.shippingAddress,
-          shippingService: mapShippingService(
-            selectedServiceForOrder,
-            orderCurrencyCode,
-          ),
-          orderSubtotal: orderSubtotalAmount,
-          orderDiscountTotal,
-          discountCode: appliedDiscountCode,
-          discounts: pricing.discounts,
-          orderTaxTotal,
-          orderGrandTotal: orderTotal,
-          orderShipmentTotal,
-          orderLandedCostTotal,
-          landedCost,
-          recipientEmail,
-          messageCode,
-          cadAmount,
-          expectedSenderEmail,
-          expectedSenderName,
-          securityQuestion,
-          securityAnswer,
-          expiresAt,
-          amountPaidToDate,
-          attemptAmount: remainderPaymentAmount.toFixed(2),
-          carryoverRootOrderId,
-          nowIso: dependencies.nowIso(),
-        });
+        const interacOrderRecord = maybeApplyAdminDisabledShipping(
+          buildInteracOrderRecord({
+            orderId,
+            accessKey,
+            cartId: fallbackCartId,
+            userId,
+            swellAccountId: account.id,
+            swellCartId: ratedCart.id,
+            swellOrderId: swellOrder.id,
+            swellOrderNumber: swellOrder.number,
+            currencyCode: orderCurrencyCode,
+            lines,
+            shippingAddress: args.shippingAddress,
+            shippingService: mapShippingService(
+              selectedServiceForOrder,
+              orderCurrencyCode,
+            ),
+            orderSubtotal: orderSubtotalAmount,
+            orderDiscountTotal,
+            discountCode: appliedDiscountCode,
+            discounts: pricing.discounts,
+            orderTaxTotal,
+            orderGrandTotal: orderTotal,
+            orderShipmentTotal,
+            orderLandedCostTotal,
+            landedCost,
+            recipientEmail,
+            messageCode,
+            cadAmount,
+            expectedSenderEmail,
+            expectedSenderName,
+            securityQuestion,
+            securityAnswer,
+            expiresAt,
+            amountPaidToDate,
+            attemptAmount: remainderPaymentAmount.toFixed(2),
+            carryoverRootOrderId,
+            nowIso: dependencies.nowIso(),
+          }),
+          args.adminShippingDisabled,
+        );
 
         const checkoutOrder = await dependencies.saveCheckoutOrder({
           ...interacOrderRecord,
@@ -2654,6 +2863,7 @@ export function createFinalizeCheckoutSession(
           coupon_code: appliedDiscountCode || null,
           pricing: pricingMetadata,
           landed_cost: landedCost ?? null,
+          ...(args.adminShippingDisabled ? { admin_shipping_disabled: true } : {}),
           nowpayments: {
             payment_id: payment.payment_id,
             purchase_id: payment.purchase_id,
@@ -2692,7 +2902,8 @@ export function createFinalizeCheckoutSession(
         },
       });
 
-      const npOrderRecord = buildNowPaymentsOrderRecord({
+      const npOrderRecord = maybeApplyAdminDisabledShipping(
+        buildNowPaymentsOrderRecord({
           orderId,
           accessKey,
           cartId: fallbackCartId,
@@ -2725,7 +2936,9 @@ export function createFinalizeCheckoutSession(
           attemptAmount: remainderPaymentAmount.toFixed(2),
           carryoverRootOrderId,
           nowIso: dependencies.nowIso(),
-        });
+        }),
+        args.adminShippingDisabled,
+      );
 
       const checkoutOrder = await dependencies.saveCheckoutOrder({
         ...npOrderRecord,

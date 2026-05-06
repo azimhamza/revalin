@@ -1,4 +1,8 @@
 import { apiError } from '@/lib/api/errors';
+import {
+  ADMIN_DISABLED_SHIPPING_SERVICE_ID,
+  buildAdminDisabledRatedService,
+} from '@/lib/checkout/admin-shipping';
 import { calculateCheckoutPricing } from '@/lib/checkout/pricing';
 import {
   buildQuoteResponse,
@@ -49,6 +53,7 @@ type CheckoutQuoteInput = {
   paymentMethod?: 'card' | 'crypto' | 'interac' | 'square' | null;
   selectedShippingServiceId?: string | null;
   shipmentProtection?: boolean;
+  adminShippingDisabled?: boolean;
 };
 
 function normalizeCheckoutPaymentMethod(
@@ -176,27 +181,29 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
   try {
     let preferredServices: CheckoutRatedService[] = [];
 
-    try {
-      const liveShippingServices = await getShipEngineCheckoutServices({
-        shippingAddress: args.shippingAddress,
-        currencyCode,
-        subtotalAmount,
-        itemCount,
-        shipmentProtection: args.shipmentProtection,
-      });
+    if (!args.adminShippingDisabled) {
+      try {
+        const liveShippingServices = await getShipEngineCheckoutServices({
+          shippingAddress: args.shippingAddress,
+          currencyCode,
+          subtotalAmount,
+          itemCount,
+          shipmentProtection: args.shipmentProtection,
+        });
 
-      if (liveShippingServices.length > 0) {
-        preferredServices = liveShippingServices;
+        if (liveShippingServices.length > 0) {
+          preferredServices = liveShippingServices;
+        }
+      } catch (liveShippingError) {
+        liveShippingErrorMessage =
+          liveShippingError instanceof Error
+            ? liveShippingError.message
+            : 'Unable to validate the shipping address.';
+        console.error(
+          'Unable to fetch live shipping rates, falling back to Swell:',
+          liveShippingError,
+        );
       }
-    } catch (liveShippingError) {
-      liveShippingErrorMessage =
-        liveShippingError instanceof Error
-          ? liveShippingError.message
-          : 'Unable to validate the shipping address.';
-      console.error(
-        'Unable to fetch live shipping rates, falling back to Swell:',
-        liveShippingError,
-      );
     }
 
     const manualMethod = getSwellManualPaymentMethod(paymentMethod);
@@ -237,13 +244,67 @@ export async function buildCheckoutQuote(args: CheckoutQuoteInput) {
     const couponDiscountAmount = Number(
       swellCart.discount_total ?? swellCart.item_discount ?? 0,
     );
+    const initialCouponCode = args.discountCode || swellCart.coupon_code;
+    const initialCouponDiscountRate = await getSwellCouponDiscountRate(initialCouponCode);
     const pricing = calculateCheckoutPricing({
       currencyCode: swellCart.currency || currencyCode,
       subtotalAmount: checkoutSubtotalAmount,
       couponDiscountAmount,
-      couponCode: args.discountCode || swellCart.coupon_code,
+      couponDiscountRate: initialCouponDiscountRate,
+      couponCode: initialCouponCode,
       paymentMethod,
     });
+
+    if (args.discountCode && couponDiscountAmount <= 0) {
+      throw apiError.badRequest('That discount code is invalid or has expired.');
+    }
+
+    if (args.adminShippingDisabled) {
+      const disabledService = buildAdminDisabledRatedService(
+        swellCart.currency || currencyCode,
+      );
+      const selectedRating = await estimateTaxForSelectedService({
+        cartId: swellCart.id,
+        services: [disabledService],
+        selectedServiceId: ADMIN_DISABLED_SHIPPING_SERVICE_ID,
+        shipping: swellShipping,
+        billing: swellBilling,
+        couponCode: initialCouponCode,
+      });
+      const selectedService = selectedRating.services[0] || disabledService;
+      const disabledCouponCode =
+        args.discountCode || selectedRating.couponCode || swellCart.coupon_code;
+      const disabledCouponDiscountRate =
+        await getSwellCouponDiscountRate(disabledCouponCode);
+      const resolvedPricing = calculateCheckoutPricing({
+        currencyCode: selectedRating.currencyCode || swellCart.currency || currencyCode,
+        subtotalAmount: checkoutSubtotalAmount,
+        couponDiscountAmount:
+          selectedRating.couponDiscountAmount ?? couponDiscountAmount,
+        couponDiscountRate: disabledCouponDiscountRate,
+        couponCode: disabledCouponCode,
+        shippingAmount: '0.00',
+        taxAmount: selectedService.taxAmount?.amount,
+        paymentMethod,
+      });
+
+      return {
+        currencyCode: selectedRating.currencyCode || swellCart.currency || currencyCode,
+        subtotalAmount: {
+          amount: checkoutSubtotalAmount.toFixed(2),
+          currencyCode: selectedRating.currencyCode || swellCart.currency || currencyCode,
+        },
+        discountAmount: {
+          amount: resolvedPricing.discountTotalValue.toFixed(2),
+          currencyCode: selectedRating.currencyCode || swellCart.currency || currencyCode,
+        },
+        discountCode: disabledCouponCode,
+        discounts: resolvedPricing.discounts,
+        paymentMethod,
+        services: [selectedService],
+        selectedServiceId: ADMIN_DISABLED_SHIPPING_SERVICE_ID,
+      };
+    }
 
     const fallbackServicesWithProtectionQuote = applyAvailableShipmentProtectionToServices({
       services: mapSwellRatedServices(

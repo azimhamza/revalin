@@ -6,7 +6,6 @@ import { mapSortKeys } from '@/lib/swell/utils';
 import { storeCatalog } from '@/lib/swell/constants';
 import { resolveRequestCurrencyCode } from '@/lib/swell/currency';
 import { getProductPurchaseMetricsByHandle, sortProductsForMerchandising } from '@/lib/product-ordering';
-import { hydrateProductsWithInternalAvailability } from '@/lib/internal-availability';
 
 interface ProductListProps {
   collection: string;
@@ -56,7 +55,6 @@ async function getProductListData({
     products = [];
   }
 
-  products = await hydrateProductsWithInternalAvailability(products);
   const purchaseMetricsByHandle = await getProductPurchaseMetricsByHandle();
   products = sortProductsForMerchandising(products, purchaseMetricsByHandle);
 

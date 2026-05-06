@@ -14,6 +14,10 @@ import {
 } from '@/lib/checkout/types';
 import { verifyAndFinalizeShieldClimbPayment } from '@/lib/checkout/shieldclimb-payment-verification';
 import { sendPaymentFailedEvent } from '@/lib/email/marketing-events';
+import {
+  applySquarePaymentVerification,
+  resolveSquarePaymentForCheckoutOrder,
+} from '@/lib/checkout/square-payment-verification';
 
 export async function refreshCheckoutPaymentStatus(args: {
   orderId: string;
@@ -162,7 +166,18 @@ export async function refreshCheckoutPaymentStatus(args: {
         throw apiError.notFound('Checkout session not found.');
       }
 
-      return buildPublicCheckoutOrder(order);
+      const payment = await resolveSquarePaymentForCheckoutOrder(order);
+      if (!payment) {
+        return buildPublicCheckoutOrder(order);
+      }
+
+      const result = await applySquarePaymentVerification({
+        order,
+        payment,
+        source: 'square_poll',
+      });
+
+      return buildPublicCheckoutOrder(result.order || order);
     }
 
     throw apiError.badRequest('Unknown payment provider.');

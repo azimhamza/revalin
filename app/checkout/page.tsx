@@ -5,7 +5,6 @@ import { isCardDebitCheckoutEnabled, isSquareFallbackCheckoutEnabled } from '@/l
 import { getProducts } from '@/lib/swell';
 import { resolveRequestCurrencyCode } from '@/lib/swell/currency';
 import { CheckoutExperience } from './components/checkout-experience';
-import { hydrateProductsWithInternalAvailability } from '@/lib/internal-availability';
 
 export const metadata: Metadata = {
   title: 'Checkout | Revalin',
@@ -16,9 +15,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function CheckoutPage() {
   const currencyCode = await resolveRequestCurrencyCode();
-  const quickAddProducts = await hydrateProductsWithInternalAvailability(
-    await getProducts({ limit: 8, currencyCode, live: true })
-  );
+  const quickAddProducts = await getProducts({ limit: 8, currencyCode, live: true });
   const cardDebitCheckoutEnabled = isCardDebitCheckoutEnabled();
   const squareFallbackEnabled = isSquareFallbackCheckoutEnabled();
 

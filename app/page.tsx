@@ -14,7 +14,6 @@ import { resolveRequestCurrencyCode } from '@/lib/swell/currency';
 import { Product } from '../lib/swell/types';
 import { getProductPurchaseMetricsByHandle, sortProductsForMerchandising } from '@/lib/product-ordering';
 import { getSiteUrl } from '@/lib/site';
-import { hydrateProductsWithInternalAvailability } from '@/lib/internal-availability';
 
 export const metadata = {
   title: 'Revalin',
@@ -74,7 +73,6 @@ export default async function Home() {
 
     featuredProducts = uniqueProducts([...allProducts, ...featuredSearchMatches]);
     featuredProducts = prioritizeFeaturedProduct(featuredProducts, featuredMatch);
-    featuredProducts = await hydrateProductsWithInternalAvailability(featuredProducts);
   } catch (error) {
     console.error('Error fetching featured products:', error);
     featuredProducts = [];

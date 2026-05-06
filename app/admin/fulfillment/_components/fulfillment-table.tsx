@@ -21,6 +21,7 @@ export type FulfillmentTabKey =
   | 'packed'
   | 'handed_to_carrier'
   | 'error'
+  | 'not_required'
   | 'all'
   | 'pending';
 
@@ -29,6 +30,7 @@ const TABS: { key: FulfillmentTabKey; label: string; devOnly?: boolean }[] = [
   { key: 'packed', label: 'Packed' },
   { key: 'handed_to_carrier', label: 'Shipped' },
   { key: 'error', label: 'Errors' },
+  { key: 'not_required', label: 'No Shipping' },
   { key: 'all', label: 'All' },
   { key: 'pending', label: 'Pending' },
 ];
@@ -57,6 +59,7 @@ function StatusBadge({ status }: { status: string | null }) {
     packed: 'bg-amber-100 text-amber-800',
     handed_to_carrier: 'bg-green-100 text-green-800',
     error: 'bg-red-100 text-red-800',
+    not_required: 'bg-zinc-100 text-zinc-700',
   };
 
   const labels: Record<string, string> = {
@@ -65,6 +68,7 @@ function StatusBadge({ status }: { status: string | null }) {
     packed: 'Packed',
     handed_to_carrier: 'Shipped',
     error: 'Error',
+    not_required: 'No Shipping',
   };
 
   return (
@@ -113,7 +117,7 @@ type ManualRate = {
   id: string;
   name: string;
   carrier?: string;
-  source?: 'shippo' | 'shipengine' | 'swell';
+  source?: 'shippo' | 'shipengine' | 'swell' | 'manual';
   estimatedDays?: number | null;
   price: {
     amount: string;

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { createApiRoute } from '@/lib/api/route';
+import { apiError } from '@/lib/api/errors';
+import { getSessionRole, optionalSession } from '@/lib/api/auth';
 import { requireCheckoutSession, updateCheckoutSession } from '@/lib/checkout/session-store';
 import { buildSessionChanges, toCheckoutSessionState } from '@/lib/checkout/session-api';
 import {
@@ -38,6 +40,13 @@ export const PATCH = createApiRoute({
   bodySchema: checkoutSessionMutationSchema,
   cacheControl: 'no-store',
   handler: async ({ params, body }) => {
+    if (body.adminShippingDisabled) {
+      const authSession = await optionalSession();
+      if (getSessionRole(authSession) !== 'admin') {
+        throw apiError.forbidden();
+      }
+    }
+
     const session = await updateCheckoutSession({
       sessionId: params.sessionId,
       sessionKey: body.sessionKey,

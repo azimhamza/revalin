@@ -863,12 +863,13 @@ export async function updateSwellOrder(
 
 export async function cancelSwellOrder(orderId: string, reason?: string) {
   try {
+    const cancelReason = reason || "Payment provider setup failed.";
     const order = await getSwellOrder(orderId);
     const cancellationItems = (order.items || [])
       .map((item) => ({
         id: item.id,
         quantity_canceled: Number(item.quantity_cancelable ?? 0),
-        cancel_reason: reason || "Payment provider setup failed.",
+        cancel_reason: cancelReason,
       }))
       .filter((item) => item.quantity_canceled > 0);
 
@@ -876,7 +877,7 @@ export async function cancelSwellOrder(orderId: string, reason?: string) {
       body: {
         ...(cancellationItems.length > 0 ? { items: cancellationItems } : {}),
         canceled: true,
-        cancel_reason: reason || "Payment provider setup failed.",
+        cancel_reason: cancelReason,
         coupon_code: null,
         coupon_id: null,
         discounts: [],
@@ -890,9 +891,32 @@ export async function cancelSwellOrder(orderId: string, reason?: string) {
         // Suppress Swell's built-in emails — all emails sent via Loops.
         $notify: false,
         metadata: {
-          cancel_reason: reason || "Payment provider setup failed.",
+          ...(order.metadata || {}),
+          cancel_reason: cancelReason,
         },
       },
+    });
+
+    await swellBackendRequest<SwellBackendOrder>("PUT", `/orders/${orderId}`, {
+      body: {
+        coupon_code: null,
+        coupon_id: null,
+        discounts: [],
+        discount_total: 0,
+        item_discount: 0,
+        grand_total: 0,
+        shipment_total: 0,
+        $notify: false,
+        metadata: {
+          ...(order.metadata || {}),
+          cancel_reason: cancelReason,
+        },
+      },
+    }).catch((cleanupError) => {
+      console.warn(
+        `Unable to clear canceled Swell order discounts for ${orderId}:`,
+        cleanupError,
+      );
     });
   } catch (error) {
     console.error(`Failed to cancel Swell order ${orderId}:`, error);

@@ -11,6 +11,7 @@ import { Loader } from '@/components/ui/loader';
 import { useParams, useSearchParams } from 'next/navigation';
 import { getSwellProductId } from '@/lib/swell/utils';
 import { useProductQuantity } from './product-quantity-context';
+import { useProductAvailabilityProduct } from './product-availability-context';
 
 export function ProductAddToCart({
   product,
@@ -21,40 +22,41 @@ export function ProductAddToCart({
   className?: string;
   style?: React.CSSProperties;
 }) {
+  const { product: availabilityProduct, loadAvailability } = useProductAvailabilityProduct(product);
   const { quantity, setQuantity } = useProductQuantity();
   const [isLoading, startTransition] = useTransition();
   const { addItem, warmCart } = useCart();
-  const selectedVariant = useSelectedVariant(product);
+  const selectedVariant = useSelectedVariant(availabilityProduct);
   const pathname = useParams<{ handle?: string }>();
   const searchParams = useSearchParams();
 
-  const { variants } = product;
+  const { variants } = availabilityProduct;
   const defaultVariantId = variants.length === 1 ? variants[0]?.id : undefined;
   const selectedVariantId = selectedVariant?.id || defaultVariantId;
   const isTargetingProduct =
-    pathname.handle === product.handle || searchParams.get('pid') === getSwellProductId(product.id);
+    pathname.handle === availabilityProduct.handle || searchParams.get('pid') === getSwellProductId(availabilityProduct.id);
 
   const resolvedVariant = useMemo(() => {
     if (variants.length === 0) {
       return {
-        id: product.id,
-        title: product.title,
-        availableForSale: product.availableForSale,
-        stockStatus: product.stockStatus,
-        stockLevel: product.stockLevel,
-        internalOnHand: product.internalOnHand,
-        internalAllocated: product.internalAllocated,
-        availableToShipNow: product.availableToShipNow,
-        isHighDemand: product.isHighDemand,
-        shippingLeadTimeLabel: product.shippingLeadTimeLabel,
-        internalInventoryMatched: product.internalInventoryMatched,
+        id: availabilityProduct.id,
+        title: availabilityProduct.title,
+        availableForSale: availabilityProduct.availableForSale,
+        stockStatus: availabilityProduct.stockStatus,
+        stockLevel: availabilityProduct.stockLevel,
+        internalOnHand: availabilityProduct.internalOnHand,
+        internalAllocated: availabilityProduct.internalAllocated,
+        availableToShipNow: availabilityProduct.availableToShipNow,
+        isHighDemand: availabilityProduct.isHighDemand,
+        shippingLeadTimeLabel: availabilityProduct.shippingLeadTimeLabel,
+        internalInventoryMatched: availabilityProduct.internalInventoryMatched,
         selectedOptions: [],
-        price: product.priceRange.minVariantPrice,
+        price: availabilityProduct.priceRange.minVariantPrice,
       };
     }
     if (!isTargetingProduct && !defaultVariantId) return undefined;
     return variants.find(v => v.id === selectedVariantId);
-  }, [variants, product, isTargetingProduct, defaultVariantId, selectedVariantId]);
+  }, [variants, availabilityProduct, isTargetingProduct, defaultVariantId, selectedVariantId]);
   const cartVariant = resolvedVariant;
   const isDisabled = !cartVariant || isLoading;
   const isSelectOneState = !cartVariant;
@@ -65,9 +67,16 @@ export function ProductAddToCart({
     if (!cartVariant) return;
 
     startTransition(async () => {
-      await addItem(cartVariant, product, quantity);
+      await addItem(cartVariant, availabilityProduct, quantity);
       setQuantity(1);
     });
+  };
+
+  const handlePaymentIntent = () => {
+    void loadAvailability();
+    if (!isDisabled) {
+      warmCart();
+    }
   };
 
   return (
@@ -124,21 +133,9 @@ export function ProductAddToCart({
             <Button
               type="submit"
               disabled={isDisabled}
-              onPointerEnter={() => {
-                if (!isDisabled) {
-                  warmCart();
-                }
-              }}
-              onFocus={() => {
-                if (!isDisabled) {
-                  warmCart();
-                }
-              }}
-              onTouchStart={() => {
-                if (!isDisabled) {
-                  warmCart();
-                }
-              }}
+              onPointerEnter={handlePaymentIntent}
+              onFocus={handlePaymentIntent}
+              onTouchStart={handlePaymentIntent}
               size="lg"
               className="flex relative justify-between items-center w-full"
               style={isSelectOneState ? undefined : (style || { backgroundColor: '#0B2E2F', color: '#F4F1EA' })}
