@@ -109,6 +109,11 @@ type CheckoutCartSnapshot = {
   lines: CheckoutOrderPublic['lines'];
 };
 
+type CheckoutBillingAddress = Pick<
+  CheckoutShippingAddress,
+  'address1' | 'address2' | 'city' | 'province' | 'postalCode' | 'country'
+>;
+
 type AppliedDiscount = {
   code: string;
   amount: string;
@@ -338,10 +343,41 @@ const DEFAULT_SHIPPING_ADDRESS: CheckoutShippingAddress = {
   notes: '',
 };
 
+const DEFAULT_BILLING_ADDRESS: CheckoutBillingAddress = {
+  address1: '',
+  address2: '',
+  city: '',
+  province: '',
+  postalCode: '',
+  country: 'CA',
+};
+
 function normalizeShippingAddressDraft(value: Partial<CheckoutShippingAddress> | null | undefined): CheckoutShippingAddress {
   return {
     ...DEFAULT_SHIPPING_ADDRESS,
     ...(value || {}),
+  };
+}
+
+function billingAddressFromShipping(address: CheckoutShippingAddress): CheckoutBillingAddress {
+  return {
+    address1: address.address1,
+    address2: address.address2 || '',
+    city: address.city,
+    province: address.province,
+    postalCode: address.postalCode,
+    country: address.country,
+  };
+}
+
+function normalizeBillingAddressForPayment(address: CheckoutBillingAddress): CheckoutBillingAddress {
+  return {
+    address1: address.address1.trim(),
+    address2: address.address2?.trim() || '',
+    city: address.city.trim(),
+    province: address.province.trim(),
+    postalCode: address.postalCode.trim(),
+    country: address.country.trim().toUpperCase(),
   };
 }
 
@@ -870,6 +906,16 @@ function isShippingAddressReady(address: CheckoutShippingAddress) {
   );
 }
 
+function isBillingAddressReady(address: CheckoutBillingAddress) {
+  return Boolean(
+    address.address1.trim() &&
+      address.city.trim() &&
+      (!isProvinceRequired(address.country) || address.province.trim()) &&
+      address.postalCode.trim() &&
+      address.country.trim()
+  );
+}
+
 function ShippingField({
   label,
   name,
@@ -898,6 +944,40 @@ function ShippingField({
         ref={inputRef}
         type={type}
         name={name}
+        value={value || ''}
+        onChange={event => onChange(name, event.target.value)}
+        autoComplete={autoComplete}
+        placeholder={placeholder}
+        required={required}
+        className="h-11 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
+      />
+    </label>
+  );
+}
+
+function BillingAddressField({
+  label,
+  name,
+  value,
+  onChange,
+  autoComplete,
+  placeholder,
+  required = true,
+}: {
+  label: string;
+  name: keyof CheckoutBillingAddress;
+  value: string | undefined;
+  onChange: (name: keyof CheckoutBillingAddress, value: string) => void;
+  autoComplete?: string;
+  placeholder?: string;
+  required?: boolean;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">{label}</span>
+      <input
+        type="text"
+        name={`billing-${name}`}
         value={value || ''}
         onChange={event => onChange(name, event.target.value)}
         autoComplete={autoComplete}
@@ -1170,6 +1250,8 @@ export function CheckoutExperience({
   const [isSubmittingInterac, setIsSubmittingInterac] = useState(false);
   const [isUploadingInteracScreenshot, setIsUploadingInteracScreenshot] = useState(false);
   const [cardholderName, setCardholderName] = useState('');
+  const [cardBillingSameAsShipping, setCardBillingSameAsShipping] = useState(true);
+  const [cardBillingAddress, setCardBillingAddress] = useState<CheckoutBillingAddress>(DEFAULT_BILLING_ADDRESS);
   const [cardNumber, setCardNumber] = useState('');
   const [cardExpiry, setCardExpiry] = useState('');
   const [cardCvv, setCardCvv] = useState('');
@@ -2485,6 +2567,23 @@ export function CheckoutExperience({
     }
   };
 
+  const handleCardBillingSameAsShippingChange = (checked: boolean) => {
+    setCardBillingSameAsShipping(checked);
+    if (!checked) {
+      setCardBillingAddress(billingAddressFromShipping(shippingAddress));
+    }
+    if (error === 'Enter a complete billing address.') {
+      setError(null);
+    }
+  };
+
+  const handleCardBillingAddressChange = (name: keyof CheckoutBillingAddress, value: string) => {
+    setCardBillingAddress(current => ({ ...current, [name]: value }));
+    if (error === 'Enter a complete billing address.') {
+      setError(null);
+    }
+  };
+
   const handleShipmentProtectionChange = (checked: boolean) => {
     if (effectiveAdminShippingDisabled) return;
 
@@ -3067,6 +3166,7 @@ export function CheckoutExperience({
     expiryMonth: string;
     expiryYear: string;
     cardholderName?: string;
+    billingAddress?: CheckoutBillingAddress;
   }) => {
     if (paymentMethod === 'card' && !cardProcessingEnabled) {
       setError(getCardProcessingUnavailableMessage());
@@ -3222,6 +3322,8 @@ export function CheckoutExperience({
       }
       if (isBankfulOrder(data.order.payment)) {
         setCardholderName('');
+        setCardBillingSameAsShipping(true);
+        setCardBillingAddress(DEFAULT_BILLING_ADDRESS);
         setCardNumber('');
         setCardExpiry('');
         setCardCvv('');
@@ -3348,10 +3450,19 @@ export function CheckoutExperience({
       return;
     }
 
+    if (!cardBillingSameAsShipping && !isBillingAddressReady(cardBillingAddress)) {
+      setError('Enter a complete billing address.');
+      return;
+    }
+
     if (normalizedNumber.length < 12 || !parsedExpiry || normalizedCvv.length < 3) {
       setError('Enter valid card number, expiry, and CVV.');
       return;
     }
+
+    const billingAddress = cardBillingSameAsShipping
+      ? undefined
+      : normalizeBillingAddressForPayment(cardBillingAddress);
 
     await submitCheckoutPayment({
       number: normalizedNumber,
@@ -3359,8 +3470,19 @@ export function CheckoutExperience({
       expiryMonth: parsedExpiry.expiryMonth,
       expiryYear: parsedExpiry.expiryYear,
       cardholderName: normalizedCardholderName,
+      ...(billingAddress ? { billingAddress } : {}),
     });
-  }, [cardCvv, cardProcessingEnabled, cardExpiry, cardholderName, cardNumber, isCreatingPayment, submitCheckoutPayment]);
+  }, [
+    cardBillingAddress,
+    cardBillingSameAsShipping,
+    cardCvv,
+    cardProcessingEnabled,
+    cardExpiry,
+    cardholderName,
+    cardNumber,
+    isCreatingPayment,
+    submitCheckoutPayment,
+  ]);
 
   const refreshStatus = async () => {
     if (!pollingId || !checkoutSession) return;
@@ -4518,6 +4640,76 @@ export function CheckoutExperience({
                               />
                             </label>
                           </div>
+                          <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-border/70 bg-white px-3.5 py-3">
+                            <input
+                              type="checkbox"
+                              checked={cardBillingSameAsShipping}
+                              onChange={event => handleCardBillingSameAsShippingChange(event.target.checked)}
+                              className="size-4 rounded border-border accent-[#0B2E2F]"
+                            />
+                            <span className="text-sm font-semibold">Billing address same as shipping</span>
+                          </label>
+                          {!cardBillingSameAsShipping ? (
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="md:col-span-2">
+                                <BillingAddressField
+                                  label="Billing street address"
+                                  name="address1"
+                                  value={cardBillingAddress.address1}
+                                  onChange={handleCardBillingAddressChange}
+                                  autoComplete="billing address-line1"
+                                />
+                              </div>
+                              <div className="md:col-span-2">
+                                <BillingAddressField
+                                  label="Apartment, suite, unit"
+                                  name="address2"
+                                  value={cardBillingAddress.address2}
+                                  onChange={handleCardBillingAddressChange}
+                                  autoComplete="billing address-line2"
+                                  placeholder="Optional"
+                                  required={false}
+                                />
+                              </div>
+                              <BillingAddressField
+                                label="City"
+                                name="city"
+                                value={cardBillingAddress.city}
+                                onChange={handleCardBillingAddressChange}
+                                autoComplete="billing address-level2"
+                              />
+                              <BillingAddressField
+                                label="State / Province / Region"
+                                name="province"
+                                value={cardBillingAddress.province}
+                                onChange={handleCardBillingAddressChange}
+                                autoComplete="billing address-level1"
+                                required={isProvinceRequired(cardBillingAddress.country)}
+                                placeholder={isProvinceRequired(cardBillingAddress.country) ? undefined : 'Optional where not used'}
+                              />
+                              <BillingAddressField
+                                label="Postal / ZIP code"
+                                name="postalCode"
+                                value={cardBillingAddress.postalCode}
+                                onChange={handleCardBillingAddressChange}
+                                autoComplete="billing postal-code"
+                              />
+                              <label className="flex flex-col gap-1.5">
+                                <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">Country</span>
+                                <select
+                                  value={cardBillingAddress.country}
+                                  onChange={event => handleCardBillingAddressChange('country', event.target.value)}
+                                  className="h-11 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
+                                >
+                                  {countryOptions.map(country => (
+                                    <option key={country.code} value={country.code}>
+                                      {country.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            </div>
+                          ) : null}
                           <p className="px-1 text-xs text-foreground/45">
                             Want to save 5%? Choose <button type="button" onClick={() => selectPaymentMethod('crypto')} className="font-semibold text-[#0B2E2F] underline underline-offset-2">Direct Crypto</button> or <button type="button" onClick={() => selectPaymentMethod('interac')} className="font-semibold text-[#0B2E2F] underline underline-offset-2">Interac e-Transfer</button> above.
                           </p>

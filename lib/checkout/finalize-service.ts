@@ -2096,6 +2096,7 @@ export function createFinalizeCheckoutSession(
         let bankful: BankfulTransactionResponse;
         try {
           const cardholderName = splitCardholderName(args.card?.cardholderName);
+          const bankfulBillingAddress = args.card?.billingAddress ?? args.shippingAddress;
           bankful = await dependencies.createBankfulSale({
             amount: remainderPaymentAmount.toFixed(2),
             currency: orderCurrencyCode,
@@ -2108,11 +2109,12 @@ export function createFinalizeCheckoutSession(
               phone: args.shippingAddress.phone,
             },
             billingAddress: {
-              address1: args.shippingAddress.address1,
-              city: args.shippingAddress.city,
-              province: args.shippingAddress.province,
-              postalCode: args.shippingAddress.postalCode,
-              country: args.shippingAddress.country,
+              address1: bankfulBillingAddress.address1,
+              address2: bankfulBillingAddress.address2,
+              city: bankfulBillingAddress.city,
+              province: bankfulBillingAddress.province,
+              postalCode: bankfulBillingAddress.postalCode,
+              country: bankfulBillingAddress.country,
             },
           });
         } catch (captureError) {

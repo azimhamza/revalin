@@ -26,6 +26,16 @@ export type BankfulCardInput = {
   expiryMonth: string;
   expiryYear: string;
   cardholderName?: string;
+  billingAddress?: BankfulBillingAddressInput;
+};
+
+export type BankfulBillingAddressInput = {
+  address1?: string;
+  address2?: string;
+  city?: string;
+  province?: string;
+  postalCode?: string;
+  country?: string;
 };
 
 export type BankfulSaleInput = {
@@ -39,13 +49,7 @@ export type BankfulSaleInput = {
     email?: string;
     phone?: string;
   };
-  billingAddress: {
-    address1?: string;
-    city?: string;
-    province?: string;
-    postalCode?: string;
-    country?: string;
-  };
+  billingAddress: BankfulBillingAddressInput;
 };
 
 const DEFAULT_BANKFUL_BASE_URL = 'https://api.paybybankful.com';
@@ -101,6 +105,13 @@ function normalizeAmount(value: string) {
 function nonEmpty(value?: string | null) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function formatBankfulStreetAddress(address: BankfulBillingAddressInput) {
+  return [address.address1, address.address2]
+    .map((value) => nonEmpty(value))
+    .filter(Boolean)
+    .join(', ');
 }
 
 function responseRecordFromJson(value: unknown): Record<string, string> {
@@ -235,7 +246,7 @@ export async function createBankfulSale(
     cust_lname: nonEmpty(input.customer.lastName),
     cust_email: nonEmpty(input.customer.email),
     cust_phone: nonEmpty(input.customer.phone)?.replace(/[^\d+]/g, ''),
-    bill_addr: nonEmpty(input.billingAddress.address1),
+    bill_addr: nonEmpty(formatBankfulStreetAddress(input.billingAddress)),
     bill_addr_city: nonEmpty(input.billingAddress.city),
     bill_addr_state: nonEmpty(input.billingAddress.province),
     bill_addr_zip: nonEmpty(input.billingAddress.postalCode),
