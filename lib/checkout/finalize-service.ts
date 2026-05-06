@@ -1682,9 +1682,23 @@ export function createFinalizeCheckoutSession(
       }
 
       const commissionSnapshot = resolvedAffiliate
-        ? await dependencies.getAffiliateCommissionSnapshot({
-            affiliateId: resolvedAffiliate.id,
-          })
+        ? await dependencies
+            .getAffiliateCommissionSnapshot({
+              affiliateId: resolvedAffiliate.id,
+            })
+            .catch((commissionError) => {
+              console.error(
+                'Unable to load affiliate commission snapshot during checkout finalize; falling back to affiliate base rate.',
+                {
+                  affiliateId: resolvedAffiliate?.id,
+                  error:
+                    commissionError instanceof Error
+                      ? commissionError.message
+                      : commissionError,
+                },
+              );
+              return null;
+            })
         : null;
       const affiliateData = buildAffiliateData({
         resolvedAffiliate,

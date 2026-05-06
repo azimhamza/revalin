@@ -202,23 +202,38 @@ export async function createAffiliateEarningFromOrder(
     payoutPeriodTimezone: period.timezone,
   });
 
-  const { summary } = await syncAffiliateCommissionMonth({
+  await syncAffiliateCommissionMonth({
     affiliateId: affiliate.id,
     monthKey: commissionMonthKey,
     eventType: "recalculated",
     notes: `Affiliate earning created from order ${orderId}.`,
     recordEvent: true,
-  });
-
-  await hydrateOrderAffiliateCommissionMonth({
-    orderId,
-    affiliateId: affiliate.id,
-    monthKey: summary.monthKey,
-    effectiveRate: summary.effectiveRate,
-    tierLabel: summary.hasOverride
-      ? `${summary.tierLabel} override`
-      : summary.tierLabel,
-  });
+  })
+    .then(({ summary }) =>
+      hydrateOrderAffiliateCommissionMonth({
+        orderId,
+        affiliateId: affiliate.id,
+        monthKey: summary.monthKey,
+        effectiveRate: summary.effectiveRate,
+        tierLabel: summary.hasOverride
+          ? `${summary.tierLabel} override`
+          : summary.tierLabel,
+      }),
+    )
+    .catch((commissionError) => {
+      console.error(
+        "[AFFILIATE-COMMISSION-MONTH-SYNC]",
+        {
+          orderId,
+          affiliateId: affiliate.id,
+          monthKey: commissionMonthKey,
+          error:
+            commissionError instanceof Error
+              ? commissionError.message
+              : commissionError,
+        },
+      );
+    });
 
   const created = await getAffiliateEarningByOrderId(orderId);
   if (created) {
