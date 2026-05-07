@@ -52,12 +52,42 @@ function formatEmailDate(value?: string | null) {
   return parsed.toISOString().slice(0, 10);
 }
 
+function resolveDeliveryEstimateDays(order: CheckoutOrderRecord) {
+  const explicitDays = order.shippingService?.estimatedDays;
+  if (Number.isFinite(explicitDays) && explicitDays !== null) {
+    return Math.max(0, Math.ceil(Number(explicitDays)));
+  }
+
+  const serviceText = [
+    order.shippingService?.carrier,
+    order.shippingService?.name,
+    order.shippingService?.serviceCode,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const rangeMatch = serviceText.match(/\b(\d+)\s*[-–]\s*(\d+)\s*(?:business\s*)?(?:days?|d)\b/);
+  if (rangeMatch?.[2]) {
+    return Math.max(0, Number(rangeMatch[2]));
+  }
+
+  const singleMatch = serviceText.match(/\b(\d+)\s*(?:business\s*)?(?:days?|d)\b/);
+  if (singleMatch?.[1]) {
+    return Math.max(0, Number(singleMatch[1]));
+  }
+
+  const country = order.shippingAddress.country.trim().toUpperCase();
+  if (country === "CA") return 3;
+  if (country === "US") return 5;
+  return 10;
+}
+
 function estimateDeliveryDate(shippedAt?: string | null, estimatedDays?: number | null) {
-  if (!shippedAt || estimatedDays === null || estimatedDays === undefined) {
+  if (estimatedDays === null || estimatedDays === undefined) {
     return "";
   }
 
-  const parsed = new Date(shippedAt);
+  const parsed = shippedAt ? new Date(shippedAt) : new Date();
   if (Number.isNaN(parsed.getTime())) return "";
 
   parsed.setUTCDate(parsed.getUTCDate() + Math.max(0, Math.ceil(estimatedDays)));
@@ -109,6 +139,10 @@ export function getOrderTrackingDetails(order: CheckoutOrderRecord) {
   };
   const carrier = fulfillment.carrier || order.shippingService?.carrier || "";
   const trackingCode = fulfillment.trackingCode || "";
+  const estimatedDeliveryDate =
+    fulfillment.estimatedDeliveryDate ||
+    order.shippingService?.estimatedDeliveryDate ||
+    "";
   const trackingUrl =
     fulfillment.publicTrackingUrl?.trim() ||
     buildCarrierTrackingUrl({
@@ -123,6 +157,7 @@ export function getOrderTrackingDetails(order: CheckoutOrderRecord) {
     trackingCode,
     trackingUrl,
     shippedAt,
+    estimatedDeliveryDate,
   };
 }
 
@@ -186,7 +221,13 @@ export function buildOrderShippedDataVariables(order: CheckoutOrderRecord) {
       : "$0.00";
   const tracking = getOrderTrackingDetails(order);
   const shippedAt = formatEmailDate(tracking.shippedAt);
-  const deliveryDate = estimateDeliveryDate(tracking.shippedAt, order.shippingService?.estimatedDays);
+  const providerDeliveryDate = formatEmailDate(tracking.estimatedDeliveryDate);
+  const deliveryDate =
+    providerDeliveryDate ||
+    estimateDeliveryDate(
+      tracking.shippedAt || order.updatedAt || order.createdAt,
+      resolveDeliveryEstimateDays(order),
+    );
 
   const vars: Record<string, string | number | Array<Record<string, string | number>>> = {
     order_number: order.swell.orderNumber || order.orderId,
@@ -199,6 +240,7 @@ export function buildOrderShippedDataVariables(order: CheckoutOrderRecord) {
         delivery_date: deliveryDate,
       },
     ],
+    delivery_date: deliveryDate,
     tracking_link: tracking.trackingUrl,
     tracking_url: tracking.trackingUrl,
     items: buildOrderItems(order),

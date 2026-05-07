@@ -86,6 +86,7 @@ export type PurchasedLabelResult = {
   carrier?: string | null;
   service?: string | null;
   publicTrackingUrl?: string | null;
+  estimatedDeliveryDate?: string | null;
 };
 
 export type PaymentLifecycleDependencies = {
@@ -465,6 +466,10 @@ export function createPaymentLifecycle(
         service: labelResult.service || undefined,
         publicTrackingUrl: labelResult.publicTrackingUrl || undefined,
         labelPurchasedAt,
+        estimatedDeliveryDate:
+          labelResult.estimatedDeliveryDate ||
+          order.shippingService?.estimatedDeliveryDate ||
+          undefined,
         labelError: undefined,
       },
       shipengine: {
@@ -475,6 +480,10 @@ export function createPaymentLifecycle(
         service: labelResult.service || undefined,
         publicTrackingUrl: labelResult.publicTrackingUrl || undefined,
         labelPurchasedAt,
+        estimatedDeliveryDate:
+          labelResult.estimatedDeliveryDate ||
+          order.shippingService?.estimatedDeliveryDate ||
+          undefined,
         labelError: undefined,
       },
     }));

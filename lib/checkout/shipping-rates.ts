@@ -33,6 +33,7 @@ export type CheckoutRatedService = {
   carrierPreferenceRank?: number;
   pickup?: boolean;
   estimatedDays?: number | null;
+  estimatedDeliveryDate?: string | null;
   source: 'shipengine' | 'shippo' | 'swell' | 'manual';
   price: {
     amount: string;
@@ -540,6 +541,7 @@ function mapShipEngineRatedServices(services: ShipEngineCheckoutRate[]): Checkou
     serviceCode: service.serviceCode,
     shipengineRateId: service.shipengineRateId,
     estimatedDays: service.estimatedDays,
+    estimatedDeliveryDate: service.estimatedDeliveryDate,
     source: 'shipengine',
     price: {
       amount: toFixedAmount(service.price),
@@ -577,6 +579,7 @@ function mapShippoRatedServices(args: {
         carrierCode: service.carrierCode,
       }),
       estimatedDays: service.estimatedDays,
+      estimatedDeliveryDate: null,
       source: 'shippo' as const,
       price: {
         amount: toFixedAmount(baseShippingPrice),

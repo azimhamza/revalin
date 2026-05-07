@@ -25,7 +25,7 @@ function resolvePoolMax(databaseUrl: string) {
     const isSessionPooler = isSupabasePooler && parsed.port === '5432';
 
     if (isSessionPooler) {
-      return process.env.NODE_ENV === 'production' ? 3 : 1;
+      return 1;
     }
   } catch {
     // Fall back to conservative defaults when the URL cannot be parsed.

@@ -89,6 +89,7 @@ function mergeFulfillmentWithLegacyShipengine(
     publicTrackingUrl: fulfillment.publicTrackingUrl || shipengine.publicTrackingUrl,
     labelPurchasedAt: fulfillment.labelPurchasedAt || shipengine.labelPurchasedAt,
     labelEmailSentAt: fulfillment.labelEmailSentAt || shipengine.labelEmailSentAt,
+    estimatedDeliveryDate: fulfillment.estimatedDeliveryDate || shipengine.estimatedDeliveryDate,
     labelError: fulfillment.labelError || shipengine.labelError,
     handedToCarrierAt: fulfillment.handedToCarrierAt || shipengine.handedToCarrierAt,
     packedAt: fulfillment.packedAt || shipengine.packedAt,
@@ -133,6 +134,7 @@ function mirrorFulfillmentToLegacyShipengine(
     publicTrackingUrl: fulfillment.publicTrackingUrl,
     labelPurchasedAt: fulfillment.labelPurchasedAt,
     labelEmailSentAt: fulfillment.labelEmailSentAt,
+    estimatedDeliveryDate: fulfillment.estimatedDeliveryDate,
     labelError: fulfillment.labelError,
     handedToCarrierAt: fulfillment.handedToCarrierAt,
     packedAt: fulfillment.packedAt,
@@ -402,6 +404,7 @@ function mapRatedServiceToCheckoutService(
     shippoCarrierAccountId: service.shippoCarrierAccountId,
     carrierPreferenceRank: service.carrierPreferenceRank,
     estimatedDays: service.estimatedDays,
+    estimatedDeliveryDate: service.estimatedDeliveryDate,
     pickup: service.pickup,
     price: service.price,
     originalPrice: service.originalPrice,
@@ -935,19 +938,18 @@ export async function listFulfillmentOrders(args: {
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const [rows, totalResult] = await Promise.all([
-    db
-      .select()
-      .from(checkoutOrders)
-      .where(whereClause)
-      .orderBy(desc(checkoutOrders.updatedAt))
-      .limit(pageSize)
-      .offset(offset),
-    db
-      .select({ count: count() })
-      .from(checkoutOrders)
-      .where(whereClause),
-  ]);
+  const rows = await db
+    .select()
+    .from(checkoutOrders)
+    .where(whereClause)
+    .orderBy(desc(checkoutOrders.updatedAt))
+    .limit(pageSize)
+    .offset(offset);
+
+  const totalResult = await db
+    .select({ count: count() })
+    .from(checkoutOrders)
+    .where(whereClause);
 
   const items = rows.map(rowToListItem);
   const consumptionByOrder = await getFulfillmentInventoryConsumptionForOrders(
@@ -1448,6 +1450,7 @@ export async function updateShippingAddressAndPurchaseLabel(args: {
         service: labelResult.service || selectedRate.name,
         publicTrackingUrl: labelResult.publicTrackingUrl || undefined,
         labelPurchasedAt: new Date().toISOString(),
+        estimatedDeliveryDate: shippingService.estimatedDeliveryDate || undefined,
         labelError: undefined,
         shippoTransactionId: labelResult.shippoTransactionId || undefined,
         shippoRateId: labelResult.shippoRateId || selectedRate.shippoRateId,
@@ -1482,6 +1485,10 @@ export async function updateShippingAddressAndPurchaseLabel(args: {
         service: labelResult.service || selectedRate.name,
         publicTrackingUrl: labelResult.publicTrackingUrl || undefined,
         labelPurchasedAt: new Date().toISOString(),
+        estimatedDeliveryDate:
+          labelResult.estimatedDeliveryDate ||
+          shippingService.estimatedDeliveryDate ||
+          undefined,
         labelError: undefined,
         shipengineRateId: selectedRate.shipengineRateId,
       };

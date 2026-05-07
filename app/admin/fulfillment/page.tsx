@@ -34,14 +34,12 @@ export default async function FulfillmentPage({
   const status =
     validStatuses.find((s) => s === statusParam) || 'all';
 
-  const [result, shippoSettings] = await Promise.all([
-    listFulfillmentOrders({
-      status: status as Parameters<typeof listFulfillmentOrders>[0]['status'],
-      page: 1,
-      pageSize: 100,
-    }),
-    getShippoFulfillmentSettings(),
-  ]);
+  const result = await listFulfillmentOrders({
+    status: status as Parameters<typeof listFulfillmentOrders>[0]['status'],
+    page: 1,
+    pageSize: 100,
+  });
+  const shippoSettings = await getShippoFulfillmentSettings();
 
   return (
     <FulfillmentTable

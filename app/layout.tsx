@@ -72,10 +72,8 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const [collections, session] = await Promise.all([
-    getCollections(),
-    getServerSession(),
-  ]);
+  const collections = await getCollections();
+  const session = await getServerSession();
 
   return (
     <html lang="en">

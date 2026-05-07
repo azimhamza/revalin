@@ -79,6 +79,9 @@ type ShipEngineRateApiResponse = {
         currency?: string;
       };
       delivery_days?: number | null;
+      estimated_delivery_date?: string | null;
+      carrier_delivery_days?: string | null;
+      ship_date?: string | null;
       error_messages?: string[];
     }>;
     invalid_rates?: Array<{
@@ -106,12 +109,16 @@ type ShipEngineLabelResponse = {
     href?: string;
     pdf?: string;
   };
+  ship_date?: string | null;
   errors?: ShipEngineApiError[];
 };
 
 type ShipEngineTrackingResponse = {
   tracking_number?: string;
   tracking_url?: string;
+  ship_date?: string | null;
+  estimated_delivery_date?: string | null;
+  actual_delivery_date?: string | null;
   status_code?: string;
   status_description?: string;
   errors?: ShipEngineApiError[];
@@ -124,6 +131,7 @@ export type ShipEngineCheckoutRate = {
   carrierCode?: string;
   serviceCode?: string;
   estimatedDays?: number | null;
+  estimatedDeliveryDate?: string | null;
   price: number;
   currencyCode: string;
   source: 'shipengine';
@@ -141,6 +149,18 @@ function normalizeRateToken(value: string) {
 function normalizeShipEngineValue(value?: string | null) {
   const normalized = value?.trim();
   return normalized || undefined;
+}
+
+function normalizeShipEngineDate(value?: string | null) {
+  const normalized = value?.trim();
+  if (!normalized) return null;
+
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return normalized;
+  }
+
+  return parsed.toISOString();
 }
 
 function normalizeShipEngineCountryCode(value?: string | null) {
@@ -525,14 +545,19 @@ async function shipEngineRequest<T>(path: string, init: RequestInit): Promise<T>
   return payload as T;
 }
 
-async function getShipEngineTrackingUrl(args: {
+async function getShipEngineTrackingDetails(args: {
   trackingNumber?: string | null;
   carrierCode?: string | null;
   carrierId?: string | null;
 }) {
   const trackingNumber = args.trackingNumber?.trim();
   if (!trackingNumber) {
-    return null;
+    return {
+      trackingUrl: null,
+      estimatedDeliveryDate: null,
+      actualDeliveryDate: null,
+      shipDate: null,
+    };
   }
 
   const params = new URLSearchParams({
@@ -555,7 +580,12 @@ async function getShipEngineTrackingUrl(args: {
       }
     );
 
-    return tracking.tracking_url?.trim() || null;
+    return {
+      trackingUrl: tracking.tracking_url?.trim() || null,
+      estimatedDeliveryDate: normalizeShipEngineDate(tracking.estimated_delivery_date),
+      actualDeliveryDate: normalizeShipEngineDate(tracking.actual_delivery_date),
+      shipDate: normalizeShipEngineDate(tracking.ship_date),
+    };
   } catch (error) {
     console.warn('Unable to fetch ShipEngine tracking URL after label purchase.', {
       trackingNumber,
@@ -563,7 +593,12 @@ async function getShipEngineTrackingUrl(args: {
       carrierId: carrierId || null,
       error: error instanceof Error ? error.message : 'Unknown tracking lookup error',
     });
-    return null;
+    return {
+      trackingUrl: null,
+      estimatedDeliveryDate: null,
+      actualDeliveryDate: null,
+      shipDate: null,
+    };
   }
 }
 
@@ -685,6 +720,7 @@ export async function quoteShipEngineRates(args: {
         carrierCode: normalizeShipEngineValue(rate.carrier_code),
         serviceCode: normalizeShipEngineValue(rate.service_code),
         estimatedDays: rate.delivery_days ?? null,
+        estimatedDeliveryDate: normalizeShipEngineDate(rate.estimated_delivery_date),
         price,
         currencyCode: (rate.shipping_amount?.currency || args.currencyCode).toUpperCase(),
         source: 'shipengine',
@@ -759,7 +795,7 @@ export async function purchaseShipEngineLabel(args: {
   if (savedRateId && shouldReuseSavedRateId) {
     try {
       const label = await purchaseShipEngineLabelByRateId(savedRateId);
-      const trackingUrl = await getShipEngineTrackingUrl({
+      const trackingDetails = await getShipEngineTrackingDetails({
         trackingNumber: label.tracking_number,
         carrierCode:
           normalizeShipEngineValue(label.carrier_code) ||
@@ -777,7 +813,11 @@ export async function purchaseShipEngineLabel(args: {
           args.selectedShippingService.name ||
           normalizeShipEngineValue(label.service_code) ||
           null,
-        publicTrackingUrl: trackingUrl,
+        publicTrackingUrl: trackingDetails.trackingUrl,
+        estimatedDeliveryDate:
+          trackingDetails.estimatedDeliveryDate ||
+          args.selectedShippingService.estimatedDeliveryDate ||
+          null,
       };
     } catch (error) {
       if (isShipEngineTimeoutError(error)) {
@@ -845,7 +885,7 @@ export async function purchaseShipEngineLabel(args: {
 
   const label = await purchaseShipEngineLabelByRateId(selectedRate.rate_id);
 
-  const trackingUrl = await getShipEngineTrackingUrl({
+  const trackingDetails = await getShipEngineTrackingDetails({
     trackingNumber: label.tracking_number,
     carrierCode:
       normalizeShipEngineValue(label.carrier_code) ||
@@ -864,6 +904,11 @@ export async function purchaseShipEngineLabel(args: {
       selectedRate.service_type?.trim() ||
       normalizeShipEngineValue(selectedRate.service_code) ||
       null,
-    publicTrackingUrl: trackingUrl,
+    publicTrackingUrl: trackingDetails.trackingUrl,
+    estimatedDeliveryDate:
+      trackingDetails.estimatedDeliveryDate ||
+      normalizeShipEngineDate(selectedRate.estimated_delivery_date) ||
+      args.selectedShippingService.estimatedDeliveryDate ||
+      null,
   };
 }

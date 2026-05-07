@@ -729,6 +729,7 @@ function mapShippingService(
     shippoCarrierAccountId: service.shippoCarrierAccountId?.trim() || undefined,
     carrierPreferenceRank: service.carrierPreferenceRank,
     estimatedDays: service.estimatedDays,
+    estimatedDeliveryDate: service.estimatedDeliveryDate,
     pickup: service.pickup,
     price: {
       amount: Number(service.price.amount || 0).toFixed(2),

@@ -90,6 +90,7 @@ export type CheckoutShippingService = {
   shippoCarrierAccountId?: string;
   carrierPreferenceRank?: number;
   estimatedDays?: number | null;
+  estimatedDeliveryDate?: string | null;
   price: Money;
   originalPrice?: Money;
   taxAmount?: Money;
@@ -362,6 +363,7 @@ export type CheckoutOrderShipEngine = {
   publicTrackingUrl?: string;
   labelPurchasedAt?: string;
   labelEmailSentAt?: string;
+  estimatedDeliveryDate?: string;
   labelError?: string;
   handedToCarrierAt?: string;
   packedAt?: string;
@@ -379,6 +381,7 @@ export type CheckoutOrderFulfillment = {
   publicTrackingUrl?: string;
   labelPurchasedAt?: string;
   labelEmailSentAt?: string;
+  estimatedDeliveryDate?: string;
   labelError?: string;
   handedToCarrierAt?: string;
   packedAt?: string;
