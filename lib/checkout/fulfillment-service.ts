@@ -43,6 +43,7 @@ import {
 import type {
   CheckoutOrderLine,
   CheckoutOrderRecord,
+  CheckoutProcessingStepState,
   CheckoutShippingAddress,
   CheckoutShippingService,
   FulfillmentStatus,
@@ -87,6 +88,7 @@ function mergeFulfillmentWithLegacyShipengine(
     service: fulfillment.service || shipengine.service,
     publicTrackingUrl: fulfillment.publicTrackingUrl || shipengine.publicTrackingUrl,
     labelPurchasedAt: fulfillment.labelPurchasedAt || shipengine.labelPurchasedAt,
+    labelEmailSentAt: fulfillment.labelEmailSentAt || shipengine.labelEmailSentAt,
     labelError: fulfillment.labelError || shipengine.labelError,
     handedToCarrierAt: fulfillment.handedToCarrierAt || shipengine.handedToCarrierAt,
     packedAt: fulfillment.packedAt || shipengine.packedAt,
@@ -98,6 +100,24 @@ function mergeFulfillmentWithLegacyShipengine(
 
 function resolveOrderFulfillment(order: Pick<CheckoutOrderRecord, 'fulfillment' | 'shipengine'>) {
   return mergeFulfillmentWithLegacyShipengine(order.fulfillment, order.shipengine);
+}
+
+async function updateFulfillmentEmailSentAt(
+  orderId: string,
+  key: 'labelEmailSentAt' | 'shippedEmailSentAt',
+  sentAt = new Date().toISOString(),
+) {
+  await updateCheckoutOrder(orderId, (current) => ({
+    ...current,
+    fulfillment: {
+      ...(current.fulfillment || current.shipengine),
+      [key]: sentAt,
+    },
+    shipengine: {
+      ...(current.shipengine || {}),
+      [key]: sentAt,
+    },
+  }));
 }
 
 function mirrorFulfillmentToLegacyShipengine(
@@ -112,6 +132,7 @@ function mirrorFulfillmentToLegacyShipengine(
     service: fulfillment.service,
     publicTrackingUrl: fulfillment.publicTrackingUrl,
     labelPurchasedAt: fulfillment.labelPurchasedAt,
+    labelEmailSentAt: fulfillment.labelEmailSentAt,
     labelError: fulfillment.labelError,
     handedToCarrierAt: fulfillment.handedToCarrierAt,
     packedAt: fulfillment.packedAt,
@@ -139,6 +160,15 @@ function getOrderItemCount(order: Pick<CheckoutOrderRecord, 'lines'>) {
   );
 }
 
+function getCompletedProcessingStepAt(
+  step: CheckoutProcessingStepState | undefined,
+  fallback: Date,
+) {
+  return step?.status === 'completed'
+    ? step.completedAt || fallback.toISOString()
+    : null;
+}
+
 export type FulfillmentOrderListItem = {
   orderId: string;
   orderNumber: string;
@@ -159,6 +189,9 @@ export type FulfillmentOrderListItem = {
   commercialInvoiceUrl: string | null;
   publicTrackingUrl: string | null;
   labelPurchasedAt: string | null;
+  confirmationEmailSentAt: string | null;
+  labelEmailSentAt: string | null;
+  shippedEmailSentAt: string | null;
   handedToCarrierAt: string | null;
   packedAt: string | null;
   inventoryConsumption: FulfillmentInventoryConsumption[];
@@ -230,7 +263,9 @@ function rowToListItem(row: FulfillmentOrderRow): FulfillmentOrderListItem {
     provider?: string;
     payoutMethod?: string;
     paymentMethod?: string;
+    __processing?: CheckoutOrderRecord['processing'];
   } | null;
+  const processing = payment?.__processing;
 
   return {
     orderId: row.orderId,
@@ -252,6 +287,16 @@ function rowToListItem(row: FulfillmentOrderRow): FulfillmentOrderListItem {
     commercialInvoiceUrl: fulfillment?.commercialInvoiceUrl || null,
     publicTrackingUrl: fulfillmentDetails?.publicTrackingUrl || null,
     labelPurchasedAt: fulfillmentDetails?.labelPurchasedAt || null,
+    confirmationEmailSentAt: getCompletedProcessingStepAt(
+      processing?.confirmationEmail,
+      row.updatedAt,
+    ),
+    labelEmailSentAt:
+      fulfillmentDetails?.labelEmailSentAt ||
+      getCompletedProcessingStepAt(processing?.shippingLabelEmail, row.updatedAt),
+    shippedEmailSentAt:
+      fulfillmentDetails?.shippedEmailSentAt ||
+      getCompletedProcessingStepAt(processing?.shippedEmail, row.updatedAt),
     handedToCarrierAt: fulfillmentDetails?.handedToCarrierAt || null,
     packedAt: fulfillmentDetails?.packedAt || null,
     inventoryConsumption: [],
@@ -1045,18 +1090,7 @@ export async function markOrderShipped(args: {
   // 3. Send customer shipped email
   try {
     await sendOrderShippedEmail(updatedOrder);
-
-    await updateCheckoutOrder(args.orderId, (current) => ({
-      ...current,
-      fulfillment: {
-        ...(current.fulfillment || current.shipengine),
-        shippedEmailSentAt: new Date().toISOString(),
-      },
-      shipengine: {
-        ...current.shipengine,
-        shippedEmailSentAt: new Date().toISOString(),
-      },
-    }));
+    await updateFulfillmentEmailSentAt(args.orderId, 'shippedEmailSentAt');
   } catch (error) {
     console.error(
       `[fulfillment] Failed to send shipped email for ${args.orderId}:`,
@@ -1089,6 +1123,8 @@ export async function resendLabelEmail(orderId: string) {
       publicTrackingUrl: fulfillment?.publicTrackingUrl,
     },
   });
+
+  await updateFulfillmentEmailSentAt(orderId, 'labelEmailSentAt');
 }
 
 export async function resendShippedEmail(orderId: string) {
@@ -1103,7 +1139,17 @@ export async function resendShippedEmail(orderId: string) {
     );
   }
 
-  await sendOrderShippedEmail(order);
+  const fulfillment = resolveOrderFulfillment(order);
+  await sendOrderShippedEmail(order, {
+    idempotencyKey: [
+      'order-shipped-resend',
+      order.orderId,
+      fulfillment?.trackingCode || order.shipengine?.trackingCode || 'pending',
+      randomUUID(),
+    ].join('-'),
+  });
+
+  await updateFulfillmentEmailSentAt(orderId, 'shippedEmailSentAt');
 }
 
 export async function retryOrderLabelPurchase(orderId: string) {
@@ -1467,6 +1513,7 @@ export async function updateShippingAddressAndPurchaseLabel(args: {
             publicTrackingUrl: fulfillment.publicTrackingUrl,
           },
         });
+        await updateFulfillmentEmailSentAt(args.orderId, 'labelEmailSentAt');
       } catch (error) {
         console.error(
           `[fulfillment] Failed to send label email for ${args.orderId}:`,

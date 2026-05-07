@@ -3,6 +3,7 @@ import { hasLoopsConfig, sendTransactionalEmail } from '@/lib/email/loops';
 import {
   buildOrderConfirmationDataVariables,
   buildOrderShippedDataVariables,
+  getOrderTrackingDetails,
 } from '@/lib/email/order-email-payloads';
 
 function getSiteUrl() {
@@ -91,10 +92,11 @@ export function buildOrderDataVariables(order: CheckoutOrderRecord) {
     vars.landedCost = '$0.00';
   }
 
-  if (order.shipengine?.trackingCode) {
-    vars.trackingCode = order.shipengine.trackingCode;
-    vars.carrier = order.shipengine.carrier || '';
-    vars.trackingUrl = order.shipengine.publicTrackingUrl || '';
+  const tracking = getOrderTrackingDetails(order);
+  if (tracking.trackingCode) {
+    vars.trackingCode = tracking.trackingCode;
+    vars.carrier = tracking.carrier;
+    vars.trackingUrl = tracking.trackingUrl;
   } else {
     vars.trackingCode = '';
     vars.carrier = '';
@@ -158,7 +160,10 @@ export async function sendOrderConfirmationEmail(order: CheckoutOrderRecord) {
   });
 }
 
-export async function sendOrderShippedEmail(order: CheckoutOrderRecord) {
+export async function sendOrderShippedEmail(
+  order: CheckoutOrderRecord,
+  options?: { idempotencyKey?: string | null },
+) {
   if (!hasLoopsConfig()) {
     console.warn('Skipping order shipped email: Loops not configured.');
     return null;
@@ -181,7 +186,9 @@ export async function sendOrderShippedEmail(order: CheckoutOrderRecord) {
     transactionalId,
     dataVariables: buildOrderShippedDataVariables(order),
     headers: {
-      'Idempotency-Key': `order-shipped-${order.orderId}-${order.shipengine?.trackingCode || 'pending'}`,
+      'Idempotency-Key':
+        options?.idempotencyKey ||
+        `order-shipped-${order.orderId}-${getOrderTrackingDetails(order).trackingCode || 'pending'}`,
     },
   });
 }

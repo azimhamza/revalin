@@ -52,6 +52,15 @@ function formatCurrency(amount: string, currencyCode: string) {
   }).format(Number(amount));
 }
 
+function formatShortDateTime(value: string) {
+  return new Intl.DateTimeFormat('en-CA', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
 function StatusBadge({ status }: { status: string | null }) {
   const colors: Record<string, string> = {
     pending: 'bg-gray-100 text-gray-600',
@@ -80,6 +89,48 @@ function StatusBadge({ status }: { status: string | null }) {
     >
       {labels[status || ''] || status || 'Unknown'}
     </span>
+  );
+}
+
+function EmailStatusLine({
+  label,
+  sentAt,
+}: {
+  label: string;
+  sentAt: string | null;
+}) {
+  const sent = Boolean(sentAt);
+
+  return (
+    <div
+      className="flex min-w-[150px] items-center justify-between gap-2"
+      title={sentAt ? `${label} sent ${formatShortDateTime(sentAt)}` : `${label} not sent yet`}
+    >
+      <span className="text-[11px] text-[#0B2E2F]/50">{label}</span>
+      <span
+        className={cn(
+          'rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+          sent
+            ? 'bg-green-50 text-green-700'
+            : 'bg-amber-50 text-amber-700',
+        )}
+      >
+        {sentAt ? `Sent ${formatShortDateTime(sentAt)}` : 'Not sent'}
+      </span>
+    </div>
+  );
+}
+
+function EmailStatusSummary({ order }: { order: FulfillmentOrderListItem }) {
+  return (
+    <div className="space-y-1">
+      <EmailStatusLine
+        label="Confirmation"
+        sentAt={order.confirmationEmailSentAt}
+      />
+      <EmailStatusLine label="Label" sentAt={order.labelEmailSentAt} />
+      <EmailStatusLine label="Shipped" sentAt={order.shippedEmailSentAt} />
+    </div>
   );
 }
 
@@ -863,6 +914,7 @@ export function FulfillmentTable({
               <th className="px-4 py-3">Tracking</th>
               <th className="px-4 py-3">Inventory</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Emails</th>
               <th className="px-4 py-3">Age</th>
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
@@ -871,7 +923,7 @@ export function FulfillmentTable({
             {orders.length === 0 ? (
               <tr>
                 <td
-                  colSpan={10}
+                  colSpan={11}
                   className="px-4 py-12 text-center text-[#0B2E2F]/40"
                 >
                   No orders in this queue.
@@ -999,6 +1051,9 @@ export function FulfillmentTable({
                       {order.labelError}
                     </p>
                   ) : null}
+                </td>
+                <td className="px-4 py-3">
+                  <EmailStatusSummary order={order} />
                 </td>
                 <td className="px-4 py-3 text-[#0B2E2F]/50">
                   {formatAge(order.createdAt)}

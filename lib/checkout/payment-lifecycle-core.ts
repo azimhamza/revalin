@@ -496,6 +496,19 @@ export function createPaymentLifecycle(
         publicTrackingUrl: order.shipengine?.publicTrackingUrl,
       },
     });
+
+    const sentAt = new Date().toISOString();
+    await dependencies.updateCheckoutOrder(order.orderId, current => ({
+      ...current,
+      fulfillment: {
+        ...(current.fulfillment || current.shipengine),
+        labelEmailSentAt: sentAt,
+      },
+      shipengine: {
+        ...(current.shipengine || {}),
+        labelEmailSentAt: sentAt,
+      },
+    }));
   }
 
   async function performProcessingStep(
@@ -567,9 +580,22 @@ export function createPaymentLifecycle(
         await applyShippingLabelEmail(order);
         return { status: 'completed' };
 
-      case 'shippedEmail':
+      case 'shippedEmail': {
         await dependencies.sendOrderShippedEmail(order);
+        const shippedEmailSentAt = new Date().toISOString();
+        await dependencies.updateCheckoutOrder(order.orderId, current => ({
+          ...current,
+          fulfillment: {
+            ...(current.fulfillment || current.shipengine),
+            shippedEmailSentAt,
+          },
+          shipengine: {
+            ...(current.shipengine || {}),
+            shippedEmailSentAt,
+          },
+        }));
         return { status: 'completed' };
+      }
     }
   }
 

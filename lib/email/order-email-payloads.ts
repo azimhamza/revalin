@@ -64,6 +64,68 @@ function estimateDeliveryDate(shippedAt?: string | null, estimatedDays?: number 
   return parsed.toISOString().slice(0, 10);
 }
 
+function buildCarrierTrackingUrl(args: {
+  carrier?: string | null;
+  carrierCode?: string | null;
+  trackingCode?: string | null;
+}) {
+  const trackingCode = args.trackingCode?.trim();
+  if (!trackingCode) return "";
+
+  const encodedTrackingCode = encodeURIComponent(trackingCode);
+  const carrier = `${args.carrier || ""} ${args.carrierCode || ""}`.toLowerCase();
+
+  if (carrier.includes("purolator")) {
+    return `https://www.purolator.com/en/shipping/tracker?pins=${encodedTrackingCode}`;
+  }
+
+  if (carrier.includes("canada") && carrier.includes("post")) {
+    return `https://www.canadapost-postescanada.ca/track-reperage/en#/search?searchFor=${encodedTrackingCode}`;
+  }
+
+  if (carrier.includes("ups")) {
+    return `https://www.ups.com/track?tracknum=${encodedTrackingCode}`;
+  }
+
+  if (carrier.includes("fedex")) {
+    return `https://www.fedex.com/fedextrack/?trknbr=${encodedTrackingCode}`;
+  }
+
+  if (carrier.includes("usps")) {
+    return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodedTrackingCode}`;
+  }
+
+  if (carrier.includes("dhl")) {
+    return `https://www.dhl.com/global-en/home/tracking/tracking-express.html?submit=1&tracking-id=${encodedTrackingCode}`;
+  }
+
+  return "";
+}
+
+export function getOrderTrackingDetails(order: CheckoutOrderRecord) {
+  const fulfillment = {
+    ...(order.shipengine || {}),
+    ...(order.fulfillment || {}),
+  };
+  const carrier = fulfillment.carrier || order.shippingService?.carrier || "";
+  const trackingCode = fulfillment.trackingCode || "";
+  const trackingUrl =
+    fulfillment.publicTrackingUrl?.trim() ||
+    buildCarrierTrackingUrl({
+      carrier,
+      carrierCode: order.shippingService?.carrierCode,
+      trackingCode,
+    });
+  const shippedAt = fulfillment.handedToCarrierAt || fulfillment.labelPurchasedAt || "";
+
+  return {
+    carrier,
+    trackingCode,
+    trackingUrl,
+    shippedAt,
+  };
+}
+
 export function buildOrderConfirmationDataVariables(order: CheckoutOrderRecord) {
   const shippingAmount = order.totals.shippingAmount
     ? formatCurrency(order.totals.shippingAmount.amount, order.currencyCode)
@@ -122,20 +184,23 @@ export function buildOrderShippedDataVariables(order: CheckoutOrderRecord) {
     order.totals.discountAmount && Number(order.totals.discountAmount.amount) > 0
       ? `-${formatCurrency(order.totals.discountAmount.amount, order.currencyCode)}`
       : "$0.00";
-  const shippedAt = formatEmailDate(order.shipengine?.handedToCarrierAt || order.shipengine?.labelPurchasedAt);
-  const deliveryDate = estimateDeliveryDate(order.shipengine?.handedToCarrierAt || order.shipengine?.labelPurchasedAt, order.shippingService?.estimatedDays);
+  const tracking = getOrderTrackingDetails(order);
+  const shippedAt = formatEmailDate(tracking.shippedAt);
+  const deliveryDate = estimateDeliveryDate(tracking.shippedAt, order.shippingService?.estimatedDays);
 
   const vars: Record<string, string | number | Array<Record<string, string | number>>> = {
     order_number: order.swell.orderNumber || order.orderId,
     shipping: [
       {
-        carrier: order.shipengine?.carrier || order.shippingService?.carrier || "",
-        tracking_number: order.shipengine?.trackingCode || "",
+        carrier: tracking.carrier,
+        tracking_number: tracking.trackingCode,
+        tracking_url: tracking.trackingUrl,
         shipped_at: shippedAt,
         delivery_date: deliveryDate,
       },
     ],
-    tracking_link: order.shipengine?.publicTrackingUrl || "",
+    tracking_link: tracking.trackingUrl,
+    tracking_url: tracking.trackingUrl,
     items: buildOrderItems(order),
     subtotal: formatCurrency(order.totals.subtotalAmount.amount, order.currencyCode),
     shipping_total: shippingAmount,

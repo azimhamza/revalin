@@ -361,6 +361,7 @@ export type CheckoutOrderShipEngine = {
   service?: string;
   publicTrackingUrl?: string;
   labelPurchasedAt?: string;
+  labelEmailSentAt?: string;
   labelError?: string;
   handedToCarrierAt?: string;
   packedAt?: string;
@@ -377,6 +378,7 @@ export type CheckoutOrderFulfillment = {
   service?: string;
   publicTrackingUrl?: string;
   labelPurchasedAt?: string;
+  labelEmailSentAt?: string;
   labelError?: string;
   handedToCarrierAt?: string;
   packedAt?: string;
