@@ -1,3 +1,5 @@
+import crypto, { timingSafeEqual } from 'node:crypto';
+
 import { apiError } from '@/lib/api/errors';
 import { providerFetch } from '@/lib/api/provider-client';
 
@@ -52,6 +54,37 @@ export type BankfulSaleInput = {
   billingAddress: BankfulBillingAddressInput;
 };
 
+export type BankfulHostedPaymentInput = {
+  amount: string;
+  currency: string;
+  xtlOrderId: string;
+  customer: {
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+  };
+  billingAddress: BankfulBillingAddressInput;
+  shippingAddress?: BankfulBillingAddressInput & {
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+  };
+  urls: {
+    cancel: string;
+    complete: string;
+    failed: string;
+    pending: string;
+    callback: string;
+  };
+};
+
+export type BankfulHostedPaymentResponse = {
+  redirectUrl: string;
+  raw: Record<string, string>;
+};
+
 const DEFAULT_BANKFUL_BASE_URL = 'https://api.paybybankful.com';
 
 function getBankfulBaseUrl() {
@@ -63,19 +96,48 @@ function getBankfulBaseUrl() {
   return configured.replace(/\/$/, '');
 }
 
-function getBankfulCredentials() {
+function getBankfulUsername() {
   const username = process.env.BANKFUL_API_KEY?.trim();
-  const password = process.env.BANKFUL_SECRET_KEY?.trim();
-
-  if (!username || !password) {
+  if (!username) {
     throw apiError.providerUnavailable(
       'Bankful credentials are not configured.',
-      { provider: 'bankful', missing: !username ? 'BANKFUL_API_KEY' : 'BANKFUL_SECRET_KEY' },
+      { provider: 'bankful', missing: 'BANKFUL_API_KEY' },
+      false,
+    );
+  }
+
+  return username;
+}
+
+function getBankfulCredentials() {
+  const username = getBankfulUsername();
+  const password = process.env.BANKFUL_SECRET_KEY?.trim();
+
+  if (!password) {
+    throw apiError.providerUnavailable(
+      'Bankful credentials are not configured.',
+      { provider: 'bankful', missing: 'BANKFUL_SECRET_KEY' },
       false,
     );
   }
 
   return { username, password };
+}
+
+function getBankfulHostedSecret() {
+  const secret =
+    process.env.BANKFUL_HOSTED_SECRET?.trim() ||
+    process.env.BANKFUL_SECRET_KEY?.trim();
+
+  if (!secret) {
+    throw apiError.providerUnavailable(
+      'Bankful hosted checkout signing secret is not configured.',
+      { provider: 'bankful', missing: 'BANKFUL_HOSTED_SECRET' },
+      false,
+    );
+  }
+
+  return secret;
 }
 
 function normalizeDigits(value: string) {
@@ -160,6 +222,18 @@ async function parseBankfulResponse(response: Response) {
   return responseRecordFromText(text);
 }
 
+export function bankfulRecordFromSearchParams(params: URLSearchParams) {
+  const result: Record<string, string> = {};
+  params.forEach((value, key) => {
+    result[key] = value;
+  });
+  return result;
+}
+
+export function bankfulRecordFromFormText(text: string) {
+  return bankfulRecordFromSearchParams(new URLSearchParams(text));
+}
+
 function field(record: Record<string, string>, key: string) {
   return nonEmpty(record[key]) ?? null;
 }
@@ -214,6 +288,142 @@ export function bankfulResponseSnapshot(response: BankfulTransactionResponse) {
     serviceAdvice: response.serviceAdvice ?? null,
     processorAdvice: response.processorAdvice ?? null,
     errorMessage: response.errorMessage ?? null,
+  };
+}
+
+export function createBankfulHostedSignature(
+  payload: Record<string, string | number | null | undefined>,
+  secret = getBankfulHostedSecret(),
+) {
+  const message = Object.entries(payload)
+    .filter(([key, value]) => (
+      key.toLowerCase() !== 'signature' &&
+      value !== undefined &&
+      value !== null &&
+      String(value) !== ''
+    ))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}${String(value)}`)
+    .join('');
+
+  return crypto.createHmac('sha256', secret).update(message).digest('hex');
+}
+
+function getBankfulSignature(record: Record<string, string>) {
+  return field(record, 'SIGNATURE') || field(record, 'signature');
+}
+
+export function verifyBankfulHostedSignature(
+  record: Record<string, string>,
+  secret = getBankfulHostedSecret(),
+) {
+  const signature = getBankfulSignature(record);
+  if (!signature) return false;
+
+  const expected = createBankfulHostedSignature(record, secret);
+  const actualBuffer = Buffer.from(signature.trim().toLowerCase(), 'hex');
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  if (actualBuffer.length !== expectedBuffer.length || actualBuffer.length === 0) {
+    return false;
+  }
+
+  return timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+export function bankfulHostedErrorMessage(record: Record<string, string>) {
+  return (
+    field(record, 'errorMessage') ||
+    field(record, 'ERROR_MESSAGE') ||
+    field(record, 'PROCESSOR_ADVICE') ||
+    field(record, 'SERVICE_ADVICE') ||
+    field(record, 'API_ADVICE')
+  );
+}
+
+export async function createBankfulHostedPayment(
+  input: BankfulHostedPaymentInput,
+): Promise<BankfulHostedPaymentResponse> {
+  const username = getBankfulUsername();
+  const bodyFields: Record<string, string | undefined> = {
+    req_username: username,
+    transaction_type: 'CAPTURE',
+    amount: normalizeAmount(input.amount),
+    request_currency: input.currency.trim().toUpperCase(),
+    xtl_order_id: input.xtlOrderId,
+    cust_fname: nonEmpty(input.customer.firstName),
+    cust_lname: nonEmpty(input.customer.lastName),
+    cust_email: nonEmpty(input.customer.email),
+    cust_phone: nonEmpty(input.customer.phone)?.replace(/[^\d+]/g, ''),
+    bill_addr: nonEmpty(formatBankfulStreetAddress(input.billingAddress)),
+    bill_addr_2: nonEmpty(input.billingAddress.address2),
+    bill_addr_city: nonEmpty(input.billingAddress.city),
+    bill_addr_state: nonEmpty(input.billingAddress.province),
+    bill_addr_zip: nonEmpty(input.billingAddress.postalCode),
+    bill_addr_country: nonEmpty(input.billingAddress.country),
+    ship_fname: nonEmpty(input.shippingAddress?.firstName),
+    ship_lname: nonEmpty(input.shippingAddress?.lastName),
+    ship_email: nonEmpty(input.shippingAddress?.email),
+    ship_phone: nonEmpty(input.shippingAddress?.phone)?.replace(/[^\d+]/g, ''),
+    ship_addr: input.shippingAddress
+      ? nonEmpty(formatBankfulStreetAddress(input.shippingAddress))
+      : undefined,
+    ship_addr_2: nonEmpty(input.shippingAddress?.address2),
+    ship_addr_city: nonEmpty(input.shippingAddress?.city),
+    ship_addr_state: nonEmpty(input.shippingAddress?.province),
+    ship_addr_zip: nonEmpty(input.shippingAddress?.postalCode),
+    ship_addr_country: nonEmpty(input.shippingAddress?.country),
+    url_cancel: input.urls.cancel,
+    url_complete: input.urls.complete,
+    url_failed: input.urls.failed,
+    url_pending: input.urls.pending,
+    url_callback: input.urls.callback,
+    cart_name: 'Hosted-Page',
+    return_redirect_url: 'Y',
+  };
+
+  const signature = createBankfulHostedSignature(bodyFields);
+  const body = new URLSearchParams();
+  for (const [key, value] of Object.entries(bodyFields)) {
+    if (value) body.set(key, value);
+  }
+  body.set('signature', signature);
+
+  const response = await providerFetch(
+    `${getBankfulBaseUrl()}/front-calls/go-in/hosted-page-pay`,
+    {
+      provider: 'bankful',
+      operation: 'hosted-payment',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      },
+      body,
+      cache: 'no-store',
+      retryable: false,
+      timeoutMs: 15_000,
+    },
+  );
+
+  const record = await parseBankfulResponse(response);
+  const redirectUrl = field(record, 'redirect_url') || field(record, 'REDIRECT_URL');
+  const errorMessage = bankfulHostedErrorMessage(record);
+  const hostedStatus = field(record, 'status') || field(record, 'STATUS');
+
+  if (!response.ok || !redirectUrl || hostedStatus?.toLowerCase() === 'error') {
+    throw apiError.providerUnavailable(
+      errorMessage || `Bankful hosted checkout failed with status ${response.status}.`,
+      {
+        provider: 'bankful',
+        status: response.status,
+        response: record,
+      },
+      response.status >= 500,
+    );
+  }
+
+  return {
+    redirectUrl,
+    raw: record,
   };
 }
 

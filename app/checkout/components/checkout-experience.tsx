@@ -109,11 +109,6 @@ type CheckoutCartSnapshot = {
   lines: CheckoutOrderPublic['lines'];
 };
 
-type CheckoutBillingAddress = Pick<
-  CheckoutShippingAddress,
-  'address1' | 'address2' | 'city' | 'province' | 'postalCode' | 'country'
->;
-
 type AppliedDiscount = {
   code: string;
   amount: string;
@@ -344,41 +339,10 @@ const DEFAULT_SHIPPING_ADDRESS: CheckoutShippingAddress = {
   notes: '',
 };
 
-const DEFAULT_BILLING_ADDRESS: CheckoutBillingAddress = {
-  address1: '',
-  address2: '',
-  city: '',
-  province: '',
-  postalCode: '',
-  country: 'CA',
-};
-
 function normalizeShippingAddressDraft(value: Partial<CheckoutShippingAddress> | null | undefined): CheckoutShippingAddress {
   return {
     ...DEFAULT_SHIPPING_ADDRESS,
     ...(value || {}),
-  };
-}
-
-function billingAddressFromShipping(address: CheckoutShippingAddress): CheckoutBillingAddress {
-  return {
-    address1: address.address1,
-    address2: address.address2 || '',
-    city: address.city,
-    province: address.province,
-    postalCode: address.postalCode,
-    country: address.country,
-  };
-}
-
-function normalizeBillingAddressForPayment(address: CheckoutBillingAddress): CheckoutBillingAddress {
-  return {
-    address1: address.address1.trim(),
-    address2: address.address2?.trim() || '',
-    city: address.city.trim(),
-    province: address.province.trim(),
-    postalCode: address.postalCode.trim(),
-    country: address.country.trim().toUpperCase(),
   };
 }
 
@@ -747,36 +711,6 @@ function formatTicker(value: string) {
   return normalized;
 }
 
-function normalizeCardNumberInput(value: string) {
-  return value
-    .replace(/\D/g, '')
-    .slice(0, 19)
-    .replace(/(.{4})/g, '$1 ')
-    .trim();
-}
-
-function normalizeCardExpiryInput(value: string) {
-  const digits = value.replace(/\D/g, '').slice(0, 4);
-  if (digits.length <= 2) return digits;
-  return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-}
-
-function parseCardExpiry(value: string) {
-  const digits = value.replace(/\D/g, '');
-  const month = digits.slice(0, 2);
-  const year = digits.slice(2, 4);
-  if (month.length < 1 || year.length !== 2) return null;
-  const monthNumber = Number(month);
-  if (!Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 12) {
-    return null;
-  }
-
-  return {
-    expiryMonth: month.padStart(2, '0'),
-    expiryYear: year,
-  };
-}
-
 function normalizeCarrierBrandKey(value?: string | null) {
   if (!value) return '';
 
@@ -917,16 +851,6 @@ function isShippingAddressReady(address: CheckoutShippingAddress) {
   );
 }
 
-function isBillingAddressReady(address: CheckoutBillingAddress) {
-  return Boolean(
-    address.address1.trim() &&
-      address.city.trim() &&
-      (!isProvinceRequired(address.country) || address.province.trim()) &&
-      address.postalCode.trim() &&
-      address.country.trim()
-  );
-}
-
 function ShippingField({
   label,
   name,
@@ -955,40 +879,6 @@ function ShippingField({
         ref={inputRef}
         type={type}
         name={name}
-        value={value || ''}
-        onChange={event => onChange(name, event.target.value)}
-        autoComplete={autoComplete}
-        placeholder={placeholder}
-        required={required}
-        className="h-11 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
-      />
-    </label>
-  );
-}
-
-function BillingAddressField({
-  label,
-  name,
-  value,
-  onChange,
-  autoComplete,
-  placeholder,
-  required = true,
-}: {
-  label: string;
-  name: keyof CheckoutBillingAddress;
-  value: string | undefined;
-  onChange: (name: keyof CheckoutBillingAddress, value: string) => void;
-  autoComplete?: string;
-  placeholder?: string;
-  required?: boolean;
-}) {
-  return (
-    <label className="flex flex-col gap-1.5">
-      <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">{label}</span>
-      <input
-        type="text"
-        name={`billing-${name}`}
         value={value || ''}
         onChange={event => onChange(name, event.target.value)}
         autoComplete={autoComplete}
@@ -1260,12 +1150,6 @@ export function CheckoutExperience({
   const [adminShippingDisabled, setAdminShippingDisabled] = useState(false);
   const [isSubmittingInterac, setIsSubmittingInterac] = useState(false);
   const [isUploadingInteracScreenshot, setIsUploadingInteracScreenshot] = useState(false);
-  const [cardholderName, setCardholderName] = useState('');
-  const [cardBillingSameAsShipping, setCardBillingSameAsShipping] = useState(true);
-  const [cardBillingAddress, setCardBillingAddress] = useState<CheckoutBillingAddress>(DEFAULT_BILLING_ADDRESS);
-  const [cardNumber, setCardNumber] = useState('');
-  const [cardExpiry, setCardExpiry] = useState('');
-  const [cardCvv, setCardCvv] = useState('');
   const [discountCode, setDiscountCode] = useState(initialDiscountCode);
   const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
   const [ageVerified, setAgeVerified] = useState(false);
@@ -2410,7 +2294,9 @@ export function CheckoutExperience({
       ? getPollingId(checkoutSession.order.payment)
       : undefined;
   const shouldUseFastHostedPolling =
-    checkoutSession?.order.payment ? isSquareOrder(checkoutSession.order.payment) : false;
+    checkoutSession?.order.payment
+      ? isSquareOrder(checkoutSession.order.payment) || isBankfulOrder(checkoutSession.order.payment)
+      : false;
 
   useEffect(() => {
     if (!autoPollingId || !checkoutSession || isTerminalPaymentStatus(checkoutSession.order.payment.status)) {
@@ -2584,23 +2470,6 @@ export function CheckoutExperience({
     setShippingAddress(current => ({ ...current, [name]: value }));
     if (!activeOrder) {
       resetQuoteState();
-    }
-  };
-
-  const handleCardBillingSameAsShippingChange = (checked: boolean) => {
-    setCardBillingSameAsShipping(checked);
-    if (!checked) {
-      setCardBillingAddress(billingAddressFromShipping(shippingAddress));
-    }
-    if (error === 'Enter a complete billing address.') {
-      setError(null);
-    }
-  };
-
-  const handleCardBillingAddressChange = (name: keyof CheckoutBillingAddress, value: string) => {
-    setCardBillingAddress(current => ({ ...current, [name]: value }));
-    if (error === 'Enter a complete billing address.') {
-      setError(null);
     }
   };
 
@@ -3180,14 +3049,7 @@ export function CheckoutExperience({
     shippingAddress,
   ]);
 
-  const submitCheckoutPayment = useCallback(async (cardInput?: {
-    number: string;
-    cvv: string;
-    expiryMonth: string;
-    expiryYear: string;
-    cardholderName?: string;
-    billingAddress?: CheckoutBillingAddress;
-  }) => {
+  const submitCheckoutPayment = useCallback(async () => {
     if (paymentMethod === 'card' && !cardProcessingEnabled) {
       setError(getCardProcessingUnavailableMessage());
       return;
@@ -3234,7 +3096,6 @@ export function CheckoutExperience({
             },
             body: JSON.stringify({
               ...finalizePayload,
-              ...(paymentMethod === 'card' && cardInput ? { card: cardInput } : {}),
               sessionKey: targetSession.sessionKey,
               version: targetSession.version,
             }),
@@ -3260,7 +3121,7 @@ export function CheckoutExperience({
       const { response, payload } = result;
 
       if (!response.ok) {
-        console.error('[CHECKOUT] create-payment failed:', response.status, payload);
+        console.warn('[CHECKOUT] create-payment failed:', response.status, payload);
         const message = getApiErrorMessage(payload, 'Unable to create payment.');
         const fallbackUnlock =
           paymentMethod === 'card' && cardSquareFallbackEnabled
@@ -3340,14 +3201,6 @@ export function CheckoutExperience({
       } else {
         setSourceWalletAddress('');
       }
-      if (isBankfulOrder(data.order.payment)) {
-        setCardholderName('');
-        setCardBillingSameAsShipping(true);
-        setCardBillingAddress(DEFAULT_BILLING_ADDRESS);
-        setCardNumber('');
-        setCardExpiry('');
-        setCardCvv('');
-      }
       if (data.order.totals.discountCode) {
         setDiscountCode(data.order.totals.discountCode);
       }
@@ -3362,7 +3215,9 @@ export function CheckoutExperience({
         data.redirectUrl ||
         (isSquareOrder(data.order.payment)
           ? data.order.payment.checkoutUrl
-          : isShieldClimbOrder(data.order.payment)
+          : isBankfulOrder(data.order.payment)
+            ? data.order.payment.redirectUrl
+            : isShieldClimbOrder(data.order.payment)
             ? data.order.payment.redirectUrl
             : null);
 
@@ -3436,7 +3291,8 @@ export function CheckoutExperience({
     }
 
     if (paymentMethod === 'card') {
-      await continueToCardCheckout();
+      shieldClimbPaymentWindow.current = openHostedPaymentWindowPlaceholder();
+      await submitCheckoutPayment();
       return;
     }
 
@@ -3451,58 +3307,6 @@ export function CheckoutExperience({
 
     await submitCheckoutPayment();
   };
-
-  const continueToCardCheckout = useCallback(async () => {
-    if (isCreatingPayment) return;
-
-    if (!cardProcessingEnabled) {
-      setError(getCardProcessingUnavailableMessage());
-      return;
-    }
-
-    const parsedExpiry = parseCardExpiry(cardExpiry);
-    const normalizedCardholderName = cardholderName.trim().replace(/\s+/g, ' ');
-    const normalizedNumber = cardNumber.replace(/\D/g, '');
-    const normalizedCvv = cardCvv.replace(/\D/g, '');
-
-    if (!normalizedCardholderName) {
-      setError('Enter the name on the card.');
-      return;
-    }
-
-    if (!cardBillingSameAsShipping && !isBillingAddressReady(cardBillingAddress)) {
-      setError('Enter a complete billing address.');
-      return;
-    }
-
-    if (normalizedNumber.length < 12 || !parsedExpiry || normalizedCvv.length < 3) {
-      setError('Enter valid card number, expiry, and CVV.');
-      return;
-    }
-
-    const billingAddress = cardBillingSameAsShipping
-      ? undefined
-      : normalizeBillingAddressForPayment(cardBillingAddress);
-
-    await submitCheckoutPayment({
-      number: normalizedNumber,
-      cvv: normalizedCvv,
-      expiryMonth: parsedExpiry.expiryMonth,
-      expiryYear: parsedExpiry.expiryYear,
-      cardholderName: normalizedCardholderName,
-      ...(billingAddress ? { billingAddress } : {}),
-    });
-  }, [
-    cardBillingAddress,
-    cardBillingSameAsShipping,
-    cardCvv,
-    cardProcessingEnabled,
-    cardExpiry,
-    cardholderName,
-    cardNumber,
-    isCreatingPayment,
-    submitCheckoutPayment,
-  ]);
 
   const refreshStatus = async () => {
     if (!pollingId || !checkoutSession) return;
@@ -3763,8 +3567,22 @@ export function CheckoutExperience({
   const bankfulPayment = activeOrder?.payment && isBankfulOrder(activeOrder.payment) ? activeOrder.payment : null;
   const squarePayment = activeOrder?.payment && isSquareOrder(activeOrder.payment) ? activeOrder.payment : null;
   const interacPayment = activeOrder?.payment && isInteracOrder(activeOrder.payment) ? activeOrder.payment : null;
-  const hostedCardPaymentUrl = shieldClimbPayment?.redirectUrl || squarePayment?.checkoutUrl || null;
+  const paymentStatusKey = paymentStatus.trim().toLowerCase();
+  const isPartiallyPaid = paymentStatusKey === 'partially_paid';
+  const hostedPaymentClosed =
+    isTerminalPaymentStatus(paymentStatus) ||
+    ['declined', 'failed', 'cancelled', 'review_required'].includes(paymentStatusKey);
+  const hostedCardPaymentUrl = !hostedPaymentClosed
+    ? shieldClimbPayment?.redirectUrl || bankfulPayment?.redirectUrl || squarePayment?.checkoutUrl || null
+    : null;
   const activeOrderUsesCardPayment = Boolean(shieldClimbPayment || bankfulPayment || squarePayment);
+  const canReleaseActiveOrder =
+    Boolean(activeOrder) &&
+    !isPartiallyPaid &&
+    (
+      !isTerminalPaymentStatus(paymentStatus) ||
+      Boolean(bankfulPayment && ['declined', 'failed', 'cancelled'].includes(paymentStatusKey))
+    );
   const alternatePaymentMethod: 'card' | 'crypto' | 'interac' | 'square' = activeOrderUsesCardPayment
     ? 'crypto'
     : interacPayment
@@ -3773,7 +3591,6 @@ export function CheckoutExperience({
         ? 'card'
         : 'interac';
   const paymentExpiresAt = nowPayment ? formatDateTime(nowPayment.validUntil || nowPayment.expirationEstimateDate) : null;
-  const isPartiallyPaid = paymentStatus === 'partially_paid';
 
   const editActiveOrder = useCallback(async () => {
     if (!checkoutSession || !activeOrder || isPartiallyPaid) return;
@@ -4555,181 +4372,29 @@ export function CheckoutExperience({
                       <div className="mt-3 rounded-2xl border border-border/70 bg-background/60 px-4 py-4">
                         <div className="flex items-start gap-3">
                           <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-[#0B2E2F]/8 text-[#0B2E2F]">
-                            <Lock className="size-4" />
+                            <ShieldCheck className="size-4" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold">Card details</p>
+                            <p className="text-sm font-semibold">Secure hosted card checkout</p>
                             <p className="mt-1 text-xs leading-5 text-foreground/50">
-                              Encrypted. Revalin never stores your card details. Only transaction IDs and card last four digits are stored after approval.
+                              After placing the order, Bankful opens in a new tab for card entry. Revalin will not collect your card number, expiry, or CVV.
                             </p>
                           </div>
                         </div>
                         <div className="mt-4 space-y-3">
-                          <label className="flex flex-col gap-1.5" htmlFor="checkout-cardholder-name">
-                            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">Name on card</span>
-                            <Input
-                              id="checkout-cardholder-name"
-                              name="cc-name"
-                              type="text"
-                              autoComplete="cc-name"
-                              autoCapitalize="words"
-                              autoCorrect="off"
-                              required={paymentMethod === 'card'}
-                              maxLength={128}
-                              value={cardholderName}
-                              onChange={event => {
-                                setCardholderName(event.target.value);
-                                if (error === 'Enter the name on the card.') {
-                                  setError(null);
-                                }
-                              }}
-                              placeholder={`${shippingAddress.firstName} ${shippingAddress.lastName}`.trim() || 'Name on card'}
-                              className="h-11 rounded-xl border-border bg-white"
-                            />
-                          </label>
-                          <label className="flex flex-col gap-1.5" htmlFor="checkout-card-number">
-                            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">Card number</span>
-                            <Input
-                              id="checkout-card-number"
-                              name="cc-number"
-                              type="text"
-                              inputMode="numeric"
-                              autoComplete="cc-number"
-                              autoCapitalize="off"
-                              autoCorrect="off"
-                              required={paymentMethod === 'card'}
-                              minLength={12}
-                              maxLength={23}
-                              value={cardNumber}
-                              onChange={event => {
-                                setCardNumber(normalizeCardNumberInput(event.target.value));
-                                if (error === 'Enter valid card number, expiry, and CVV.') {
-                                  setError(null);
-                                }
-                              }}
-                              placeholder="1234 1234 1234 1234"
-                              className="h-11 rounded-xl border-border bg-white"
-                            />
-                          </label>
-                          <div className="grid grid-cols-2 gap-3">
-                            <label className="flex flex-col gap-1.5" htmlFor="checkout-card-expiry">
-                              <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">Expiry</span>
-                              <Input
-                                id="checkout-card-expiry"
-                                name="cc-exp"
-                                type="text"
-                                inputMode="numeric"
-                                autoComplete="cc-exp"
-                                autoCapitalize="off"
-                                autoCorrect="off"
-                                required={paymentMethod === 'card'}
-                                maxLength={5}
-                                value={cardExpiry}
-                                onChange={event => {
-                                  setCardExpiry(normalizeCardExpiryInput(event.target.value));
-                                  if (error === 'Enter valid card number, expiry, and CVV.') {
-                                    setError(null);
-                                  }
-                                }}
-                                placeholder="MM/YY"
-                                className="h-11 rounded-xl border-border bg-white"
-                              />
-                            </label>
-                            <label className="flex flex-col gap-1.5" htmlFor="checkout-card-cvv">
-                              <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">CVV</span>
-                              <Input
-                                id="checkout-card-cvv"
-                                name="cc-csc"
-                                type="text"
-                                inputMode="numeric"
-                                autoComplete="cc-csc"
-                                autoCapitalize="off"
-                                autoCorrect="off"
-                                required={paymentMethod === 'card'}
-                                minLength={3}
-                                maxLength={4}
-                                value={cardCvv}
-                                onChange={event => {
-                                  setCardCvv(event.target.value.replace(/\D/g, '').slice(0, 4));
-                                  if (error === 'Enter valid card number, expiry, and CVV.') {
-                                    setError(null);
-                                  }
-                                }}
-                                placeholder="123"
-                                className="h-11 rounded-xl border-border bg-white"
-                              />
-                            </label>
-                          </div>
-                          <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-border/70 bg-white px-3.5 py-3">
-                            <input
-                              type="checkbox"
-                              checked={cardBillingSameAsShipping}
-                              onChange={event => handleCardBillingSameAsShippingChange(event.target.checked)}
-                              className="size-4 rounded border-border accent-[#0B2E2F]"
-                            />
-                            <span className="text-sm font-semibold">Billing address same as shipping</span>
-                          </label>
-                          {!cardBillingSameAsShipping ? (
-                            <div className="grid gap-3 md:grid-cols-2">
-                              <div className="md:col-span-2">
-                                <BillingAddressField
-                                  label="Billing street address"
-                                  name="address1"
-                                  value={cardBillingAddress.address1}
-                                  onChange={handleCardBillingAddressChange}
-                                  autoComplete="billing address-line1"
-                                />
-                              </div>
-                              <div className="md:col-span-2">
-                                <BillingAddressField
-                                  label="Apartment, suite, unit"
-                                  name="address2"
-                                  value={cardBillingAddress.address2}
-                                  onChange={handleCardBillingAddressChange}
-                                  autoComplete="billing address-line2"
-                                  placeholder="Optional"
-                                  required={false}
-                                />
-                              </div>
-                              <BillingAddressField
-                                label="City"
-                                name="city"
-                                value={cardBillingAddress.city}
-                                onChange={handleCardBillingAddressChange}
-                                autoComplete="billing address-level2"
-                              />
-                              <BillingAddressField
-                                label="State / Province / Region"
-                                name="province"
-                                value={cardBillingAddress.province}
-                                onChange={handleCardBillingAddressChange}
-                                autoComplete="billing address-level1"
-                                required={isProvinceRequired(cardBillingAddress.country)}
-                                placeholder={isProvinceRequired(cardBillingAddress.country) ? undefined : 'Optional where not used'}
-                              />
-                              <BillingAddressField
-                                label="Postal / ZIP code"
-                                name="postalCode"
-                                value={cardBillingAddress.postalCode}
-                                onChange={handleCardBillingAddressChange}
-                                autoComplete="billing postal-code"
-                              />
-                              <label className="flex flex-col gap-1.5">
-                                <span className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/55">Country</span>
-                                <select
-                                  value={cardBillingAddress.country}
-                                  onChange={event => handleCardBillingAddressChange('country', event.target.value)}
-                                  className="h-11 rounded-xl border border-border bg-background px-3.5 text-sm text-foreground outline-none transition-colors focus:border-[#0B2E2F]"
-                                >
-                                  {countryOptions.map(country => (
-                                    <option key={country.code} value={country.code}>
-                                      {country.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="rounded-xl border border-border/70 bg-white px-3.5 py-3">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Card entry</p>
+                              <p className="mt-1 text-sm font-semibold">Hosted by Bankful</p>
                             </div>
-                          ) : null}
+                            <div className="rounded-xl border border-border/70 bg-white px-3.5 py-3">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground/45">Confirmation</p>
+                              <p className="mt-1 text-sm font-semibold">Tracked automatically</p>
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-xs leading-5 text-amber-800">
+                            Keep this tab open after the hosted payment page opens. If the new tab is blocked, use the Pay now button that appears here.
+                          </div>
                           <p className="px-1 text-xs text-foreground/45">
                             Want to save 5%? Choose <button type="button" onClick={() => selectPaymentMethod('crypto')} className="font-semibold text-[#0B2E2F] underline underline-offset-2">Direct Crypto</button> or <button type="button" onClick={() => selectPaymentMethod('interac')} className="font-semibold text-[#0B2E2F] underline underline-offset-2">Interac e-Transfer</button> above.
                           </p>
@@ -5029,7 +4694,7 @@ export function CheckoutExperience({
                           <RefreshCw className={cn('size-3.5', isRefreshingStatus && 'animate-spin')} />
                           Refresh
                         </Button>
-                        {!isTerminalPaymentStatus(paymentStatus) && !isPartiallyPaid ? (
+                        {canReleaseActiveOrder ? (
                           <Button
                             type="button"
                             variant="ghost"
@@ -5047,7 +4712,7 @@ export function CheckoutExperience({
                             )}
                           </Button>
                         ) : null}
-                        {!isTerminalPaymentStatus(paymentStatus) ? (
+                        {canReleaseActiveOrder ? (
                           <Button
                             type="button"
                             variant="ghost"
@@ -5193,6 +4858,29 @@ export function CheckoutExperience({
                               </div>
                             </div>
                           </>
+                        ) : null}
+
+                        {bankfulPayment && !hostedCardPaymentUrl ? (
+                          <div className="rounded-2xl border border-border/70 bg-white px-5 py-5">
+                            <div className="flex items-start gap-3">
+                              <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                                <AlertTriangle className="size-4" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-semibold">
+                                  {paymentStatusKey === 'review_required'
+                                    ? 'Card payment needs review'
+                                    : 'Card payment not completed'}
+                                </p>
+                                <p className="mt-1 text-xs leading-5 text-foreground/55">
+                                  {bankfulPayment.errorMessage ||
+                                    (paymentStatusKey === 'review_required'
+                                      ? 'We could not automatically verify this hosted payment. Contact support with your order reference.'
+                                      : 'Choose a different payment method or start a new checkout to continue.')}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
                         ) : null}
 
                         {/* ── Interac e-Transfer payment view ── */}

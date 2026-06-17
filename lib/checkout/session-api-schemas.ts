@@ -74,29 +74,10 @@ export const checkoutSessionCreateSchema = z.object({
   adminShippingDisabled: z.boolean().optional(),
 });
 
-const checkoutCardBillingAddressSchema = z.object({
-  address1: z.string().trim().min(1).max(256),
-  address2: z.string().trim().max(256).optional(),
-  city: z.string().trim().min(1).max(128),
-  province: z.string().trim().max(128).optional(),
-  postalCode: z.string().trim().min(1).max(32),
-  country: countryCodeSchema,
-});
-
 export const checkoutSessionMutationSchema = checkoutSessionCreateSchema.extend({
   sessionKey: z.string().trim().min(1),
   version: z.number().int().positive().optional(),
   selectedShippingServiceId: z.string().trim().min(1).optional(),
-  card: z
-    .object({
-      number: z.string().trim().min(12).max(24),
-      cvv: z.string().trim().min(3).max(4),
-      expiryMonth: z.string().trim().min(1).max(2),
-      expiryYear: z.string().trim().min(2).max(4),
-      cardholderName: z.string().trim().min(1).max(128).optional(),
-      billingAddress: checkoutCardBillingAddressSchema.optional(),
-    })
-    .optional(),
 });
 
 export const checkoutSessionAccessSchema = z.object({

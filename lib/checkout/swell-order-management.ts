@@ -4,6 +4,7 @@ import {
 } from "@/lib/swell/swell";
 import type { SwellCart as StorefrontCart } from "@/lib/swell/types";
 import { providerFetch } from "@/lib/api/provider-client";
+import { apiError } from "@/lib/api/errors";
 import {
   buildSwellCouponCreatePayload,
   normalizeSwellCouponCode,
@@ -342,14 +343,18 @@ function extractSwellErrorMessages(value: unknown): string[] {
 
 function assertSwellBackendConfig() {
   if (!SWELL_SECRET_KEY) {
-    throw new Error(
+    throw apiError.providerUnavailable(
       "Missing SWELL_SECRET_KEY. Real Swell order management requires backend API access.",
+      { provider: "swell", missing: "SWELL_SECRET_KEY" },
+      false,
     );
   }
 
   if (SWELL_API_BASES.length === 0) {
-    throw new Error(
+    throw apiError.providerUnavailable(
       "Missing Swell store URL. Set SWELL_STORE_ID, NEXT_PUBLIC_SWELL_STORE_URL, or SWELL_API_URL.",
+      { provider: "swell", missing: "SWELL_STORE_URL" },
+      false,
     );
   }
 }
@@ -503,7 +508,15 @@ async function swellBackendRequest<T>(
     }
   }
 
-  throw new Error(errors.join("\n"));
+  throw apiError.providerUnavailable(
+    `Swell ${method} ${path} failed.`,
+    {
+      provider: "swell",
+      operation: `${method} ${path}`,
+      errors,
+    },
+    false,
+  );
 }
 
 function buildName(firstName: string, lastName: string) {

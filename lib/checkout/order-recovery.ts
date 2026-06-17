@@ -1,6 +1,6 @@
 import { isTerminalPaymentStatus } from './constants.ts';
 import type { CheckoutOrderRecord } from './types.ts';
-import { isInteracPayment, isNowPaymentsPayment, isShieldClimbPayment } from './types.ts';
+import { isBankfulPayment, isInteracPayment, isNowPaymentsPayment, isShieldClimbPayment } from './types.ts';
 
 function hasNonEmptyValue(value?: string | null) {
   return typeof value === 'string' && value.trim().length > 0;
@@ -30,6 +30,10 @@ export function isReusableCheckoutOrder(order: CheckoutOrderRecord) {
 
   if (isInteracPayment(order.payment)) {
     return hasNonEmptyValue(order.payment.messageCode);
+  }
+
+  if (isBankfulPayment(order.payment)) {
+    return hasNonEmptyValue(order.payment.attemptId) && hasNonEmptyValue(order.payment.redirectUrl);
   }
 
   return false;

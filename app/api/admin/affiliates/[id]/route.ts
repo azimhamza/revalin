@@ -96,13 +96,17 @@ function getRangeLabel(range: z.infer<typeof querySchema>["range"]) {
   return "All time";
 }
 
+function timestamptzParam(date: Date) {
+  return sql`${date.toISOString()}::timestamptz`;
+}
+
 function getAffiliatePerformanceScope(affiliateId: string, startDate: Date | null) {
   const affiliateScope = eq(affiliatePayouts.affiliateId, affiliateId);
   if (!startDate) return affiliateScope;
 
   return and(
     affiliateScope,
-    sql`coalesce(${affiliatePayouts.earnedAt}, ${affiliatePayouts.createdAt}) >= ${startDate}`,
+    sql`coalesce(${affiliatePayouts.earnedAt}, ${affiliatePayouts.createdAt}) >= ${timestamptzParam(startDate)}`,
   );
 }
 
@@ -112,7 +116,7 @@ function getVisitScope(affiliateId: string, startDate: Date | null) {
 
   return and(
     affiliateScope,
-    sql`${affiliateVisits.createdAt} >= ${startDate}`,
+    sql`${affiliateVisits.createdAt} >= ${timestamptzParam(startDate)}`,
   );
 }
 

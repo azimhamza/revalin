@@ -11,12 +11,15 @@ import type {
 
 export type BankfulAttemptStatus =
   | 'created'
+  | 'hosted_pending'
   | 'capture_pending'
   | 'capture_unknown'
   | 'paid'
   | 'pending'
   | 'declined'
   | 'failed'
+  | 'review_required'
+  | 'cancelled'
   | 'paid_order_creation_failed'
   | 'order_created';
 
@@ -86,21 +89,25 @@ function normalizeText(value?: string | null) {
 function buildAttemptCheckoutSignature(args: {
   amount: string;
   currencyCode: string;
-  shippingAddress: CheckoutShippingAddress;
+  shippingAddress: Partial<CheckoutShippingAddress> | null | undefined;
   shippingService?: CheckoutShippingService | null;
-  lines: CheckoutOrderLine[];
-  totals: CheckoutOrderTotals;
+  lines: CheckoutOrderLine[] | null | undefined;
+  totals: Partial<CheckoutOrderTotals> | null | undefined;
 }) {
+  const shippingAddress = args.shippingAddress ?? {};
+  const lines = Array.isArray(args.lines) ? args.lines : [];
+  const totals = args.totals ?? {};
+
   return JSON.stringify({
     amount: normalizeAmount(args.amount),
     currencyCode: normalizeCurrency(args.currencyCode),
     shippingAddress: {
-      country: normalizeCurrency(args.shippingAddress.country),
-      province: normalizeCurrency(args.shippingAddress.province),
-      postalCode: normalizeText(args.shippingAddress.postalCode).replace(/\s+/g, ''),
-      city: normalizeText(args.shippingAddress.city),
-      address1: normalizeText(args.shippingAddress.address1),
-      address2: normalizeText(args.shippingAddress.address2),
+      country: normalizeCurrency(shippingAddress.country),
+      province: normalizeCurrency(shippingAddress.province),
+      postalCode: normalizeText(shippingAddress.postalCode).replace(/\s+/g, ''),
+      city: normalizeText(shippingAddress.city),
+      address1: normalizeText(shippingAddress.address1),
+      address2: normalizeText(shippingAddress.address2),
     },
     shippingService: {
       id: args.shippingService?.id || '',
@@ -110,12 +117,12 @@ function buildAttemptCheckoutSignature(args: {
         args.shippingService?.shipmentProtection?.totalAmount.amount,
       ),
     },
-    lines: [...args.lines]
+    lines: [...lines]
       .map((line) => ({
         id: line.id || '',
         merchandiseId: line.merchandiseId || '',
         skuNumber: line.skuNumber || '',
-        selectedOptions: line.selectedOptions
+        selectedOptions: (Array.isArray(line.selectedOptions) ? line.selectedOptions : [])
           .map((option) => ({
             name: normalizeText(option.name),
             value: normalizeText(option.value),
@@ -129,13 +136,13 @@ function buildAttemptCheckoutSignature(args: {
         ),
       ),
     totals: {
-      subtotal: normalizeAmount(args.totals.subtotalAmount?.amount),
-      shipping: normalizeAmount(args.totals.shippingAmount?.amount),
-      discount: normalizeAmount(args.totals.discountAmount?.amount),
-      tax: normalizeAmount(args.totals.taxAmount?.amount),
-      total: normalizeAmount(args.totals.totalAmount?.amount),
-      discountCode: normalizeText(args.totals.discountCode),
-      shipmentProtection: normalizeAmount(args.totals.shipmentProtectionAmount?.amount),
+      subtotal: normalizeAmount(totals.subtotalAmount?.amount),
+      shipping: normalizeAmount(totals.shippingAmount?.amount),
+      discount: normalizeAmount(totals.discountAmount?.amount),
+      tax: normalizeAmount(totals.taxAmount?.amount),
+      total: normalizeAmount(totals.totalAmount?.amount),
+      discountCode: normalizeText(totals.discountCode),
+      shipmentProtection: normalizeAmount(totals.shipmentProtectionAmount?.amount),
     },
   });
 }
@@ -264,15 +271,26 @@ export async function findRecentSafeBankfulFallbackAttempt(args: {
     .limit(20);
 
   for (const row of rows) {
-    const attempt = rowToAttempt(row);
-    const attemptSignature = buildAttemptCheckoutSignature({
-      amount: attempt.amount,
-      currencyCode: attempt.currencyCode,
-      shippingAddress: attempt.shippingAddress,
-      shippingService: attempt.shippingService,
-      lines: attempt.lines,
-      totals: attempt.totals,
-    });
+    let attempt: BankfulPaymentAttemptRecord;
+    let attemptSignature: string;
+
+    try {
+      attempt = rowToAttempt(row);
+      attemptSignature = buildAttemptCheckoutSignature({
+        amount: attempt.amount,
+        currencyCode: attempt.currencyCode,
+        shippingAddress: attempt.shippingAddress,
+        shippingService: attempt.shippingService,
+        lines: attempt.lines,
+        totals: attempt.totals,
+      });
+    } catch (error) {
+      console.warn('[bankful] Skipping malformed fallback attempt', {
+        attemptId: row.attemptId,
+        reason: error instanceof Error ? error.message : 'Unknown fallback attempt parse error',
+      });
+      continue;
+    }
 
     if (attemptSignature === targetSignature) {
       return attempt;
@@ -353,6 +371,24 @@ export async function claimBankfulPaymentAttemptCapture(attemptId: string) {
   return updated ? rowToAttempt(updated) : null;
 }
 
+export async function claimBankfulPaymentAttemptHosted(attemptId: string) {
+  const [updated] = await db
+    .update(bankfulPaymentAttempts)
+    .set({
+      status: 'hosted_pending',
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(bankfulPaymentAttempts.attemptId, attemptId),
+        eq(bankfulPaymentAttempts.status, 'created'),
+      ),
+    )
+    .returning();
+
+  return updated ? rowToAttempt(updated) : null;
+}
+
 export async function listReviewableBankfulAttempts(args: {
   limit?: number;
 } = {}) {
@@ -360,7 +396,7 @@ export async function listReviewableBankfulAttempts(args: {
     .select()
     .from(bankfulPaymentAttempts)
     .where(
-      sql`${bankfulPaymentAttempts.status} in ('paid', 'pending', 'capture_pending', 'capture_unknown', 'paid_order_creation_failed')`,
+      sql`${bankfulPaymentAttempts.status} in ('paid', 'pending', 'hosted_pending', 'capture_pending', 'capture_unknown', 'review_required', 'paid_order_creation_failed')`,
     )
     .orderBy(desc(bankfulPaymentAttempts.updatedAt))
     .limit(args.limit ?? 100);

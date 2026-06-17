@@ -28,8 +28,10 @@ The adapter keeps your existing UI contracts intact while replacing the legacy W
 - `SWELL_CARD_DEBIT_PAYMENT_METHOD` (manual payment method ID configured in Swell Payment Settings for card/debit payments; defaults to `card_debit`)
 - `CHECKOUT_CARD_PROCESSING_ENABLED=false` (server-only global kill switch for all card-style checkout; omit or set to `true` to enable Bankful primary card checkout)
 - `CHECKOUT_CARD_SQUARE_FALLBACK_ENABLED=true` (server-only; allows Square hosted checkout only after a safe Bankful failure. `CHECKOUT_SQUARE_FALLBACK_ENABLED` is accepted as a temporary one-deploy compatibility alias.)
-- `BANKFUL_API_KEY`, `BANKFUL_SECRET_KEY` (server-only Bankful credentials for primary card checkout)
+- `BANKFUL_API_KEY`, `BANKFUL_SECRET_KEY` (server-only Bankful credentials for primary hosted card checkout)
+- `BANKFUL_HOSTED_SECRET` (optional server-only hosted-page signing secret; falls back to `BANKFUL_SECRET_KEY`)
 - `BANKFUL_BASE_URL` (optional server-only Bankful API base URL; defaults to Bankful production)
+- `BANKFUL_CALLBACK_BASE_URL` (optional public HTTPS origin for hosted return/callback URLs, useful for staging tunnels)
 - `SQUARE_ACCESS_TOKEN`, `SQUARE_LOCATION_ID` (server-only Square credentials for hosted fallback checkout)
 - `SQUARE_WEBHOOK_SIGNATURE_KEY`, `SQUARE_WEBHOOK_NOTIFICATION_URL` (server-only Square webhook verification settings)
 - `SQUARE_ENVIRONMENT` (optional; defaults to `production` unless the Square helper is configured otherwise)
@@ -108,6 +110,52 @@ Checkout quotes live Shippo rates first and falls back to legacy ShipEngine/Swel
 Customs defaults are edited in `/admin/fulfillment`, not through environment variables. The current defaults include the massage oil description, `0.3` unit weight, `CN` origin country, HS/HTS `3304.99`, `EAR99`, and the Anhui Yaotong manufacturer notes. SKU is intentionally not supported for Shippo customs: the app never sends `sku_code` in Shippo payloads.
 
 Shippo API secrets are server-only and must not be exposed through `NEXT_PUBLIC_*` variables or edited in admin.
+
+## Cron jobs
+
+Scheduled jobs are defined in `vercel.json` and authenticated with `CRON_SECRET` via `Authorization: Bearer <CRON_SECRET>`.
+
+### Vercel plan limits
+
+As of 2026, Vercel allows up to **100 cron jobs per project**, but the schedule frequency depends on plan:
+
+- **Hobby:** up to 100 cron jobs, but each job can run **at most once per day**. Hourly, every-15-minute, and every-minute schedules fail deployment.
+- **Pro:** up to 100 cron jobs, each can run as frequently as **once per minute**.
+
+This repo keeps `vercel.json` Hobby-compatible (daily schedules only). Jobs that need sub-daily timing should be triggered by an external scheduler instead.
+
+### Jobs in this project
+
+| Endpoint | Purpose | Vercel cron | Recommended frequency |
+| --- | --- | --- | --- |
+| `/api/jobs/gmail/renew-watch` | Renews the Gmail Pub/Sub watch for Interac inbox monitoring | Daily at 08:00 UTC | Daily |
+| `/api/maintenance/cancel-stale-checkouts` | Cancels abandoned ShieldClimb/Bankful hosted checkouts with no payment evidence (default age: 60 minutes via `STALE_CHECKOUT_CANCEL_AFTER_MINUTES`) | Daily at 04:00 UTC (Hobby fallback) | Every 15–60 minutes |
+| `/api/jobs/gmail/interac-sync` | Polls Gmail history as a safety net when Pub/Sub push is delayed or missed | Not in `vercel.json` (requires sub-daily timing) | Every 15 minutes |
+
+Interac payments also arrive in near real time through `/api/webhooks/gmail/interac` when Gmail Pub/Sub is configured (`GMAIL_PUBSUB_TOPIC`). The sync job is a backup, not the primary path.
+
+### External scheduler (Hobby-friendly)
+
+For sub-daily jobs, point an external scheduler at the same endpoints with the same bearer token. Examples: [cron-job.org](https://cron-job.org), GitHub Actions, Supabase `pg_cron`, or Cloudflare Workers Cron Triggers.
+
+```bash
+curl -X POST "https://<your-domain>/api/jobs/gmail/interac-sync" \
+  -H "Authorization: Bearer $CRON_SECRET"
+
+curl -X POST "https://<your-domain>/api/maintenance/cancel-stale-checkouts" \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+Suggested external schedules:
+
+- `interac-sync`: `*/15 * * * *`
+- `cancel-stale-checkouts`: `*/15 * * * *` or `0 * * * *` depending on how quickly abandoned orders should disappear
+
+Upgrade to Vercel Pro if you prefer keeping all schedules in `vercel.json` instead of operating an external scheduler.
+
+Required env var:
+
+- `CRON_SECRET` (server-only shared secret for cron and external scheduler requests)
 
 ## Deployment
 

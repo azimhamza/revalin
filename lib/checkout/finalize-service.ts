@@ -24,16 +24,14 @@ import {
   runSuccessfulOrderProcessing,
 } from '@/lib/checkout/payment-lifecycle';
 import {
-  bankfulResponseSnapshot,
-  createBankfulSale,
+  createBankfulHostedPayment,
   mapBankfulStatus,
-  type BankfulCardInput,
+  type BankfulHostedPaymentResponse,
   type BankfulTransactionResponse,
 } from '@/lib/checkout/bankful';
 import {
-  claimBankfulPaymentAttemptCapture,
+  claimBankfulPaymentAttemptHosted,
   createBankfulPaymentAttempt,
-  findRecentSafeBankfulFallbackAttempt,
   updateBankfulPaymentAttempt,
 } from '@/lib/checkout/bankful-attempt-store';
 import {
@@ -162,7 +160,6 @@ type FinalizeCheckoutInput = {
   shippingAddress: CheckoutShippingAddress;
   paymentMethod: 'card' | 'crypto' | 'interac' | 'square';
   paymentCurrency?: string | null;
-  card?: BankfulCardInput | null;
   sourceWalletAddress?: string | null;
   interacSenderEmail?: string | null;
   interacSenderName?: string | null;
@@ -212,10 +209,9 @@ export type FinalizeCheckoutDependencies = {
   createNowPaymentsPayment: typeof createNowPaymentsPayment;
   createSquarePaymentLink: typeof createSquarePaymentLink;
   createBankfulPaymentAttempt: typeof createBankfulPaymentAttempt;
-  findRecentSafeBankfulFallbackAttempt: typeof findRecentSafeBankfulFallbackAttempt;
-  claimBankfulPaymentAttemptCapture: typeof claimBankfulPaymentAttemptCapture;
+  claimBankfulPaymentAttemptHosted: typeof claimBankfulPaymentAttemptHosted;
   updateBankfulPaymentAttempt: typeof updateBankfulPaymentAttempt;
-  createBankfulSale: typeof createBankfulSale;
+  createBankfulHostedPayment: typeof createBankfulHostedPayment;
   runSuccessfulOrderProcessing: typeof runSuccessfulOrderProcessing;
   sendCheckoutPaymentInitiatedEvent: typeof sendCheckoutPaymentInitiatedEvent;
   trackCheckoutPaymentInitiated: typeof trackCheckoutPaymentInitiated;
@@ -242,6 +238,7 @@ function createShieldClimbSessionId(ipnToken: string) {
 
 function getHostedPaymentRedirectUrl(payment: CheckoutOrderRecord['payment']) {
   if (isShieldClimbPayment(payment)) return payment.redirectUrl;
+  if (payment.provider === 'bankful') return payment.redirectUrl ?? null;
   if (isSquarePayment(payment)) return payment.checkoutUrl;
   return null;
 }
@@ -256,8 +253,6 @@ function createBankfulAttemptId(sessionId: string, version: number) {
 
   return `BF${digest}`;
 }
-
-const BANKFUL_SAFE_FAILURE_DEDUPE_MS = 7 * 24 * 60 * 60 * 1000;
 
 function normalizeComparableValue(value?: string | null) {
   return (value || '').trim();
@@ -354,6 +349,10 @@ function doesExistingOrderMatchCheckoutAttempt(args: {
   existingOrder: CheckoutOrderRecord;
   input: FinalizeCheckoutInput;
 }) {
+  if (isTerminalPaymentStatus(args.existingOrder.payment.status)) {
+    return false;
+  }
+
   if (args.existingOrder.payment.status === 'partially_paid') {
     return false;
   }
@@ -711,6 +710,24 @@ function getPublicCallbackOrigin(requestUrl: URL) {
   return requestUrl.origin;
 }
 
+function getBankfulHostedOrigin(requestUrl: URL) {
+  const explicit =
+    process.env.BANKFUL_CALLBACK_BASE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+    process.env.SITE_URL?.trim();
+
+  if (explicit) {
+    return explicit.replace(/\/$/, '');
+  }
+
+  const vercelUrl = process.env.VERCEL_URL?.trim();
+  if (vercelUrl) {
+    return `https://${vercelUrl.replace(/\/$/, '')}`;
+  }
+
+  return requestUrl.origin;
+}
+
 function mapShippingService(
   service: CheckoutRatedService,
   currencyCode: string,
@@ -938,23 +955,6 @@ function buildPromoterData(args: {
     commissionRate: args.promoterAttribution.commissionRate,
     source: 'promoter_invite',
   } satisfies CheckoutOrderPromoter;
-}
-
-function splitCardholderName(cardholderName?: string | null) {
-  const trimmed = cardholderName?.trim().replace(/\s+/g, ' ');
-  if (!trimmed) {
-    return { firstName: undefined, lastName: undefined };
-  }
-
-  const parts = trimmed.split(' ');
-  if (parts.length === 1) {
-    return { firstName: parts[0], lastName: undefined };
-  }
-
-  return {
-    firstName: parts.slice(0, -1).join(' '),
-    lastName: parts[parts.length - 1],
-  };
 }
 
 function buildNowPaymentsOrderRecord(args: {
@@ -1219,7 +1219,11 @@ function buildBankfulOrderRecord(args: {
   orderLandedCostTotal?: number;
   landedCost?: CheckoutLandedCost | null;
   attemptId: string;
-  bankful: BankfulTransactionResponse;
+  bankful?: BankfulTransactionResponse | null;
+  hostedPayment?: BankfulHostedPaymentResponse | null;
+  paymentStatus?: BankfulPaymentData['status'];
+  expectedAmount?: string;
+  expectedCurrency?: string;
   cardLast4?: string | null;
   amountPaidToDate?: string;
   attemptAmount?: string;
@@ -1228,26 +1232,34 @@ function buildBankfulOrderRecord(args: {
 }): CheckoutOrderRecord {
   const now = args.nowIso ?? new Date().toISOString();
   const shippingStatus = args.orderShipmentTotal <= 0.009 ? 'free' : 'quoted';
+  const bankfulStatus = args.bankful ? mapBankfulStatus(args.bankful.statusName) : args.paymentStatus || 'pending';
+  const paidAt = bankfulStatus === 'paid'
+    ? args.bankful?.timestamp || now
+    : null;
   const paymentData: BankfulPaymentData = {
     provider: 'bankful',
     paymentMethod: 'card_debit',
     attemptId: args.attemptId,
-    status: mapBankfulStatus(args.bankful.statusName),
-    bankfulStatus: args.bankful.statusName,
-    requestAction: args.bankful.requestAction,
-    transactionValue: args.bankful.value,
-    transactionRequestId: args.bankful.requestId,
-    transactionRecordId: args.bankful.recordId,
-    transactionOrderId: args.bankful.orderId,
-    xtlOrderId: args.bankful.xtlOrderId,
-    transactionCurrency: args.bankful.currency,
-    bankfulTimestamp: args.bankful.timestamp,
-    apiAdvice: args.bankful.apiAdvice,
-    serviceAdvice: args.bankful.serviceAdvice,
-    processorAdvice: args.bankful.processorAdvice,
-    errorMessage: args.bankful.errorMessage,
+    status: bankfulStatus,
+    redirectUrl: args.hostedPayment?.redirectUrl ?? null,
+    expectedAmount: args.expectedAmount,
+    expectedCurrency: args.expectedCurrency,
+    bankfulStatus: args.bankful?.statusName ?? null,
+    requestAction: args.bankful?.requestAction ?? null,
+    transactionValue: args.bankful?.value ?? null,
+    transactionRequestId: args.bankful?.requestId ?? null,
+    transactionRecordId: args.bankful?.recordId ?? null,
+    transactionOrderId: args.bankful?.orderId ?? null,
+    xtlOrderId: args.bankful?.xtlOrderId ?? args.attemptId,
+    transactionCurrency: args.bankful?.currency ?? null,
+    bankfulTimestamp: args.bankful?.timestamp ?? null,
+    apiAdvice: args.bankful?.apiAdvice ?? null,
+    serviceAdvice: args.bankful?.serviceAdvice ?? null,
+    processorAdvice: args.bankful?.processorAdvice ?? null,
+    errorMessage: args.bankful?.errorMessage ?? null,
     cardLast4: args.cardLast4 ?? null,
-    capturedAt: now,
+    capturedAt: paidAt,
+    paidAt,
     createdAt: now,
     updatedAt: now,
     amountPaidToDate: args.amountPaidToDate,
@@ -1600,27 +1612,6 @@ function getApiErrorDetails(error: unknown) {
     : null;
 }
 
-function isSafeBankfulPreCaptureFailure(error: unknown) {
-  if (!(error instanceof ApiError)) {
-    return false;
-  }
-
-  const details = getApiErrorDetails(error);
-  if (details?.provider !== 'bankful') {
-    return false;
-  }
-
-  if (error.code !== 'provider_unavailable') {
-    return false;
-  }
-
-  if (typeof details.missing === 'string') {
-    return true;
-  }
-
-  return details.status === 401 || details.status === 403;
-}
-
 function createBankfulSafeFallbackError(args: {
   message: string;
   code: string;
@@ -1922,10 +1913,6 @@ export function createFinalizeCheckoutSession(
       );
 
       if (args.paymentMethod === 'card') {
-        if (!args.card) {
-          throw apiError.badRequest('Enter your card details before placing the order.');
-        }
-
         const couponDiscountTotal = Number(
           ratedCart.discount_total ?? ratedCart.item_discount ?? 0,
         );
@@ -1985,6 +1972,19 @@ export function createFinalizeCheckoutSession(
         });
         const orderDiscountTotal = pricing.discountTotalValue;
         const orderTotal = pricing.totalValue;
+        const pricingMetadata = buildCheckoutPricingMetadata({
+          currencyCode: orderCurrencyCode,
+          subtotalAmount: orderSubtotalAmount,
+          shippingAmount: orderShipmentTotal,
+          shipmentProtectionAmount: selectedServiceForOrder.shipmentProtection?.totalAmount.amount,
+          taxAmount: orderTaxTotal,
+          landedCostAmount: orderLandedCostTotal,
+          totalAmount: orderTotal,
+          discounts: pricing.discounts,
+          discountAmount: orderDiscountTotal,
+          discountCode: appliedDiscountCode,
+          paymentMethod: args.paymentMethod,
+        });
 
         if (!orderTotal || orderTotal <= 0 || !Number.isFinite(orderTotal)) {
           throw apiError.badRequest('Order total must be greater than zero.', {
@@ -2076,32 +2076,6 @@ export function createFinalizeCheckoutSession(
           shippingStatus: orderShipmentTotal <= 0.009 ? 'free' : 'quoted',
         };
 
-        const previousSafeFailure =
-          await dependencies.findRecentSafeBankfulFallbackAttempt({
-            email: args.shippingAddress.email,
-            amount: remainderPaymentAmount.toFixed(2),
-            currencyCode: orderCurrencyCode,
-            shippingAddress: args.shippingAddress,
-            shippingService,
-            lines,
-            totals,
-            newerThan: new Date(Date.now() - BANKFUL_SAFE_FAILURE_DEDUPE_MS),
-          });
-
-        if (previousSafeFailure && isSquareFallbackEligible()) {
-          throw createBankfulSafeFallbackError({
-            message: 'Bankful already failed for this checkout. Continue with secure hosted card checkout.',
-            code: 'bankful_previous_safe_failure',
-            reason: 'bankful_previous_safe_failure',
-            attemptId: previousSafeFailure.attemptId,
-            bankfulStatus: previousSafeFailure.bankful?.statusName ?? previousSafeFailure.status,
-            originalError: {
-              message: previousSafeFailure.latestError || 'Previous Bankful attempt failed safely before fulfillment.',
-              status: previousSafeFailure.status,
-            },
-          });
-        }
-
         await dependencies.createBankfulPaymentAttempt({
           attemptId,
           checkoutSessionId: args.sessionId,
@@ -2127,10 +2101,10 @@ export function createFinalizeCheckoutSession(
         });
 
         const claimedAttempt =
-          await dependencies.claimBankfulPaymentAttemptCapture(attemptId);
+          await dependencies.claimBankfulPaymentAttemptHosted(attemptId);
         if (!claimedAttempt) {
           throw apiError.conflict(
-            'This card payment is already being processed. Refresh the checkout before trying again.',
+            'This hosted card payment is already being prepared. Refresh the checkout before trying again.',
             {
               code: 'bankful_attempt_in_progress',
               attemptId,
@@ -2139,121 +2113,12 @@ export function createFinalizeCheckoutSession(
           );
         }
 
-        let bankful: BankfulTransactionResponse;
-        try {
-          const cardholderName = splitCardholderName(args.card?.cardholderName);
-          const bankfulBillingAddress = args.card?.billingAddress ?? args.shippingAddress;
-          bankful = await dependencies.createBankfulSale({
-            amount: remainderPaymentAmount.toFixed(2),
-            currency: orderCurrencyCode,
-            xtlOrderId: attemptId,
-            card: args.card,
-            customer: {
-              firstName: cardholderName.firstName,
-              lastName: cardholderName.lastName,
-              email: args.shippingAddress.email,
-              phone: args.shippingAddress.phone,
-            },
-            billingAddress: {
-              address1: bankfulBillingAddress.address1,
-              address2: bankfulBillingAddress.address2,
-              city: bankfulBillingAddress.city,
-              province: bankfulBillingAddress.province,
-              postalCode: bankfulBillingAddress.postalCode,
-              country: bankfulBillingAddress.country,
-            },
-          });
-        } catch (captureError) {
-          if (isSafeBankfulPreCaptureFailure(captureError)) {
-            const originalDetails = getApiErrorDetails(captureError);
-            const message =
-              captureError instanceof Error
-                ? captureError.message
-                : 'Bankful card processing is unavailable.';
-
-            await dependencies.updateBankfulPaymentAttempt(attemptId, {
-              status: 'failed',
-              latestError: message,
-            });
-
-            throw createBankfulSafeFallbackError({
-              message: 'Bankful card processing is unavailable. You can continue with secure hosted card checkout.',
-              code: 'bankful_provider_unavailable',
-              reason: typeof originalDetails?.missing === 'string'
-                ? 'bankful_config_unavailable'
-                : 'bankful_authorization_failed',
-              attemptId,
-              originalError: originalDetails
-                ? {
-                    code: captureError instanceof ApiError ? captureError.code : undefined,
-                    message,
-                    details: originalDetails,
-                  }
-                : undefined,
-            });
-          }
-
-          await dependencies.updateBankfulPaymentAttempt(attemptId, {
-            status: 'capture_unknown',
-            latestError:
-              captureError instanceof Error
-                ? captureError.message
-                : 'Bankful capture failed before a trusted response was received.',
-          });
-          throw captureError;
-        }
-        const bankfulSnapshot = bankfulResponseSnapshot(bankful);
-        const bankfulStatus = mapBankfulStatus(bankful.statusName);
-
-        if (bankfulStatus !== 'paid') {
-          await dependencies.updateBankfulPaymentAttempt(attemptId, {
-            status:
-              bankfulStatus === 'pending'
-                ? 'pending'
-                : bankfulStatus === 'declined'
-                  ? 'declined'
-                  : 'failed',
-            bankful: bankfulSnapshot,
-            latestError:
-              bankful.errorMessage ||
-              bankful.processorAdvice ||
-              bankful.serviceAdvice ||
-              bankful.apiAdvice ||
-              'Bankful did not approve the card transaction.',
-          });
-
-          throw apiError.badRequest(
-            bankfulStatus === 'pending'
-              ? 'Your card payment is pending review. Contact support with your checkout email if it does not update.'
-              : bankful.errorMessage || 'Your card was declined. Use a different card or payment method.',
-            buildSquareFallbackDetails({
-              code: `bankful_${bankfulStatus}`,
-              reason:
-                bankfulStatus === 'declined'
-                  ? 'bankful_declined'
-                  : bankfulStatus === 'failed'
-                    ? 'bankful_failed'
-                    : 'bankful_pending',
-              attemptId,
-              bankfulStatus,
-              eligible: bankfulStatus === 'declined' || bankfulStatus === 'failed',
-            }),
-          );
-        }
-
-        await dependencies.updateBankfulPaymentAttempt(attemptId, {
-          status: 'paid',
-          bankful: bankfulSnapshot,
-          latestError: null,
-        });
-
         let swellOrder: Awaited<ReturnType<typeof dependencies.convertSwellCartToOrder>> | null = null;
         try {
           swellOrder = await dependencies.convertSwellCartToOrder(ratedCart.id);
           swellOrderId = swellOrder.id;
           temporaryCartId = undefined;
 
-          const cardDigits = args.card.number.replace(/\D/g, '');
           const bankfulOrderRecord = maybeApplyAdminDisabledShipping(
             buildBankfulOrderRecord({
               orderId,
@@ -2278,8 +2143,10 @@ export function createFinalizeCheckoutSession(
               orderLandedCostTotal,
               landedCost,
               attemptId,
-              bankful,
-              cardLast4: cardDigits.slice(-4) || null,
+              hostedPayment: null,
+              paymentStatus: 'pending',
+              expectedAmount: remainderPaymentAmount.toFixed(2),
+              expectedCurrency: orderCurrencyCode,
               amountPaidToDate,
               attemptAmount: remainderPaymentAmount.toFixed(2),
               carryoverRootOrderId,
@@ -2294,10 +2161,9 @@ export function createFinalizeCheckoutSession(
             promoter: checkoutAttribution.promoterData,
           });
           checkoutOrderId = checkoutOrder.orderId;
-          swellOrderId = undefined;
 
           await dependencies.updateBankfulPaymentAttempt(attemptId, {
-            status: 'order_created',
+            status: 'hosted_pending',
             orderId: checkoutOrder.orderId,
             swell: {
               accountId: account.id,
@@ -2310,8 +2176,169 @@ export function createFinalizeCheckoutSession(
             console.error('Unable to link Bankful attempt to checkout order:', attemptUpdateError);
           });
 
+          const bankfulHostedOrigin = getBankfulHostedOrigin(requestUrl);
+          const bankfulReturnUrl = new URL('/api/providers/bankful/hosted/return', bankfulHostedOrigin);
+          bankfulReturnUrl.searchParams.set('order', orderId);
+          bankfulReturnUrl.searchParams.set('key', accessKey);
+          const bankfulCallbackUrl = new URL('/api/providers/bankful/hosted/callback', bankfulHostedOrigin);
+          const bankfulResultUrl = (result: string) => {
+            const url = new URL(bankfulReturnUrl);
+            url.searchParams.set('result', result);
+            return url.toString();
+          };
+
+          let hostedPayment: BankfulHostedPaymentResponse;
+          try {
+            hostedPayment = await dependencies.createBankfulHostedPayment({
+              amount: remainderPaymentAmount.toFixed(2),
+              currency: orderCurrencyCode,
+              xtlOrderId: attemptId,
+              customer: {
+                firstName: args.shippingAddress.firstName,
+                lastName: args.shippingAddress.lastName,
+                email: args.shippingAddress.email,
+                phone: args.shippingAddress.phone,
+              },
+              billingAddress: {
+                address1: args.shippingAddress.address1,
+                address2: args.shippingAddress.address2,
+                city: args.shippingAddress.city,
+                province: args.shippingAddress.province,
+                postalCode: args.shippingAddress.postalCode,
+                country: args.shippingAddress.country,
+              },
+              shippingAddress: args.shippingAddress,
+              urls: {
+                complete: bankfulResultUrl('complete'),
+                failed: bankfulResultUrl('failed'),
+                pending: bankfulResultUrl('pending'),
+                cancel: bankfulResultUrl('cancel'),
+                callback: bankfulCallbackUrl.toString(),
+              },
+            });
+          } catch (hostedPaymentError) {
+            const originalDetails = getApiErrorDetails(hostedPaymentError);
+            const message =
+              hostedPaymentError instanceof Error
+                ? hostedPaymentError.message
+                : 'Bankful hosted card checkout is unavailable.';
+
+            await dependencies.updateBankfulPaymentAttempt(attemptId, {
+              status: 'failed',
+              latestError: message,
+            }).catch((attemptUpdateError) => {
+              console.error('Unable to mark Bankful hosted attempt failed:', attemptUpdateError);
+            });
+
+            throw createBankfulSafeFallbackError({
+              message: 'Bankful hosted card checkout is unavailable. You can continue with secure hosted card checkout.',
+              code: 'bankful_provider_unavailable',
+              reason: typeof originalDetails?.missing === 'string'
+                ? 'bankful_config_unavailable'
+                : 'bankful_hosted_setup_failed',
+              attemptId,
+              originalError: originalDetails
+                ? {
+                    code: hostedPaymentError instanceof ApiError ? hostedPaymentError.code : undefined,
+                    message,
+                    details: originalDetails,
+                  }
+                : { message },
+            });
+          }
+
+          const checkoutOrderWithRedirect =
+            await dependencies.updateCheckoutOrder(checkoutOrder.orderId, (current) => ({
+              ...current,
+              updatedAt: dependencies.nowIso(),
+              payment: current.payment.provider === 'bankful'
+                ? {
+                    ...current.payment,
+                    redirectUrl: hostedPayment.redirectUrl,
+                    status: 'pending',
+                    expectedAmount: remainderPaymentAmount.toFixed(2),
+                    expectedCurrency: orderCurrencyCode,
+                    updatedAt: dependencies.nowIso(),
+                  }
+                : current.payment,
+              latestError: null,
+            }));
+          if (!checkoutOrderWithRedirect) {
+            throw apiError.internal('Unable to save Bankful hosted checkout redirect.');
+          }
+
+          await dependencies.updateBankfulPaymentAttempt(attemptId, {
+            status: 'hosted_pending',
+            orderId: checkoutOrder.orderId,
+            swell: {
+              accountId: account.id,
+              cartId: ratedCart.id,
+              orderId: swellOrder.id,
+              orderNumber: swellOrder.number,
+            },
+            latestError: null,
+          }).catch((attemptUpdateError) => {
+            console.error('Unable to save Bankful hosted redirect attempt metadata:', attemptUpdateError);
+          });
+
+          await dependencies.updateSwellOrder(swellOrder.id, {
+            billing: {
+              ...(swellOrder.billing || {}),
+              method: manualMethod,
+              intent: {
+                provider: 'bankful',
+                attempt_id: attemptId,
+                hosted_redirect_url: hostedPayment.redirectUrl,
+                status: 'pending',
+              },
+            },
+            metadata: {
+              ...(swellOrder.metadata || {}),
+              checkout_reference: orderId,
+              coupon_code: appliedDiscountCode || null,
+              pricing: pricingMetadata,
+              landed_cost: landedCost ?? null,
+              ...(args.adminShippingDisabled ? { admin_shipping_disabled: true } : {}),
+              bankful: {
+                attempt_id: attemptId,
+                hosted_redirect_url: hostedPayment.redirectUrl,
+                expected_amount: remainderPaymentAmount.toFixed(2),
+                expected_currency: orderCurrencyCode,
+                status: 'pending',
+              },
+              affiliate: checkoutAttribution.resolvedAffiliate &&
+                checkoutAttribution.affiliateData
+                ? {
+                    ...checkoutAttribution.affiliateData,
+                    commissionOwed: (
+                      orderTotal *
+                      Number(
+                        checkoutAttribution.commissionSnapshot?.effectiveRate ||
+                          checkoutAttribution.resolvedAffiliate.commissionRate,
+                      )
+                    ).toFixed(2),
+                    currencyCode: orderCurrencyCode,
+                    paymentProvider: 'bankful',
+                    status: 'pending',
+                  }
+                : null,
+              promoter: checkoutAttribution.promoterData
+                ? {
+                    ...checkoutAttribution.promoterData,
+                    commissionOwed: (
+                      orderTotal * Number(checkoutAttribution.promoterData.commissionRate)
+                    ).toFixed(2),
+                    currencyCode: orderCurrencyCode,
+                    paymentProvider: 'bankful',
+                    status: 'pending',
+                  }
+                : null,
+            },
+          });
+          swellOrderId = undefined;
+
           await supersedeCarryoverChainOrders({
-            checkoutOrder,
+            checkoutOrder: checkoutOrderWithRedirect,
             chainOrders: carryoverContext.chainOrders,
             dependencies,
           }).catch((supersedeError) => {
@@ -2319,7 +2346,7 @@ export function createFinalizeCheckoutSession(
           });
 
           await replaceSupersededOpenOrders({
-            checkoutOrder,
+            checkoutOrder: checkoutOrderWithRedirect,
             customerEmail: args.shippingAddress.email,
             excludedOrderIds: new Set(
               carryoverContext.chainOrders.map((order) => order.orderId),
@@ -2329,21 +2356,12 @@ export function createFinalizeCheckoutSession(
             console.error('Unable to replace open Bankful checkout orders:', replaceError);
           });
 
-          const processedOrder =
-            (await dependencies
-              .runSuccessfulOrderProcessing(checkoutOrder.orderId)
-              .catch((processingError) => {
-                console.error('Unable to run Bankful successful order processing:', processingError);
-                return null;
-              })) ||
-            checkoutOrder;
-
           const publicRelatedOrders =
             await dependencies
               .findCheckoutOrdersByCartId(fallbackCartId)
               .catch((relatedOrdersError) => {
                 console.error('Unable to load related Bankful checkout orders:', relatedOrdersError);
-                return [processedOrder];
+                return [checkoutOrderWithRedirect];
               });
 
           const initiationTelemetry = {
@@ -2371,19 +2389,19 @@ export function createFinalizeCheckoutSession(
           return {
             accessKey,
             order: toPublicCheckoutOrderWithCarryover(
-              processedOrder,
+              checkoutOrderWithRedirect,
               publicRelatedOrders,
             ) satisfies CheckoutOrderPublic,
+            redirectUrl: hostedPayment.redirectUrl,
           };
         } catch (orderCreationError) {
           const message =
             orderCreationError instanceof Error
               ? orderCreationError.message
-              : 'Unable to create order after approved Bankful payment.';
+              : 'Unable to prepare Bankful hosted checkout.';
           if (!checkoutOrderId) {
             await dependencies.updateBankfulPaymentAttempt(attemptId, {
-              status: 'paid_order_creation_failed',
-              bankful: bankfulSnapshot,
+              status: 'failed',
               swell: swellOrder
                 ? {
                     accountId: account.id,
@@ -2542,12 +2560,32 @@ export function createFinalizeCheckoutSession(
         const squareRedirectUrl = new URL('/checkout', requestUrl.origin);
         squareRedirectUrl.searchParams.set('order', orderId);
         squareRedirectUrl.searchParams.set('key', accessKey);
+        const squareShippingService = mapShippingService(
+          selectedServiceForOrder,
+          orderCurrencyCode,
+        );
 
         const paymentLink = await dependencies.createSquarePaymentLink({
           idempotencyKey: `square:${orderId}`,
           amount: remainderPaymentAmount.toFixed(2),
           currencyCode: cadCurrency,
           orderReference: orderId,
+          lines,
+          totals: {
+            discountAmount: orderDiscountTotal.toFixed(2),
+            taxAmount: orderTaxTotal.toFixed(2),
+            shippingAmount: orderShipmentTotal.toFixed(2),
+            landedCostAmount: orderLandedCostTotal.toFixed(2),
+            shipmentProtectionAmount:
+              selectedServiceForOrder.shipmentProtection?.totalAmount.amount,
+            totalAmount: orderTotal.toFixed(2),
+          },
+          shippingAddress: args.shippingAddress,
+          shippingService: squareShippingService,
+          discountCode: appliedDiscountCode,
+          amountPaidToDate,
+          swellOrderId: swellOrder.id,
+          swellOrderNumber: swellOrder.number,
           customerEmail: args.shippingAddress.email,
           redirectUrl: squareRedirectUrl.toString(),
         });
@@ -2622,10 +2660,7 @@ export function createFinalizeCheckoutSession(
             currencyCode: orderCurrencyCode,
             lines,
             shippingAddress: args.shippingAddress,
-            shippingService: mapShippingService(
-              selectedServiceForOrder,
-              orderCurrencyCode,
-            ),
+            shippingService: squareShippingService,
             orderSubtotal: orderSubtotalAmount,
             orderDiscountTotal,
             discountCode: appliedDiscountCode,
@@ -3293,10 +3328,9 @@ export const finalizeCheckoutSession = createFinalizeCheckoutSession({
   createNowPaymentsPayment,
   createSquarePaymentLink,
   createBankfulPaymentAttempt,
-  findRecentSafeBankfulFallbackAttempt,
-  claimBankfulPaymentAttemptCapture,
+  claimBankfulPaymentAttemptHosted,
   updateBankfulPaymentAttempt,
-  createBankfulSale,
+  createBankfulHostedPayment,
   runSuccessfulOrderProcessing,
   sendCheckoutPaymentInitiatedEvent,
   trackCheckoutPaymentInitiated,

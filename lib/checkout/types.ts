@@ -162,7 +162,18 @@ export type BankfulPaymentData = {
   provider: 'bankful';
   paymentMethod?: 'card_debit';
   attemptId: string;
-  status: 'paid' | 'pending' | 'declined' | 'failed' | 'capture_unknown' | string;
+  status:
+    | 'paid'
+    | 'pending'
+    | 'declined'
+    | 'failed'
+    | 'capture_unknown'
+    | 'review_required'
+    | 'cancelled'
+    | string;
+  redirectUrl?: string | null;
+  expectedAmount?: string;
+  expectedCurrency?: string;
   bankfulStatus?: string | null;
   requestAction?: string | null;
   transactionValue?: string | null;
@@ -179,6 +190,7 @@ export type BankfulPaymentData = {
   cardLast4?: string | null;
   cardBrand?: string | null;
   capturedAt?: string | null;
+  paidAt?: string | null;
   swellPaymentId?: string;
   createdAt?: string;
   updatedAt?: string;

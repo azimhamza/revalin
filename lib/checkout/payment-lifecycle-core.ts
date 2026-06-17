@@ -16,8 +16,10 @@ const IMMUTABLE_NON_SUCCESS_STATUSES = new Set([
   'cancelled',
   'replaced',
   'failed',
+  'declined',
   'expired',
   'refunded',
+  'review_required',
 ]);
 const PROCESSING_STEP_STALE_AFTER_MS = 5 * 60 * 1000;
 
@@ -44,6 +46,8 @@ export type PaymentLifecycleEventSource =
   | 'shieldclimb_callback'
   | 'shieldclimb_poll'
   | 'bankful_capture'
+  | 'bankful_callback'
+  | 'bankful_return'
   | 'bankful_poll'
   | 'square_webhook'
   | 'square_poll'

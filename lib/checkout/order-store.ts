@@ -310,6 +310,45 @@ export async function findCheckoutOrderBySquarePayment(args: {
   return rows[0] ? rowToRecord(rows[0]) : null;
 }
 
+export async function findCheckoutOrderByBankfulPayment(args: {
+  attemptId?: string | null;
+  transactionRecordId?: string | null;
+  transactionOrderId?: string | null;
+}): Promise<CheckoutOrderRecord | null> {
+  const attemptId = args.attemptId?.trim();
+  const transactionRecordId = args.transactionRecordId?.trim();
+  const transactionOrderId = args.transactionOrderId?.trim();
+
+  if (!attemptId && !transactionRecordId && !transactionOrderId) {
+    return null;
+  }
+
+  const matchers = [];
+  if (attemptId) {
+    matchers.push(sql`${checkoutOrders.payment}->>'attemptId' = ${attemptId}`);
+  }
+  if (transactionRecordId) {
+    matchers.push(sql`${checkoutOrders.payment}->>'transactionRecordId' = ${transactionRecordId}`);
+  }
+  if (transactionOrderId) {
+    matchers.push(sql`${checkoutOrders.payment}->>'transactionOrderId' = ${transactionOrderId}`);
+  }
+
+  const rows = await db
+    .select()
+    .from(checkoutOrders)
+    .where(
+      and(
+        sql`${checkoutOrders.payment}->>'provider' = 'bankful'`,
+        or(...matchers),
+      ),
+    )
+    .orderBy(desc(checkoutOrders.updatedAt))
+    .limit(1);
+
+  return rows[0] ? rowToRecord(rows[0]) : null;
+}
+
 export async function findOpenCheckoutOrdersByEmail(args: {
   email: string;
   excludeOrderId?: string;
@@ -370,6 +409,46 @@ export async function findStaleShieldClimbCheckoutOrders(args: {
         sql`coalesce(${checkoutOrders.payment}->>'txidIn', '') = ''`,
         sql`coalesce(${checkoutOrders.payment}->>'txidOut', '') = ''`,
         sql`coalesce(${checkoutOrders.payment}->>'swellPaymentId', '') = ''`,
+      ),
+    )
+    .orderBy(desc(checkoutOrders.createdAt))
+    .limit(args.limit ?? 100);
+
+  return rows.map(rowToRecord);
+}
+
+export async function findStaleHostedCheckoutOrders(args: {
+  cutoff: Date;
+  limit?: number;
+}): Promise<CheckoutOrderRecord[]> {
+  const terminalStatuses = [
+    ...TERMINAL_PAYMENT_STATUSES,
+    ...SHIELDCLIMB_TERMINAL_STATUSES,
+  ];
+
+  const rows = await db
+    .select()
+    .from(checkoutOrders)
+    .where(
+      and(
+        or(
+          sql`${checkoutOrders.payment}->>'provider' = 'shieldclimb'`,
+          sql`${checkoutOrders.payment}->>'provider' = 'bankful'`,
+        ),
+        lte(checkoutOrders.createdAt, args.cutoff),
+        notInArray(checkoutOrders.paymentStatus, terminalStatuses),
+        sql`case
+          when ${checkoutOrders.payment}->>'provider' = 'shieldclimb' then
+            coalesce(${checkoutOrders.payment}->>'callbackVerifiedAt', '') = ''
+            and coalesce(${checkoutOrders.payment}->>'txidIn', '') = ''
+            and coalesce(${checkoutOrders.payment}->>'txidOut', '') = ''
+            and coalesce(${checkoutOrders.payment}->>'swellPaymentId', '') = ''
+          when ${checkoutOrders.payment}->>'provider' = 'bankful' then
+            coalesce(${checkoutOrders.payment}->>'transactionRecordId', '') = ''
+            and coalesce(${checkoutOrders.payment}->>'transactionOrderId', '') = ''
+            and coalesce(${checkoutOrders.payment}->>'swellPaymentId', '') = ''
+          else false
+        end`,
       ),
     )
     .orderBy(desc(checkoutOrders.createdAt))

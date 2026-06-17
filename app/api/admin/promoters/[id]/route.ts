@@ -41,13 +41,17 @@ function getRangeLabel(range: z.infer<typeof querySchema>["range"]) {
   return "All time";
 }
 
+function timestamptzParam(date: Date) {
+  return sql`${date.toISOString()}::timestamptz`;
+}
+
 function getPromoterPerformanceScope(promoterId: string, startDate: Date | null) {
   const promoterScope = eq(promoterPayouts.promoterId, promoterId);
   if (!startDate) return promoterScope;
 
   return and(
     promoterScope,
-    sql`coalesce(${promoterPayouts.earnedAt}, ${promoterPayouts.createdAt}) >= ${startDate}`,
+    sql`coalesce(${promoterPayouts.earnedAt}, ${promoterPayouts.createdAt}) >= ${timestamptzParam(startDate)}`,
   );
 }
 

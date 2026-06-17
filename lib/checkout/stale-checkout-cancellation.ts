@@ -1,11 +1,11 @@
 import { isTerminalPaymentStatus } from '@/lib/checkout/constants';
 import {
-  findStaleShieldClimbCheckoutOrders,
+  findStaleHostedCheckoutOrders,
   updateCheckoutOrder,
 } from '@/lib/checkout/order-store';
 import { cancelSwellOrder } from '@/lib/checkout/swell-order-management';
-import type { CheckoutOrderRecord, ShieldClimbPaymentData } from '@/lib/checkout/types';
-import { isShieldClimbPayment } from '@/lib/checkout/types';
+import type { BankfulPaymentData, CheckoutOrderRecord, ShieldClimbPaymentData } from '@/lib/checkout/types';
+import { isBankfulPayment, isShieldClimbPayment } from '@/lib/checkout/types';
 
 export type StaleCheckoutCancellationError = {
   orderId: string;
@@ -21,7 +21,7 @@ export type StaleCheckoutCancellationResult = {
 };
 
 type StaleCheckoutCancellationDependencies = {
-  findCandidates: typeof findStaleShieldClimbCheckoutOrders;
+  findCandidates: typeof findStaleHostedCheckoutOrders;
   cancelSwellOrder: typeof cancelSwellOrder;
   updateCheckoutOrder: typeof updateCheckoutOrder;
   now: () => Date;
@@ -38,7 +38,7 @@ export const DEFAULT_STALE_CHECKOUT_CANCEL_AFTER_MINUTES = 60;
 const DEFAULT_STALE_CHECKOUT_SCAN_LIMIT = 100;
 
 const defaultDependencies: StaleCheckoutCancellationDependencies = {
-  findCandidates: findStaleShieldClimbCheckoutOrders,
+  findCandidates: findStaleHostedCheckoutOrders,
   cancelSwellOrder,
   updateCheckoutOrder,
   now: () => new Date(),
@@ -76,6 +76,16 @@ export function hasShieldClimbPaymentEvidence(payment: ShieldClimbPaymentData) {
   );
 }
 
+export function hasBankfulPaymentEvidence(payment: BankfulPaymentData) {
+  return (
+    hasNonEmptyString(payment.transactionRecordId) ||
+    hasNonEmptyString(payment.transactionOrderId) ||
+    hasNonEmptyString(payment.transactionRequestId) ||
+    hasNonEmptyString(payment.swellPaymentId) ||
+    hasNonEmptyString(payment.bankfulStatus)
+  );
+}
+
 export function isStaleShieldClimbCheckoutEligible(
   order: CheckoutOrderRecord,
   args: {
@@ -83,9 +93,10 @@ export function isStaleShieldClimbCheckoutEligible(
     cancelAfterMinutes: number;
   },
 ) {
-  if (!isShieldClimbPayment(order.payment)) return false;
+  if (!isShieldClimbPayment(order.payment) && !isBankfulPayment(order.payment)) return false;
   if (isTerminalPaymentStatus(order.payment.status)) return false;
-  if (hasShieldClimbPaymentEvidence(order.payment)) return false;
+  if (isShieldClimbPayment(order.payment) && hasShieldClimbPaymentEvidence(order.payment)) return false;
+  if (isBankfulPayment(order.payment) && hasBankfulPaymentEvidence(order.payment)) return false;
 
   const createdAtMs = Date.parse(order.createdAt);
   if (!Number.isFinite(createdAtMs)) return false;

@@ -1,16 +1,12 @@
 {
   "crons": [
     {
-      "path": "/api/jobs/gmail/interac-sync",
-      "schedule": "*/15 * * * *"
-    },
-    {
       "path": "/api/jobs/gmail/renew-watch",
       "schedule": "0 8 * * *"
     },
     {
       "path": "/api/maintenance/cancel-stale-checkouts",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 4 * * *"
     }
   ]
 }

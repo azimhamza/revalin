@@ -21,7 +21,7 @@ import {
   updateCheckoutSession,
 } from '@/lib/checkout/session-store';
 import type { CheckoutOrderPublic } from '@/lib/checkout/types';
-import { isShieldClimbPayment, isSquarePayment } from '@/lib/checkout/types';
+import { isBankfulPayment, isShieldClimbPayment, isSquarePayment } from '@/lib/checkout/types';
 import { buildPublicCheckoutOrder } from '@/lib/checkout/public-order';
 import { linkCurrentResearchConsentToOrder } from '@/lib/compliance/research-access-consent';
 
@@ -34,6 +34,7 @@ export const dynamic = 'force-dynamic';
 function getHostedPaymentRedirectUrl(order: Awaited<ReturnType<typeof getCheckoutOrder>>) {
   if (!order) return null;
   if (isShieldClimbPayment(order.payment)) return order.payment.redirectUrl;
+  if (isBankfulPayment(order.payment)) return order.payment.redirectUrl ?? null;
   if (isSquarePayment(order.payment)) return order.payment.checkoutUrl;
   return null;
 }
@@ -165,7 +166,6 @@ export const POST = createApiRoute({
         shippingAddress: session.shippingAddress,
         paymentMethod: session.paymentMethod,
         paymentCurrency: session.paymentCurrency,
-        card: body.card ?? null,
         sourceWalletAddress: session.sourceWalletAddress,
         interacSenderEmail: session.interacSenderEmail,
         interacSenderName: session.interacSenderName,
